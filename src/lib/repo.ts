@@ -196,7 +196,8 @@ class InMemoryRepo implements OrderRepo {
     if (to === "DELIVERED") {
       o.deliveredTs = now;
       o.deliveredDate = istDateOf(now);
-      o.deliveryAttempts = Math.max(1, o.deliveryAttempts);
+      // The successful delivery is itself an attempt — after an NDR this makes it 2+.
+      o.deliveryAttempts += 1;
     }
     o.overallStatus = rollupOverall(o);
     o.updatedAt = now;

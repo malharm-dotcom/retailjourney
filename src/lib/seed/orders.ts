@@ -361,7 +361,8 @@ function build(): Built {
         if (t > nowMs) t = nowMs - 1 * HOUR;
         o.firstOfdDate = o.firstOfdDate ?? new Date(t - 5 * HOUR).toISOString();
         o.latestOfdDate = new Date(t - 5 * HOUR).toISOString();
-        o.deliveryAttempts = Math.max(1, o.deliveryAttempts);
+        // The successful delivery is itself an attempt — after an NDR this makes it 2+.
+        o.deliveryAttempts += 1;
         pushEvent(id, "shipmentStatus", o.shipmentStatus!, "DELIVERED", src, t, actor, self ? "POD collected by driver" : undefined);
         o.shipmentStatus = "DELIVERED";
         o.trackingStatus = "Delivered";

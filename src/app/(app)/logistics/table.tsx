@@ -152,12 +152,11 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 shown.map((r) => {
                   const v = r.shipment ? SHIPMENT_VISUAL[r.shipment] : OVERALL_VISUAL.PICKUP_PENDING;
                   return (
-                    <tr
-                      key={r.so}
-                      className="rail border-b border-line last:border-b-0 hover:bg-[#FCFBF7]"
-                      style={{ "--rail": r.breaching ? "#BE5340" : v.rail } as React.CSSProperties}
-                    >
-                      <td className="px-5 py-3.5">
+                    <tr key={r.so} className="border-b border-line last:border-b-0 hover:bg-[#FCFBF7]">
+                      <td
+                        className="rail px-5 py-3.5"
+                        style={{ "--rail": r.breaching ? "#BE5340" : v.rail } as React.CSSProperties}
+                      >
                         <Link href={`/orders/${r.so}`} className="text-[13px] font-semibold hover:text-sage">
                           {r.store}
                         </Link>

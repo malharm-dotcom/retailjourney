@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Relay — In-Transit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Hanken+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js"></script>
+<style>
+  :root{
+    --bg:#F1EEE6; --paper:#FBF9F4; --card:#FFFFFF;
+    --ink:#232019; --ink-soft:#5C5648; --mute:#968E7E; --line:#EBE5D8; --line-2:#E0D8C8;
+    --sage:#3E5D4C; --sage-soft:#E8EEE9; --sage-line:#CBD8CF;
+    --transit:#4C7A99; --transit-bg:#E7EFF4;
+    --ofd:#B67F2E;     --ofd-bg:#F5ECD9;
+    --deliv:#3E7A5C;   --deliv-bg:#E6F0EA;
+    --breach:#BE5340;  --breach-bg:#F6E8E3;
+    --pending:#9A9080; --pending-bg:#EEEAE0;
+    --shadow:0 1px 2px rgba(35,32,25,.04), 0 10px 30px rgba(35,32,25,.05);
+    --shadow-lift:0 2px 6px rgba(35,32,25,.06), 0 16px 40px rgba(35,32,25,.09);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:var(--bg); color:var(--ink);
+    font-family:'Hanken Grotesk',system-ui,sans-serif; font-size:14px; line-height:1.5; -webkit-font-smoothing:antialiased}
+  .mono{font-variant-numeric:tabular-nums}
+  .wrap{max-width:1220px; margin:0 auto; padding:0 30px}
+  iconify-icon{display:inline-block; vertical-align:-0.15em}
+
+  /* header */
+  header{position:sticky; top:0; z-index:20; background:rgba(241,238,230,.82); backdrop-filter:saturate(1.4) blur(10px);
+    border-bottom:1px solid var(--line)}
+  .topbar{display:flex; align-items:center; gap:24px; height:66px}
+  .lockup{font-family:'Bricolage Grotesque'; font-weight:800; font-size:22px; letter-spacing:-.02em; display:flex; align-items:center}
+  .lockup .hash{color:var(--sage); margin-left:1px}
+  .nav{display:flex; gap:3px; margin-left:6px}
+  .nav a{padding:8px 14px; text-decoration:none; color:var(--ink-soft); font-weight:500; font-size:13.5px; border-radius:9px}
+  .nav a.on{background:var(--ink); color:#fff}
+  .nav a:not(.on):hover{background:#EAE4D6}
+  .spacer{flex:1}
+  .fac{display:flex; gap:3px; background:#EAE4D6; padding:3px; border-radius:11px}
+  .fac button{border:0; background:transparent; padding:7px 13px; font-family:'Hanken Grotesk'; font-weight:600; font-size:12.5px;
+    cursor:pointer; color:var(--ink-soft); border-radius:8px; transition:all .18s}
+  .fac button.on{background:#fff; color:var(--ink); box-shadow:0 1px 3px rgba(35,32,25,.12)}
+  .who{display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--ink-soft)}
+  .who .dot{width:30px;height:30px;border-radius:50%;background:var(--sage);color:#fff;
+    display:grid;place-items:center;font-family:'Bricolage Grotesque';font-weight:700;font-size:12px}
+
+  /* title */
+  .head{padding:30px 0 18px; display:flex; align-items:flex-end; justify-content:space-between}
+  h1{font-family:'Bricolage Grotesque'; font-weight:700; font-size:33px; letter-spacing:-.025em; margin:0; line-height:1.05}
+  h1 .hash{color:var(--sage)}
+  .sub{color:var(--mute); font-size:14px; margin-top:8px}
+  .live{display:inline-flex; align-items:center; gap:8px; font-weight:600; font-size:12.5px; color:var(--ink-soft);
+    background:var(--card); padding:8px 14px; border-radius:11px; box-shadow:var(--shadow)}
+  .live .pulse{width:8px;height:8px;border-radius:50%;background:var(--deliv); animation:pulse 2.2s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(62,122,92,.4)}70%{box-shadow:0 0 0 8px rgba(62,122,92,0)}100%{box-shadow:0 0 0 0 rgba(62,122,92,0)}}
+
+  /* kpis */
+  .kpis{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:26px}
+  .kpi{background:var(--card); border-radius:16px; padding:18px 20px; box-shadow:var(--shadow); cursor:pointer;
+    transition:transform .2s cubic-bezier(.2,.7,.3,1), box-shadow .2s; position:relative; overflow:hidden}
+  .kpi:hover{transform:translateY(-3px); box-shadow:var(--shadow-lift)}
+  .kpi .k-lab{display:flex; align-items:center; gap:8px; font-weight:600; font-size:12.5px; color:var(--ink-soft)}
+  .kpi .k-ic{width:30px;height:30px;border-radius:9px;display:grid;place-items:center;font-size:17px}
+  .kpi .k-num{font-family:'Bricolage Grotesque'; font-weight:700; font-size:36px; letter-spacing:-.02em; margin-top:12px; line-height:1}
+  .kpi .k-sub{font-size:12px; color:var(--mute); margin-top:6px}
+  .i-wh{background:var(--pending-bg);color:var(--ink-soft)} .i-pick{background:var(--sage-soft);color:var(--sage)}
+  .i-transit{background:var(--transit-bg);color:var(--transit)} .i-deliv{background:var(--deliv-bg);color:var(--deliv)}
+
+  /* toolbar */
+  .toolbar{display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap}
+  .chip{border:1px solid var(--line-2); background:var(--paper); padding:8px 14px; border-radius:22px; font-size:13px;
+    font-weight:500; cursor:pointer; color:var(--ink-soft); display:flex; align-items:center; gap:7px; transition:all .16s}
+  .chip:hover{border-color:var(--ink-soft)}
+  .chip.on{background:var(--ink); color:#fff; border-color:var(--ink)}
+  .chip .c-dot{width:8px;height:8px;border-radius:50%}
+  .search{margin-left:auto; display:flex; align-items:center; gap:9px; border:1px solid var(--line-2); border-radius:12px;
+    padding:9px 13px; background:var(--paper); color:var(--mute); min-width:250px}
+  .search input{border:0;background:transparent;outline:0;font-family:inherit;font-size:13.5px;color:var(--ink);width:100%}
+
+  /* board */
+  .board{background:var(--card); border-radius:18px; box-shadow:var(--shadow); overflow:hidden}
+  .row-h,.row{display:grid; grid-template-columns:2.3fr 1.35fr 1.5fr 2.4fr .85fr .95fr; align-items:center}
+  .row-h{padding:0 20px; color:var(--mute); font-weight:600; font-size:11.5px; letter-spacing:.04em; text-transform:uppercase;
+    background:var(--paper); border-bottom:1px solid var(--line)}
+  .row-h > div{padding:14px 8px}
+  .row{padding:0 20px; border-bottom:1px solid var(--line); position:relative; opacity:0; transform:translateY(8px);
+    animation:rise .5s cubic-bezier(.2,.7,.3,1) forwards}
+  @keyframes rise{to{opacity:1; transform:none}}
+  .row:last-child{border-bottom:0}
+  .row > div{padding:16px 8px}
+  .row:hover{background:#FCFBF7}
+  .row::before{content:""; position:absolute; left:0; top:14px; bottom:14px; width:4px; border-radius:0 4px 4px 0; background:var(--pending)}
+  .row.s-transit::before{background:var(--transit)} .row.s-ofd::before{background:var(--ofd)}
+  .row.s-deliv::before{background:var(--deliv)} .row.s-breach::before{background:var(--breach)}
+  .store{font-weight:600; font-size:14px}
+  .store .meta{font-weight:400; color:var(--mute); font-size:12px; margin-top:4px}
+  .lr{font-family:'Bricolage Grotesque';font-weight:600; font-size:13.5px}
+  .lr .cour{display:block; font-family:'Hanken Grotesk'; font-weight:400; color:var(--mute); font-size:12px; margin-top:3px}
+  .pill{display:inline-flex; align-items:center; gap:7px; padding:6px 12px; border-radius:20px; font-weight:600; font-size:12px; white-space:nowrap}
+  .pill iconify-icon{font-size:15px}
+  .p-transit{background:var(--transit-bg);color:var(--transit)} .p-ofd{background:var(--ofd-bg);color:var(--ofd)}
+  .p-deliv{background:var(--deliv-bg);color:var(--deliv)} .p-pending{background:var(--pending-bg);color:var(--ink-soft)}
+  .p-breach{background:var(--breach-bg);color:var(--breach)}
+  .src{margin-left:7px; font-size:10px; color:var(--deliv)}
+  .ckpt{font-size:13px; color:var(--ink-soft); line-height:1.4}
+  .ckpt .loc{display:flex; align-items:center; gap:5px; color:var(--mute); font-size:11.5px; margin-top:4px}
+  .age{font-family:'Bricolage Grotesque'; font-weight:700; font-size:19px}
+  .age.hot{color:var(--breach)} .age small{font-family:'Hanken Grotesk';font-weight:400;font-size:11px;color:var(--mute);display:block;margin-top:1px}
+  .act{display:flex; gap:7px}
+  .ib{border:1px solid var(--line-2); background:var(--paper); width:34px;height:34px;border-radius:10px;
+    display:grid;place-items:center;cursor:pointer;color:var(--ink-soft);font-size:17px; transition:all .16s}
+  .ib:hover{border-color:var(--sage);color:var(--sage);background:var(--sage-soft);transform:translateY(-1px)}
+  .foot{display:flex;justify-content:space-between;align-items:center;padding:18px 4px 30px;color:var(--mute);font-size:12.5px}
+  .foot b{color:var(--ink-soft);font-weight:600}
+  @media(prefers-reduced-motion:reduce){.row{animation:none;opacity:1;transform:none}.kpi:hover{transform:none}}
+  @media(max-width:960px){.nav,.who{display:none}.kpis{grid-template-columns:repeat(2,1fr)}
+    .row-h{display:none}.row{grid-template-columns:1fr;gap:0}.row>div{padding:8px 0}.age,.act{display:none}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap topbar">
+    <div class="lockup">Relay<span class="hash">#</span></div>
+    <nav class="nav">
+      <a href="#">Control Tower</a><a href="#" class="on">In-Transit</a>
+      <a href="#">Warehouse</a><a href="#">Logistics</a><a href="#">Rulebook</a><a href="#">Reports</a>
+    </nav>
+    <div class="spacer"></div>
+    <div class="fac" id="fac">
+      <button class="on" data-f="ALL">All</button><button data-f="NORTH">North</button>
+      <button data-f="WH1">WH-1</button><button data-f="WH2">WH-2</button>
+    </div>
+    <div class="who"><span class="dot">MP</span>Maddy</div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="head">
+    <div>
+      <h1>In-transit <span class="hash">#</span> board</h1>
+      <div class="sub">Every shipment on the road right now — one glance, no follow-ups.</div>
+    </div>
+    <div class="live"><span class="pulse"></span> Live · eShipz synced 2 min ago</div>
+  </div>
+
+  <div class="kpis" id="kpis">
+    <div class="kpi"><div class="k-lab"><span class="k-ic i-wh"><iconify-icon icon="solar:box-bold-duotone"></iconify-icon></span>WH Processing</div><div class="k-num mono">29</div><div class="k-sub">3 breaching today</div></div>
+    <div class="kpi"><div class="k-lab"><span class="k-ic i-pick"><iconify-icon icon="solar:hand-money-bold-duotone"></iconify-icon></span>Pickup Pending</div><div class="k-num mono">24</div><div class="k-sub">awaiting courier scan</div></div>
+    <div class="kpi"><div class="k-lab"><span class="k-ic i-transit"><iconify-icon icon="solar:delivery-bold-duotone"></iconify-icon></span>In Transit</div><div class="k-num mono">9</div><div class="k-sub">2 out for delivery</div></div>
+    <div class="kpi"><div class="k-lab"><span class="k-ic i-deliv"><iconify-icon icon="solar:check-circle-bold-duotone"></iconify-icon></span>Delivered Today</div><div class="k-num mono">38</div><div class="k-sub">92% within SLA</div></div>
+  </div>
+
+  <div class="toolbar">
+    <div class="chip on" data-s="all">All open</div>
+    <div class="chip" data-s="Pickup Pending"><span class="c-dot" style="background:var(--pending)"></span>Pickup Pending</div>
+    <div class="chip" data-s="In transit"><span class="c-dot" style="background:var(--transit)"></span>In Transit</div>
+    <div class="chip" data-s="Delivered"><span class="c-dot" style="background:var(--deliv)"></span>Delivered</div>
+    <div class="chip" data-s="breach"><span class="c-dot" style="background:var(--breach)"></span>Breaching</div>
+    <div class="search"><iconify-icon icon="solar:magnifer-linear"></iconify-icon><input placeholder="Search SO · LR · store · area manager"/></div>
+  </div>
+
+  <div class="board">
+    <div class="row-h">
+      <div>Store</div><div>LR · Courier</div><div>Status</div><div>Latest checkpoint</div><div>Ageing</div><div></div>
+    </div>
+    <div id="rows"></div>
+  </div>
+
+  <div class="foot"><div>Showing <b id="cnt">10</b> of <b>33</b> open shipments · facility <b id="facLab">All</b></div>
+    <div>Sorted by ageing · newest breaches first</div></div>
+</div>
+
+<script>
+const SEED = [{"store": "COFO - DAHISAR", "lr": "BNG26CST00409", "courier": "MOVEMATE", "lane": "Dedicated Vehicle Lane", "zone": "West", "overall": "Pickup Pending", "trk": "InfoReceived", "sub": "", "msg": "Information Received By Movemate", "city": "BENGALURU", "exp": "", "datt": "", "am": "Sasmit", "merch": "Priyanka", "qty": "84", "dsla": "FUTURE SLA", "psla": "BREACHED-PENDING FOR PROCESS", "otype": "FRESH"}, {"store": "COCO - RAIPUR", "lr": "53667339924", "courier": "BLUEDART", "lane": "East - 2", "zone": "\u2014", "overall": "In transit", "trk": "InTransit", "sub": "InTransit", "msg": "SHIPMENT ARRIVED ", "city": "NAGPUR WAREHOUSE, NAGPUR, MAHARASHTRA", "exp": "2026-07-05", "datt": "0", "am": "Subham", "merch": "Anish", "qty": "128", "dsla": "FUTURE SLA", "psla": "WITHIN_SLA", "otype": "RPL"}, {"store": "COFO - LINKING ROAD", "lr": "BNG26CST00401", "courier": "MOVEMATE", "lane": "Dedicated Vehicle Lane", "zone": "West", "overall": "Pickup Pending", "trk": "InfoReceived", "sub": "", "msg": "Information Received By Movemate", "city": "BENGALURU", "exp": "", "datt": "", "am": "Sasmit", "merch": "Priyanka", "qty": "383", "dsla": "FUTURE SLA", "psla": "BREACHED-PENDING FOR PROCESS", "otype": "FRESH"}, {"store": "COFO - MAGNETO MALL", "lr": "53666247994", "courier": "BLUEDART", "lane": "East - 2", "zone": "\u2014", "overall": "Pickup Pending", "trk": "Return", "sub": "RTOInitiated", "msg": "SHIPPER INSTRUCTED TO RTO THE SHIPMENT ", "city": "BLUE DART CENTRE, MUMBAI, MAHARASHTRA", "exp": "", "datt": "0", "am": "Subham", "merch": "Anish", "qty": "96", "dsla": "FUTURE SLA", "psla": "BREACHED-PENDING FOR PROCESS", "otype": "FRESH"}, {"store": "COFO - PONDY BAZAAR", "lr": "BNG26CST00372", "courier": "MOVEMATE", "lane": "Dedicated PTL Partner Lane", "zone": "South", "overall": "Pickup Pending", "trk": "InfoReceived", "sub": "", "msg": "Information Received By Movemate", "city": "BENGALURU", "exp": "", "datt": "", "am": "Kuldeep", "merch": "Srushti", "qty": "33", "dsla": "FUTURE SLA", "psla": "BREACHED-PENDING FOR PROCESS", "otype": "RPL"}, {"store": "COCO - CREEK VILLAGE", "lr": "HR26CST00003", "courier": "MOVEMATE", "lane": "", "zone": "North", "overall": "Pickup Pending", "trk": "InfoReceived", "sub": "", "msg": "Information Received By Movemate", "city": "GURUGRAM", "exp": "", "datt": "", "am": "", "merch": "", "qty": "481", "dsla": "FUTURE SLA", "psla": "BREACHED-PENDING FOR PROCESS", "otype": "FRESH"}, {"store": "COFO - COLABA", "lr": "BNG26CST00400", "courier": "MOVEMATE", "lane": "Dedicated Vehicle Lane", "zone": "West", "overall": "Pickup Pending", "trk": "InfoReceived", "sub": "", "msg": "Information Received By Movemate", "city": "BENGALURU", "exp": "", "datt": "", "am": "Sasmit", "merch": "Priyanka", "qty": "48", "dsla": "FUTURE SLA", "psla": "BREACHED-PENDING FOR PROCESS", "otype": "OTHER"}, {"store": "FOCO - MALVIYA NAGAR", "lr": "90641226", "courier": "MUDITA_CARGO", "lane": "North-1", "zone": "North", "overall": "Delivered", "trk": "Delivered", "sub": "Delivered", "msg": "Delivered", "city": "Jaipur", "exp": "2026-06-28", "datt": "1", "am": "Sonit Tandon", "merch": "Yuvraj", "qty": "52", "dsla": "WITHIN_SLA", "psla": "WITHIN_SLA", "otype": "OTHER"}, {"store": "FOCO - GANDHI NAGAR", "lr": "90641327", "courier": "MUDITA_CARGO", "lane": "West-2", "zone": "West", "overall": "Delivered", "trk": "Delivered", "sub": "Delivered", "msg": "Delivered", "city": "Gandhinagar", "exp": "2026-06-29", "datt": "1", "am": "Mahesh", "merch": "Priyanka", "qty": "113", "dsla": "WITHIN_SLA", "psla": "WITHIN_SLA", "otype": "RPL"}, {"store": "COCO - AIRIA MALL", "lr": "90641297", "courier": "MUDITA_CARGO", "lane": "Milk Run Lane", "zone": "North", "overall": "Delivered", "trk": "Delivered", "sub": "Delivered", "msg": "Delivered", "city": "Gurgaon", "exp": "2026-06-28", "datt": "1", "am": "Subham", "merch": "Anish", "qty": "253", "dsla": "WITHIN_SLA", "psla": "WITHIN_SLA", "otype": "RPL"}];
+function cls(r){
+  if(r.dsla==='BREACHED'||(r.dsla||'').includes('BREACHED')||(r.psla||'').includes('BREACHED')) return 'breach';
+  if(r.overall==='Delivered') return 'deliv';
+  if((r.trk||'').toLowerCase().includes('out')) return 'ofd';
+  if(r.overall==='In transit') return 'transit';
+  return 'pending';
+}
+const PILL={transit:['solar:delivery-bold-duotone','In Transit','p-transit'],
+  ofd:['solar:scooter-bold-duotone','Out for Delivery','p-ofd'],
+  deliv:['solar:check-circle-bold-duotone','Delivered','p-deliv'],
+  pending:['solar:hand-money-bold-duotone','Pickup Pending','p-pending'],
+  breach:['solar:danger-triangle-bold-duotone','Breaching','p-breach']};
+function ageOf(r,i){const b={'Pickup Pending':[2,4],'In transit':[3,6],'Delivered':[0,1]}[r.overall]||[2,5];
+  return b[0]+((i*7)%(b[1]-b[0]+1));}
+let curStatus='all', curFac='ALL';
+function render(){
+  const rows=document.getElementById('rows'); rows.innerHTML=''; let shown=0;
+  SEED.forEach((r,i)=>{
+    const c=cls(r);
+    if(curStatus==='breach'&&c!=='breach')return;
+    if(curStatus!=='all'&&curStatus!=='breach'&&r.overall!==curStatus)return;
+    if(curFac!=='ALL'&&r.zone.toLowerCase()!==({NORTH:'north',WH1:'west',WH2:'south'})[curFac])return;
+    const [ic,lab,pc]=PILL[c]; const age=ageOf(r,i); const hot=(c==='breach'||age>=5);
+    const el=document.createElement('div'); el.className='row s-'+c; el.style.animationDelay=(shown*45)+'ms'; shown++;
+    el.innerHTML=`
+      <div class="store">${r.store}<div class="meta">${r.zone} · ${r.lane||'—'} · ${r.otype}</div></div>
+      <div class="lr mono">${r.lr||'—'}<span class="cour">${(r.courier||'').replace('_',' ')}</span></div>
+      <div><span class="pill ${pc}"><iconify-icon icon="${ic}"></iconify-icon>${lab}</span><span class="src" title="synced from eShipz">● synced</span></div>
+      <div class="ckpt">${r.msg||r.sub||r.trk||'Awaiting first scan'}<span class="loc"><iconify-icon icon="solar:map-point-linear"></iconify-icon>${r.city||'—'}</span></div>
+      <div><span class="age mono ${hot?'hot':''}">${age}<small>days</small></span></div>
+      <div class="act">
+        <button class="ib" title="Tracking"><iconify-icon icon="solar:routing-2-linear"></iconify-icon></button>
+        <button class="ib" title="Journey"><iconify-icon icon="solar:map-arrow-square-linear"></iconify-icon></button>
+        <button class="ib" title="Update status"><iconify-icon icon="solar:pen-new-square-linear"></iconify-icon></button>
+      </div>`;
+    rows.appendChild(el);
+  });
+  document.getElementById('cnt').textContent=shown;
+}
+document.querySelector('.toolbar').addEventListener('click',e=>{
+  const c=e.target.closest('.chip'); if(!c)return;
+  document.querySelectorAll('.chip').forEach(x=>x.classList.remove('on')); c.classList.add('on');
+  curStatus=c.dataset.s; render();
+});
+document.getElementById('fac').addEventListener('click',e=>{
+  const b=e.target.closest('button'); if(!b)return;
+  document.querySelectorAll('#fac button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  curFac=b.dataset.f; document.getElementById('facLab').textContent=b.textContent; render();
+});
+render();
+</script>
+</body>
+</html>

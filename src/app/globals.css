@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    @apply antialiased;
+  }
+  body {
+    @apply bg-ground text-ink font-sans text-sm leading-normal;
+  }
+  ::selection {
+    @apply bg-sage text-white;
+  }
+  :focus-visible {
+    outline: 2px solid #3e5d4c;
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+}
+
+@layer components {
+  /* Page container — the prototype's .wrap */
+  .wrap {
+    @apply mx-auto w-full max-w-wrap px-5 sm:px-8;
+  }
+
+  /* Tabular numerals for anything data-shaped */
+  .mono {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The signature coloured status rail on list rows / cards */
+  .rail {
+    @apply relative;
+  }
+  .rail::before {
+    content: "";
+    @apply absolute bottom-3 left-0 top-3 w-1 rounded-r;
+    background: var(--rail, #9a9080);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise,
+  .animate-pulse2 {
+    animation: none !important;
+  }
+  * {
+    transition-duration: 0.01ms !important;
+  }
+}

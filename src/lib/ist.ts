@@ -11,6 +11,19 @@ export function nowIso(): string {
   return new Date().toISOString();
 }
 
+/** UC timestamps are epoch millis → ISO UTC (undefined for absent/zero). */
+export function isoFromEpochMs(ms?: number | null): string | undefined {
+  if (!ms || !Number.isFinite(ms)) return undefined;
+  return new Date(ms).toISOString();
+}
+
+/** eShipz dates are RFC-1123 GMT strings ("Tue, 28 Jun 2022 13:58:26 GMT") → ISO UTC. */
+export function isoFromRfc1123(s?: string | null): string | undefined {
+  if (!s) return undefined;
+  const t = Date.parse(s);
+  return Number.isNaN(t) ? undefined : new Date(t).toISOString();
+}
+
 /** IST business date (YYYY-MM-DD) for a UTC instant. */
 export function istDateOf(iso: string | Date): string {
   const t = typeof iso === "string" ? Date.parse(iso) : iso.getTime();

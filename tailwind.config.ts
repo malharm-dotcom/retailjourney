@@ -1,7 +1,7 @@
 import type { Config } from "tailwindcss";
 
-// Relay design tokens — derived 1:1 from the approved prototype
-// (relay-in-transit-v2.html). Cream ground, near-black ink, sage accent,
+// RetailJourney design tokens — derived 1:1 from the approved prototype
+// (retailjourney-in-transit-v2.html). Cream ground, near-black ink, sage accent,
 // semantic status colours always paired with icon + label, never colour alone.
 
 const config: Config = {

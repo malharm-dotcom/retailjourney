@@ -1,6 +1,6 @@
 "use client";
 
-// Small shared primitives, re-themed to the Relay tokens (shadcn-style base).
+// Small shared primitives, re-themed to the RetailJourney tokens (shadcn-style base).
 
 import * as React from "react";
 import { cn } from "@/lib/ui";

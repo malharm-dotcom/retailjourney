@@ -13,7 +13,7 @@ export default function LoginPage() {
       <div className="w-full max-w-[520px]">
         <div className="mb-8 text-center">
           <div className="font-display text-[40px] font-extrabold tracking-tight">
-            Relay<span className="text-sage">#</span>
+            RetailJourney<span className="text-sage">#</span>
           </div>
           <p className="mt-1 text-sm text-mute">
             The baton passing cleanly between Merchandising, Warehouse, Logistics and Store.

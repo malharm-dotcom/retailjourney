@@ -52,18 +52,18 @@ interface Db {
 }
 
 // globalThis singleton so the store survives Next.js HMR / route module reloads.
-const g = globalThis as unknown as { __relayDb?: Db };
+const g = globalThis as unknown as { __retailjourneyDb?: Db };
 
 function db(): Db {
-  if (!g.__relayDb) {
+  if (!g.__retailjourneyDb) {
     const { orders, events } = seedData();
-    g.__relayDb = {
+    g.__retailjourneyDb = {
       orders: new Map(orders.map((o) => [o.soNumber, o])),
       events: [...events],
       evSeq: events.length,
     };
   }
-  return g.__relayDb;
+  return g.__retailjourneyDb;
 }
 
 function pushEvent(

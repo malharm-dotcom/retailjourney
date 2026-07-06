@@ -1,6 +1,6 @@
 "use client";
 
-// Radix dialog re-themed to Relay tokens (shadcn-style base, PRD §9).
+// Radix dialog re-themed to RetailJourney tokens (shadcn-style base, PRD §9).
 
 import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";

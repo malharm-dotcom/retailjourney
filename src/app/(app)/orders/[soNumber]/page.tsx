@@ -85,7 +85,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
         </div>
       </div>
 
-      {/* Relay track — the four-stage rollup as a baton pass */}
+      {/* RetailJourney track — the four-stage rollup as a baton pass */}
       <div className={cn("mb-6 overflow-hidden rounded-2xl bg-card p-5 shadow-card", terminal && "opacity-70")}>
         <div className="flex items-center">
           {STAGES.map((s, i) => {

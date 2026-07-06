@@ -69,7 +69,7 @@ export function buildAuthOptions(): NextAuthOptions {
   return {
     providers,
     session: { strategy: "jwt" },
-    secret: process.env.NEXTAUTH_SECRET ?? process.env.SESSION_SECRET ?? "relay-dev-secret-not-for-prod",
+    secret: process.env.NEXTAUTH_SECRET ?? process.env.SESSION_SECRET ?? "retailjourney-dev-secret-not-for-prod",
     pages: { signIn: "/login" },
     callbacks: {
       async signIn({ user, account }) {

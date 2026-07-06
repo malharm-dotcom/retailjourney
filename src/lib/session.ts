@@ -10,7 +10,7 @@ import { resolveScope } from "./rbac";
 import { userById } from "./seed/users";
 import type { FacilityScope, User } from "./types";
 
-export const FACILITY_COOKIE = "relay-facility";
+export const FACILITY_COOKIE = "retailjourney-facility";
 
 export async function currentUser(): Promise<User> {
   const session = await getServerSession(buildAuthOptions());

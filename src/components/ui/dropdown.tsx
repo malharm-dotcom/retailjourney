@@ -1,6 +1,6 @@
 "use client";
 
-// Radix dropdown re-themed to Relay tokens.
+// Radix dropdown re-themed to RetailJourney tokens.
 
 import * as React from "react";
 import * as DropdownPrimitive from "@radix-ui/react-dropdown-menu";

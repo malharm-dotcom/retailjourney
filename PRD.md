@@ -1,12 +1,12 @@
-# PRD — Relay (Snitch B2B Retail Distribution Tracker)
+# PRD — RetailJourney (Snitch B2B Retail Distribution Tracker)
 
-> **Relay** — the baton passing cleanly between Merchandising → Warehouse → Logistics → Store.
-> (Working codename. Trivial to rename — it's a find-replace on `relay` / `Relay`. Alternatives if you prefer: *Waypoint*, *Transit*, *Dispatch*.)
+> **RetailJourney** — the baton passing cleanly between Merchandising → Warehouse → Logistics → Store.
+> (Working codename. Trivial to rename — it's a find-replace on `retailjourney` / `RetailJourney`. Alternatives if you prefer: *Waypoint*, *Transit*, *Dispatch*.)
 >
-> **What this file is.** The single source of truth for building Relay. Point Claude Code at it every session
+> **What this file is.** The single source of truth for building RetailJourney. Point Claude Code at it every session
 > (`Read PRD.md fully before doing anything`). Keep it in the repo root. Edit this file first when scope changes, then implement.
 
-**App slug:** `snitch-relay`  ·  **Domain:** `relay.snitch-workflow.com`  ·  **Owner:** Malhar M  ·  **Process owner:** Maddy (Mahadevan Pillai)
+**App slug:** `retailjourney`  ·  **Domain:** `retailjourney.snitch-workflow.com`  ·  **Owner:** Malhar M  ·  **Process owner:** Maddy (Mahadevan Pillai)
 
 ---
 
@@ -342,7 +342,7 @@ Filter by date range, facility (or All), store, AM, merchandiser, courier, order
 
 - **Next.js 14 (App Router) + TypeScript + Tailwind**, mobile-first.
 - **Prisma 7 + `@prisma/adapter-pg`**, **PostgreSQL** (`postgres:18-alpine`).
-- **Coolify** self-hosted (`168.144.81.147`), **GitHub** `github.com/malharm-dotcom/snitch-relay` (private), Nixpacks, domain `relay.snitch-workflow.com`.
+- **Coolify** self-hosted (`168.144.81.147`), **GitHub** `github.com/malharm-dotcom/retailjourney` (private), Nixpacks, domain `retailjourney.snitch-workflow.com`.
 
 **Gotchas (bake in from the start):**
 - Nixpacks defaults to Node 22.11 → breaks Prisma 7 (needs 22.12+). Add `.nvmrc` (`22`), `nixpacks.toml` (`nixPkgs = ["nodejs_22"]`), `"engines": { "node": ">=22.12.0" }`.
@@ -389,7 +389,7 @@ The three tracking extracts are the field/logic reference. The app **reproduces*
 ## Appendix — Session start prompt for Claude Code
 
 ```
-Read PRD.md in full before doing anything. We are building Relay, the Snitch B2B
+Read PRD.md in full before doing anything. We are building RetailJourney, the Snitch B2B
 retail distribution tracker. Follow the tech stack (§11) and gotchas exactly — must
 deploy on our existing Coolify pattern. We are on milestone M1: design system +
 fully navigable flow on SEED DATA, no live integrations yet (§12). Reproduce the

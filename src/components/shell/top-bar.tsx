@@ -17,7 +17,7 @@ export function TopBar({ user, scope }: { user: User; scope: FacilityScope }) {
     <header className="sticky top-0 z-30 border-b border-line bg-ground/80 backdrop-blur-md backdrop-saturate-150">
       <div className="wrap flex h-[66px] items-center gap-4 lg:gap-6">
         <Link href="/" className="flex items-center font-display text-[22px] font-extrabold tracking-tight">
-          Relay<span className="ml-px text-sage">#</span>
+          RetailJourney<span className="ml-px text-sage">#</span>
         </Link>
         <Nav />
         <div className="flex-1" />

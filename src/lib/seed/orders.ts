@@ -397,7 +397,7 @@ function build(): Built {
                 o.shortageQty = 0;
                 o.excessQty = int(1, 5);
               }
-              o.shortageExcessFileUrl = `https://drive.google.com/relay-exshort/${soNumber}`;
+              o.shortageExcessFileUrl = `https://drive.google.com/retailjourney-exshort/${soNumber}`;
               o.adjustmentOnLogic = rand() < 0.5;
               pushEvent(id, "shortageQty", null, String(o.shortageQty || -(o.excessQty ?? 0)), "MANUAL", rt, logistics, o.shortageQty ? "Shortage flagged at inward" : "Excess flagged at inward");
             } else {

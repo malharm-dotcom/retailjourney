@@ -27,7 +27,7 @@ export function Icon({
       className={className}
       aria-hidden
       style={{ display: "inline-block", verticalAlign: "-0.15em" }}
-      dangerouslySetInnerHTML={{ __html: replaceIDs(svg.body, `relay-${uid}-`) }}
+      dangerouslySetInnerHTML={{ __html: replaceIDs(svg.body, `retailjourney-${uid}-`) }}
     />
   );
 }

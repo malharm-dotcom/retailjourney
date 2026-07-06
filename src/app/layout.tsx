@@ -16,7 +16,7 @@ const hanken = Hanken_Grotesk({
 });
 
 export const metadata: Metadata = {
-  title: { default: "Relay — Snitch B2B Distribution", template: "%s · Relay" },
+  title: { default: "RetailJourney — Snitch B2B Distribution", template: "%s · RetailJourney" },
   description:
     "The baton passing cleanly between Merchandising, Warehouse, Logistics and Store.",
 };

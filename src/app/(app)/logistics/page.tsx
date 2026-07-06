@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 
 export default async function LogisticsPage() {
   const { user, scope } = await requireSession();
-  const rows = scopedOrders(scope, user);
+  const rows = await scopedOrders(scope, user);
   const today = istToday();
   const policy = policyOf(user.role);
   const canEdit = policy.canEditLogistics || policy.isAdmin;

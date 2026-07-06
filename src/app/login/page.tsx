@@ -1,12 +1,13 @@
 import { devPersonaEnabled, googleConfigured } from "@/lib/auth";
-import { USERS } from "@/lib/seed/users";
+import { repo } from "@/lib/repo";
 import { LoginPanel } from "./login-panel";
 
 export const metadata = { title: "Sign in" };
+export const dynamic = "force-dynamic";
 
-export default function LoginPage() {
+export default async function LoginPage() {
   const personas = devPersonaEnabled()
-    ? USERS.filter((u) => u.active).map(({ id, name, role, email }) => ({ id, name, role, email }))
+    ? (await repo.listUsers()).filter((u) => u.active).map(({ id, name, role, email }) => ({ id, name, role, email }))
     : [];
   return (
     <div className="flex min-h-screen items-center justify-center px-5 py-10">

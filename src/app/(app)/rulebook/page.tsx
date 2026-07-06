@@ -14,12 +14,10 @@ export const dynamic = "force-dynamic";
 export default async function RulebookPage() {
   const { user, scope } = await requireSession();
   const today = istToday();
-  const stores = repo
-    .listStores()
+  const stores = (await repo.listStores())
     .filter((s) => scope === "ALL" || s.facility === scope)
     .filter((s) => (user.role === "RETAIL_HEAD" && user.areaManager ? s.areaManager === user.areaManager : true));
-  const rules = repo
-    .listRules()
+  const rules = (await repo.listRules())
     .filter((r) => r.effectiveFrom <= today && (!r.effectiveTo || r.effectiveTo >= today));
   const current = RULEBOOK_VERSIONS[RULEBOOK_VERSIONS.length - 1];
 

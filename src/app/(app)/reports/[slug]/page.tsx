@@ -29,7 +29,7 @@ export default async function ReportPage({
   if (!def) notFound();
   const { user, scope } = await requireSession();
 
-  let rows = scopedOrders(scope, user);
+  let rows = await scopedOrders(scope, user);
   if (searchParams.type) rows = rows.filter((r) => r.order.type === (searchParams.type as OrderType));
   if (searchParams.courier) rows = rows.filter((r) => r.order.logisticsPartner === searchParams.courier);
   if (searchParams.from) rows = rows.filter((r) => r.order.orderDate >= searchParams.from!);

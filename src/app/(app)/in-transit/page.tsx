@@ -14,7 +14,7 @@ export const dynamic = "force-dynamic";
 
 export default async function InTransitPage() {
   const { user, scope } = await requireSession();
-  const rows = scopedOrders(scope, user);
+  const rows = await scopedOrders(scope, user);
   const today = istToday();
   const canEdit = policyOf(user.role).canEditLogistics || policyOf(user.role).isAdmin;
 

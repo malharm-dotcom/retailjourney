@@ -1,0 +1,275 @@
+// RetailJourney schema — generated from the domain types in src/lib/types.ts
+// (PRD §5). The domain layer keeps ISO/`YYYY-MM-DD` strings; PrismaRepo maps
+// Date <-> string in one place. Facility/channel/ownership/zone stay String
+// (values like "SAPL-NORTH-TAURU" aren't valid Prisma enum identifiers).
+
+// Prisma 7: driver adapters are GA (no previewFeatures flag) and the
+// connection URL lives in prisma.config.ts, not here.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrderType {
+  FRESH
+  RPL
+  Q_COMM
+  ACC
+  NON_TRADING
+  OTHER
+}
+
+enum OrderStatus {
+  NOT_STARTED
+  PICKING
+  PACKING
+  ON_HOLD
+  READY_TO_DISPATCH
+  RTS_LOGIC
+  DISPATCHED_TO_STORE
+  CANCELLED
+  UNFULFILLABLE
+}
+
+enum OverallStatus {
+  WH_PROCESSING
+  PICKUP_PENDING
+  IN_TRANSIT
+  DELIVERED
+}
+
+enum ShipmentStatus {
+  IN_TRANSIT
+  OUT_FOR_DELIVERY
+  DELIVERED
+  DELIVERY_FAILED
+}
+
+enum ReceiptStatus {
+  RECEIVED
+  INWARDED
+  CLOSED
+}
+
+enum EntryStatus {
+  OPEN
+  CLOSED
+}
+
+enum Source {
+  SYNCED
+  MANUAL
+}
+
+enum Role {
+  ADMIN
+  MERCHANDISING
+  WH_SUPERVISOR
+  WH_OPERATOR
+  LOGISTICS
+  RETAIL_HEAD
+}
+
+model Order {
+  id              String   @id @default(cuid())
+  soNumber        String   @unique // SO_NUMBER / ORDER_NAME — the spine key
+  orderDate       DateTime @db.Date
+  orderTimestamp  DateTime
+  facility        String // SAPL-NORTH-TAURU | SAPL-WH1 | SAPL-WH2
+  channel         String // FRANCHISE_STORE | OWN_STORE
+  storeId         String
+  storeNameFormat String
+  finalStore      String
+  ownership       String? // COCO | FOCO | COFO
+  state           String
+  zone            String // NORTH | WEST | SOUTH | EAST | UNMAPPED
+  type            OrderType
+  qty             Int
+  priority        String?
+  campaignTag     String?
+  merchandiser    String?
+  areaManager     String?
+  category        String?
+
+  // Phase A — WH processing + UC lifecycle
+  status            OrderStatus   @default(NOT_STARTED)
+  statusSource      Source        @default(MANUAL)
+  overallStatus     OverallStatus @default(WH_PROCESSING)
+  ucStatus          String?
+  createdTs         DateTime?
+  pickingTs         DateTime?
+  pickedTs          DateTime?
+  packedTs          DateTime?
+  rtsTs             DateTime?
+  manifestedTs      DateTime?
+  dispatchedTs      DateTime?
+  shippedTs         DateTime?
+  deliveredTs       DateTime?
+  cancelledTs       DateTime?
+  weightKg          Float?
+  pickedQty         Int?
+  fulfilledQty      Int?
+  unfulfillableQty  Int?
+  boxCount          Int?
+  saleInvoiceNumber String?
+  rtsLogicDate      DateTime?     @db.Date
+
+  // Handoff
+  dcNumber           String?
+  lrNumber           String?
+  logisticsPartner   String? // MUDITACARGO | MOVEMATE | BLUEDART | EKART B2B | SELF
+  courierPartner     String?
+  vehicleNumber      String?
+  eWayBill           String?
+  rtdDate            DateTime? @db.Date
+  dispatchedDate     DateTime? @db.Date
+  dispatchType       String?
+  laneClassification String?
+
+  // Phase B — shipment (eShipz)
+  shipmentStatus         ShipmentStatus?
+  shipmentSource         Source?
+  eshipStatus            String?
+  trackingNumber         String?
+  trackingStatus         String?
+  trackingSubStatus      String?
+  trackingLatestLocation String?
+  trackingLatestMessage  String?
+  lastCheckpointCity     String?
+  lastCheckpointState    String?
+  trackingLink           String?
+  podLink                String?
+  expectedDate           DateTime?       @db.Date
+  deliveredDate          DateTime?       @db.Date
+  deliveryAttempts       Int             @default(0)
+  pickupAttempts         Int             @default(0)
+  firstOfdDate           DateTime?
+  latestOfdDate          DateTime?
+  newLrNo                String?
+  logisticsComments      String?
+  /// Latest N eShipz checkpoints (city/date/remark/tag/subtag) for the Journey panel
+  checkpoints            Json?
+
+  // Phase C — inward / reconciliation
+  receiptStatus         ReceiptStatus?
+  orderReceivedDate     DateTime?      @db.Date
+  boxesReceived         Int?
+  totalCount            Int?
+  inwardedDate          DateTime?      @db.Date
+  stiBillNo             String?
+  receivingPv           String?
+  shortageQty           Int?
+  excessQty             Int?
+  shortageExcessFileUrl String?
+  adjustmentOnLogic     Boolean?
+  entryStatus           EntryStatus?
+
+  /// Field names last written MANUAL — sync never overwrites these (manual wins)
+  manualFields String[] @default([])
+
+  events    OrderEvent[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  @@index([facility, overallStatus])
+  @@index([shipmentStatus])
+  @@index([areaManager])
+  @@index([storeId, orderDate])
+  @@index([lrNumber])
+}
+
+model OrderEvent {
+  id        String   @id @default(cuid())
+  orderId   String
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  field     String // "status" | "shipmentStatus" | any mutable field
+  fromValue String?
+  toValue   String
+  source    Source // SYNCED | MANUAL
+  actorId   String? // null = system / API sync
+  actorName String?
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([orderId, createdAt])
+}
+
+model Store {
+  id          String  @id @default(cuid())
+  branchCode  String  @unique
+  storeName   String
+  finalStore  String
+  ownership   String? // COCO | FOCO | COFO
+  channel     String // FRANCHISE_STORE | OWN_STORE
+  storeCity   String?
+  storeState  String?
+  zone        String?
+  facility    String // serving WH
+  areaManager String?
+  merchandiser String?
+  rank        Int?
+  sales30d    Float?
+  /// UC `channel` value that identifies this store on B2B retail orders
+  channelCode String? @unique
+}
+
+model RulebookEntry {
+  id                   String    @id @default(cuid())
+  storeId              String
+  orderType            OrderType
+  laneClassification   String?
+  zone                 String?
+  bestTatDays          Int?
+  targetOrderDay       String? // Mon..Sun
+  targetOrderCutoff    String? // "11AM"
+  targetHandoverDay    String?
+  targetHandoverCutoff String?
+  targetPickupDay      String?
+  targetDeliveryDay    String?
+  effectiveFrom        DateTime  @db.Date // versioned monthly
+  effectiveTo          DateTime? @db.Date
+
+  @@index([storeId, orderType, effectiveFrom])
+}
+
+model User {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  role        Role
+  /// Facilities this user may scope to; empty = all (per role policy)
+  facilities  String[] @default([])
+  allView     Boolean  @default(false)
+  areaManager String?
+  active      Boolean  @default(false)
+}
+
+/// One row per sync execution — powers the Admin sync-health cards.
+model SyncRun {
+  id           String    @id @default(cuid())
+  source       String // "UC" | "ESHIPZ"
+  startedAt    DateTime  @default(now())
+  finishedAt   DateTime?
+  ok           Boolean?
+  rowsFetched  Int       @default(0)
+  rowsUpserted Int       @default(0)
+  conflicts    Int       @default(0)
+  errors       Json?
+  note         String?
+
+  @@index([source, startedAt])
+}
+
+/// UC channels with no Store.channelCode match — Admin review queue (PRD: never drop silently).
+model UnmatchedChannel {
+  id              String   @id @default(cuid())
+  channel         String   @unique
+  firstSeenAt     DateTime @default(now())
+  lastSeenAt      DateTime @default(now())
+  orderCount      Int      @default(0)
+  sampleSoNumbers String[] @default([])
+}

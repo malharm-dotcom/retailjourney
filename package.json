@@ -8,15 +8,21 @@
   "scripts": {
     "dev": "next dev",
     "icons": "node scripts/gen-icons.mjs",
-    "prebuild": "node scripts/gen-icons.mjs",
+    "postinstall": "prisma generate",
+    "prebuild": "prisma generate && node scripts/gen-icons.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed"
   },
   "dependencies": {
     "@iconify-json/solar": "^1.2.2",
     "@iconify/utils": "^2.3.0",
+    "@prisma/adapter-pg": "^7.8.0",
+    "@prisma/client": "^7.8.0",
     "@radix-ui/react-dialog": "^1.1.6",
     "@radix-ui/react-dropdown-menu": "^2.1.6",
     "@radix-ui/react-popover": "^1.1.6",
@@ -27,6 +33,7 @@
     "clsx": "^2.1.1",
     "next": "^14.2.30",
     "next-auth": "^4.24.11",
+    "pg": "^8.22.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "sonner": "^1.7.4",
@@ -35,13 +42,17 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.24",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "autoprefixer": "^10.4.21",
+    "dotenv": "^17.4.2",
     "eslint": "^8.57.1",
     "eslint-config-next": "^14.2.30",
     "postcss": "^8.5.3",
+    "prisma": "^7.8.0",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.23.0",
     "typescript": "^5.8.2",
     "vitest": "^2.1.9"
   }

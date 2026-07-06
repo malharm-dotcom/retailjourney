@@ -6,7 +6,7 @@
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
-import { userByEmail, userById } from "./seed/users";
+import { findUserByEmail, findUserById } from "./users";
 import type { Facility, Role } from "./types";
 
 declare module "next-auth" {
@@ -61,7 +61,7 @@ export function buildAuthOptions(): NextAuthOptions {
       credentials: { userId: { label: "Persona", type: "text" } },
       async authorize(credentials) {
         if (!devPersonaEnabled()) return null;
-        const u = credentials?.userId ? userById(credentials.userId) : undefined;
+        const u = credentials?.userId ? await findUserById(credentials.userId) : undefined;
         if (!u || !u.active) return null;
         return { id: u.id, name: u.name, email: u.email };
       },
@@ -79,15 +79,19 @@ export function buildAuthOptions(): NextAuthOptions {
           // hd param is advisory — enforce the domain server-side (PRD §8c).
           const email = user.email ?? "";
           if (!email.endsWith("@snitch.com")) return false;
-          // New @snitch.com logins need an Admin-activated seed/user record.
-          const known = userByEmail(email);
+          // New @snitch.com logins need an Admin-activated user record.
+          const known = await findUserByEmail(email);
           return Boolean(known?.active);
         }
         return true;
       },
       async jwt({ token, user }) {
         if (user?.id) token.uid = user.id;
-        const u = token.uid ? userById(token.uid) : token.email ? userByEmail(token.email) : undefined;
+        const u = token.uid
+          ? await findUserById(token.uid)
+          : token.email
+            ? await findUserByEmail(token.email)
+            : undefined;
         if (u) {
           token.uid = u.id;
           token.role = u.role;
@@ -98,7 +102,7 @@ export function buildAuthOptions(): NextAuthOptions {
         return token;
       },
       async session({ session, token }) {
-        const u = token.uid ? userById(token.uid) : undefined;
+        const u = token.uid ? await findUserById(token.uid) : undefined;
         session.user = {
           id: u?.id ?? token.uid ?? "unknown",
           name: u?.name ?? session.user?.name ?? "Unknown",

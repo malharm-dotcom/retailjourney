@@ -37,7 +37,7 @@ const INTEGRATIONS = [
 export default async function AdminPage() {
   const { user } = await requireSession();
   if (user.role !== "ADMIN") redirect("/");
-  const users = repo.listUsers();
+  const users = await repo.listUsers();
 
   return (
     <>

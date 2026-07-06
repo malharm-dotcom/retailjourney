@@ -1,7 +1,10 @@
 // Data access layer. `OrderRepo` is the seam the PRD's adapter strategy hangs
-// off — M1 ships `InMemoryRepo` on seed data; M2 swaps in a Prisma-backed
-// implementation without touching callers. Every mutation appends OrderEvents.
+// off — M2: methods are async and `repo` delegates lazily to a Postgres-backed
+// PrismaRepo when DATABASE_URL is set, else to the in-memory seed store (local
+// UI work without a DB). Every mutation appends OrderEvents.
 
+import { databaseConfigured } from "./db";
+import { PrismaRepo } from "./repo-prisma";
 import { istDateOf, nowIso } from "./ist";
 import {
   REQUIRED_CAPTURES,
@@ -32,17 +35,17 @@ export interface Actor {
 }
 
 export interface OrderRepo {
-  listOrders(scope: FacilityScope, areaManager?: string): Order[];
-  getOrder(soNumber: string): Order | undefined;
-  listEvents(orderId: string): OrderEvent[];
-  listAllEvents(): OrderEvent[];
-  listStores(): Store[];
-  listRules(): RulebookEntry[];
-  listUsers(): User[];
-  transitionStatus(soNumber: string, to: OrderStatus, actor: Actor, captures?: Partial<Order>, note?: string): Order;
-  transitionShipment(soNumber: string, to: ShipmentStatus, actor: Actor, source: Source, note?: string): Order;
-  recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Order;
-  updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Order;
+  listOrders(scope: FacilityScope, areaManager?: string): Promise<Order[]>;
+  getOrder(soNumber: string): Promise<Order | undefined>;
+  listEvents(orderId: string): Promise<OrderEvent[]>;
+  listAllEvents(): Promise<OrderEvent[]>;
+  listStores(): Promise<Store[]>;
+  listRules(): Promise<RulebookEntry[]>;
+  listUsers(): Promise<User[]>;
+  transitionStatus(soNumber: string, to: OrderStatus, actor: Actor, captures?: Partial<Order>, note?: string): Promise<Order>;
+  transitionShipment(soNumber: string, to: ShipmentStatus, actor: Actor, source: Source, note?: string): Promise<Order>;
+  recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Promise<Order>;
+  updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Promise<Order>;
 }
 
 interface Db {
@@ -52,7 +55,7 @@ interface Db {
 }
 
 // globalThis singleton so the store survives Next.js HMR / route module reloads.
-const g = globalThis as unknown as { __retailjourneyDb?: Db };
+const g = globalThis as unknown as { __retailjourneyDb?: Db; __retailjourneyRepoWarned?: boolean };
 
 function db(): Db {
   if (!g.__retailjourneyDb) {
@@ -97,50 +100,49 @@ function mustGet(d: Db, soNumber: string): Order {
   return o;
 }
 
-/** Fields merchandising / logistics / admin may hand-edit with source tracking. */
 const val = (v: unknown): string => (v == null ? "" : String(v));
 
 class InMemoryRepo implements OrderRepo {
-  listOrders(scope: FacilityScope, areaManager?: string): Order[] {
+  async listOrders(scope: FacilityScope, areaManager?: string): Promise<Order[]> {
     let all = [...db().orders.values()];
     if (scope !== "ALL") all = all.filter((o) => o.facility === scope);
     if (areaManager) all = all.filter((o) => o.areaManager === areaManager);
     return all.sort((a, b) => (a.orderTimestamp < b.orderTimestamp ? 1 : -1));
   }
 
-  getOrder(soNumber: string): Order | undefined {
+  async getOrder(soNumber: string): Promise<Order | undefined> {
     return db().orders.get(soNumber);
   }
 
-  listEvents(orderId: string): OrderEvent[] {
+  async listEvents(orderId: string): Promise<OrderEvent[]> {
     return db()
       .events.filter((e) => e.orderId === orderId)
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 
-  listAllEvents(): OrderEvent[] {
+  async listAllEvents(): Promise<OrderEvent[]> {
     return [...db().events];
   }
 
-  listStores(): Store[] {
+  async listStores(): Promise<Store[]> {
     return STORES;
   }
 
-  listRules(): RulebookEntry[] {
+  async listRules(): Promise<RulebookEntry[]> {
     return RULEBOOK;
   }
 
-  listUsers(): User[] {
+  async listUsers(): Promise<User[]> {
     return USERS;
   }
 
-  transitionStatus(
+  async transitionStatus(
     soNumber: string,
     to: OrderStatus,
     actor: Actor,
     captures: Partial<Order> = {},
     note?: string,
-  ): Order {
+  ): Promise<Order> {
     const d = db();
     const o = mustGet(d, soNumber);
     if (!canTransition(o.status, to)) {
@@ -173,7 +175,7 @@ class InMemoryRepo implements OrderRepo {
     return o;
   }
 
-  transitionShipment(soNumber: string, to: ShipmentStatus, actor: Actor, source: Source, note?: string): Order {
+  async transitionShipment(soNumber: string, to: ShipmentStatus, actor: Actor, source: Source, note?: string): Promise<Order> {
     const d = db();
     const o = mustGet(d, soNumber);
     if (o.status !== "DISPATCHED_TO_STORE") {
@@ -205,7 +207,7 @@ class InMemoryRepo implements OrderRepo {
     return o;
   }
 
-  recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Order {
+  async recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Promise<Order> {
     const d = db();
     const o = mustGet(d, soNumber);
     const from = o.shipmentStatus ?? null;
@@ -219,7 +221,7 @@ class InMemoryRepo implements OrderRepo {
     return o;
   }
 
-  updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Order {
+  async updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Promise<Order> {
     const d = db();
     const o = mustGet(d, soNumber);
     const now = nowIso();
@@ -235,4 +237,35 @@ class InMemoryRepo implements OrderRepo {
   }
 }
 
-export const repo: OrderRepo = new InMemoryRepo();
+// ---------------------------------------------------------------------------
+// Lazy repo selection — DATABASE_URL must be read per-call, never at module
+// load (PRD §11: Coolify injects runtime env after evaluation).
+
+const inMemory = new InMemoryRepo();
+let prismaRepo: OrderRepo | undefined;
+
+function impl(): OrderRepo {
+  if (databaseConfigured()) {
+    if (!prismaRepo) prismaRepo = new PrismaRepo();
+    return prismaRepo;
+  }
+  if (!g.__retailjourneyRepoWarned) {
+    g.__retailjourneyRepoWarned = true;
+    console.warn("[repo] DATABASE_URL not set — using in-memory seed data (state resets on restart)");
+  }
+  return inMemory;
+}
+
+export const repo: OrderRepo = {
+  listOrders: (scope, areaManager) => impl().listOrders(scope, areaManager),
+  getOrder: (soNumber) => impl().getOrder(soNumber),
+  listEvents: (orderId) => impl().listEvents(orderId),
+  listAllEvents: () => impl().listAllEvents(),
+  listStores: () => impl().listStores(),
+  listRules: () => impl().listRules(),
+  listUsers: () => impl().listUsers(),
+  transitionStatus: (soNumber, to, actor, captures, note) => impl().transitionStatus(soNumber, to, actor, captures, note),
+  transitionShipment: (soNumber, to, actor, source, note) => impl().transitionShipment(soNumber, to, actor, source, note),
+  recordNdrAttempt: (soNumber, actor, note) => impl().recordNdrAttempt(soNumber, actor, note),
+  updateFields: (soNumber, patch, actor, source, note) => impl().updateFields(soNumber, patch, actor, source, note),
+};

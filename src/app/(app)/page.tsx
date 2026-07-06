@@ -79,7 +79,7 @@ const EMPTY = (msg: string) => (
 
 export default async function ControlTower() {
   const { user, scope } = await requireSession();
-  const rows = scopedOrders(scope, user);
+  const rows = await scopedOrders(scope, user);
   const today = istToday();
   const policy = policyOf(user.role);
 

@@ -12,20 +12,20 @@ export interface OrderRow {
   breaching: boolean;
 }
 
-export function scopedOrders(scope: FacilityScope, user: User): OrderRow[] {
+export async function scopedOrders(scope: FacilityScope, user: User): Promise<OrderRow[]> {
   const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
-  const rules = repo.listRules();
-  return repo.listOrders(scope, am).map((order) => {
+  const [rules, orders] = await Promise.all([repo.listRules(), repo.listOrders(scope, am)]);
+  return orders.map((order) => {
     const rule = ruleFor(rules, order.storeId, order.type, order.orderDate);
     const sla = computeOrderSla(order, rule);
     return { order, rule, sla, breaching: isBreaching(sla) };
   });
 }
 
-export function orderBySo(soNumber: string): OrderRow | undefined {
-  const order = repo.getOrder(soNumber);
+export async function orderBySo(soNumber: string): Promise<OrderRow | undefined> {
+  const order = await repo.getOrder(soNumber);
   if (!order) return undefined;
-  const rule = ruleFor(repo.listRules(), order.storeId, order.type, order.orderDate);
+  const rule = ruleFor(await repo.listRules(), order.storeId, order.type, order.orderDate);
   const sla = computeOrderSla(order, rule);
   return { order, rule, sla, breaching: isBreaching(sla) };
 }

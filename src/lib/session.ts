@@ -7,14 +7,14 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { buildAuthOptions } from "./auth";
 import { resolveScope } from "./rbac";
-import { userById } from "./seed/users";
+import { findUserById } from "./users";
 import type { FacilityScope, User } from "./types";
 
 export const FACILITY_COOKIE = "retailjourney-facility";
 
 export async function currentUser(): Promise<User> {
   const session = await getServerSession(buildAuthOptions());
-  const u = session?.user?.id ? userById(session.user.id) : undefined;
+  const u = session?.user?.id ? await findUserById(session.user.id) : undefined;
   if (!u || !u.active) redirect("/login");
   return u;
 }

@@ -52,6 +52,15 @@ export interface User {
   active: boolean;
 }
 
+/** One eShipz tracking checkpoint (latest N stored on the order). */
+export interface TrackingCheckpoint {
+  city?: string;
+  date: string; // ISO UTC
+  remark?: string;
+  tag?: string;
+  subtag?: string;
+}
+
 export interface OrderEvent {
   id: string;
   orderId: string;
@@ -142,6 +151,8 @@ export interface Order {
   latestOfdDate?: string;
   newLrNo?: string;
   logisticsComments?: string;
+  /** Latest N eShipz checkpoints for the Journey tracking panel (M2 sync). */
+  checkpoints?: TrackingCheckpoint[];
 
   // Phase C — inward / reconciliation
   receiptStatus?: ReceiptStatus;
@@ -156,6 +167,9 @@ export interface Order {
   shortageExcessFileUrl?: string;
   adjustmentOnLogic?: boolean;
   entryStatus?: EntryStatus;
+
+  /** Field names last written MANUAL — sync never overwrites these (manual wins). */
+  manualFields?: string[];
 
   createdAt: string;
   updatedAt: string;
@@ -176,6 +190,8 @@ export interface Store {
   merchandiser?: string;
   rank?: number;
   sales30d?: number;
+  /** UC `channel` value that identifies this store on B2B retail orders (M2 sync). */
+  channelCode?: string;
 }
 
 export interface RulebookEntry {

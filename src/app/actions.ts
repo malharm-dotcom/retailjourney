@@ -38,10 +38,10 @@ export async function advanceOrderStatus(
   try {
     const user = await currentUser();
     assertCan(user, "canEditWarehouse");
-    const order = repo.getOrder(soNumber);
+    const order = await repo.getOrder(soNumber);
     if (!order) throw new Error(`Order ${soNumber} not found`);
     assertFacility(user, order.facility);
-    repo.transitionStatus(soNumber, to, { id: user.id, name: user.name }, captures, note);
+    await repo.transitionStatus(soNumber, to, { id: user.id, name: user.name }, captures, note);
     revalidatePath("/", "layout");
     return { ok: true };
   } catch (e) {
@@ -57,7 +57,7 @@ export async function setShipmentStatus(
   try {
     const user = await currentUser();
     assertCan(user, "canEditLogistics");
-    repo.transitionShipment(soNumber, to, { id: user.id, name: user.name }, "MANUAL", note);
+    await repo.transitionShipment(soNumber, to, { id: user.id, name: user.name }, "MANUAL", note);
     revalidatePath("/", "layout");
     return { ok: true };
   } catch (e) {
@@ -69,7 +69,7 @@ export async function recordNdr(soNumber: string, note?: string): Promise<Action
   try {
     const user = await currentUser();
     assertCan(user, "canEditLogistics");
-    repo.recordNdrAttempt(soNumber, { id: user.id, name: user.name }, note);
+    await repo.recordNdrAttempt(soNumber, { id: user.id, name: user.name }, note);
     revalidatePath("/", "layout");
     return { ok: true };
   } catch (e) {
@@ -133,10 +133,10 @@ export async function overrideOrderFields(
         assertCan(user, right);
       }
     }
-    const order = repo.getOrder(soNumber);
+    const order = await repo.getOrder(soNumber);
     if (!order) throw new Error(`Order ${soNumber} not found`);
     if (policy.canEditWarehouse && !policy.isAdmin) assertFacility(user, order.facility);
-    repo.updateFields(soNumber, patch, { id: user.id, name: user.name }, "MANUAL", note);
+    await repo.updateFields(soNumber, patch, { id: user.id, name: user.name }, "MANUAL", note);
     revalidatePath("/", "layout");
     return { ok: true };
   } catch (e) {

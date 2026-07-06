@@ -4,13 +4,13 @@ import { Nav } from "./nav";
 import { PersonaMenu } from "./persona-menu";
 import { devPersonaEnabled } from "@/lib/auth";
 import { entitledFacilities, policyOf } from "@/lib/rbac";
-import { USERS } from "@/lib/seed/users";
+import { repo } from "@/lib/repo";
 import type { FacilityScope, User } from "@/lib/types";
 
-export function TopBar({ user, scope }: { user: User; scope: FacilityScope }) {
+export async function TopBar({ user, scope }: { user: User; scope: FacilityScope }) {
   const policy = policyOf(user.role);
   const personas = devPersonaEnabled()
-    ? USERS.filter((u) => u.active).map(({ id, name, role }) => ({ id, name, role }))
+    ? (await repo.listUsers()).filter((u) => u.active).map(({ id, name, role }) => ({ id, name, role }))
     : [];
 
   return (

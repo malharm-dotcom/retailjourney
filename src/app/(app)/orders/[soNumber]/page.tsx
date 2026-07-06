@@ -44,10 +44,10 @@ function eventTitle(e: OrderEvent): string {
 
 export default async function OrderPage({ params }: { params: { soNumber: string } }) {
   const { user } = await requireSession();
-  const row = orderBySo(decodeURIComponent(params.soNumber));
+  const row = await orderBySo(decodeURIComponent(params.soNumber));
   if (!row) notFound();
   const { order: o, sla } = row;
-  const events = repo.listEvents(o.id);
+  const events = await repo.listEvents(o.id);
   const policy = policyOf(user.role);
 
   const stageIdx = STAGES.indexOf(o.overallStatus);

@@ -34,7 +34,9 @@ declare module "next-auth/jwt" {
 }
 
 function devPersonaEnabled(): boolean {
-  return process.env.NODE_ENV !== "production" || process.env.RELAY_DEV_PERSONA === "1";
+  // Gated ONLY on the env flag (any NODE_ENV) — the deployed app relies on the
+  // persona switcher until Google SSO credentials are configured.
+  return process.env.RETAILJOURNEY_DEV_PERSONA === "1";
 }
 
 export function buildAuthOptions(): NextAuthOptions {

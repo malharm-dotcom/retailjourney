@@ -4,7 +4,7 @@
 
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { startSyncScheduler } = await import("./instrumentation-node");
-    startSyncScheduler();
+    const { bootNode } = await import("./instrumentation-node");
+    bootNode();
   }
 }

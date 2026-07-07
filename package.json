@@ -11,7 +11,7 @@
     "postinstall": "prisma generate",
     "prebuild": "prisma generate && node scripts/gen-icons.mjs",
     "build": "next build",
-    "start": "next start",
+    "start": "node scripts/start.mjs",
     "lint": "next lint",
     "test": "vitest run",
     "db:migrate": "prisma migrate dev",

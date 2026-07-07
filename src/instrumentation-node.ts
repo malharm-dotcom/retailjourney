@@ -6,6 +6,19 @@
 
 const g = globalThis as unknown as { __retailjourneySyncTimer?: ReturnType<typeof setInterval> };
 
+/** Boot-time node setup: baseline reference data, then the sync scheduler. */
+export function bootNode(): void {
+  void (async () => {
+    try {
+      const { ensureBaseline } = await import("./lib/baseline");
+      await ensureBaseline();
+    } catch (e) {
+      console.error("[boot] baseline bootstrap failed:", e instanceof Error ? e.message : e);
+    }
+  })();
+  startSyncScheduler();
+}
+
 export function startSyncScheduler(): void {
   if (g.__retailjourneySyncTimer) return;
 

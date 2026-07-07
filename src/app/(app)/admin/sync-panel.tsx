@@ -30,11 +30,13 @@ export interface UnmatchedChannelView {
 }
 
 export interface SourceCard {
-  source: "UC" | "ESHIPZ";
+  source: "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK";
   name: string;
   detail: string;
   icon: string;
   configured: boolean;
+  /** Push-driven sources (webhooks) have no "Sync now" button. */
+  passive?: boolean;
   lastRun?: SyncRunView;
 }
 
@@ -58,7 +60,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
   };
 
   return (
-    <div className="mb-6 grid gap-3.5 md:grid-cols-2">
+    <div className="mb-6 grid gap-3.5 md:grid-cols-2 xl:grid-cols-3">
       {cards.map((c) => {
         const r = c.lastRun;
         const state = !c.configured
@@ -66,7 +68,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
           : !dbReady
             ? { dot: "bg-pending", label: "Waiting for database (DATABASE_URL)" }
             : !r
-              ? { dot: "bg-pending", label: "Configured — no runs yet" }
+              ? { dot: "bg-pending", label: c.passive ? "Configured — waiting for first webhook" : "Configured — no runs yet" }
               : r.ok === false
                 ? { dot: "bg-breach", label: `Last run failed · ${r.firstError ?? `${r.errorCount} errors`}` }
                 : !r.finishedAt
@@ -82,15 +84,17 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
                 <h3 className="text-[13.5px] font-bold">{c.name}</h3>
                 <p className="text-[11.5px] text-mute">{c.detail}</p>
               </div>
-              <Button
-                variant="outline"
-                className="ml-auto px-3 py-1.5 text-[12px]"
-                disabled={pending || !c.configured || !dbReady}
-                onClick={() => trigger(c.source)}
-              >
-                <Icon name="refresh-bold-duotone" size={14} className={cn(running === c.source && "animate-spin")} />
-                Sync now
-              </Button>
+              {c.passive ? null : (
+                <Button
+                  variant="outline"
+                  className="ml-auto px-3 py-1.5 text-[12px]"
+                  disabled={pending || !c.configured || !dbReady}
+                  onClick={() => trigger(c.source as "UC" | "ESHIPZ")}
+                >
+                  <Icon name="refresh-bold-duotone" size={14} className={cn(running === c.source && "animate-spin")} />
+                  Sync now
+                </Button>
+              )}
             </div>
             <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-paper px-3 py-2 text-[12px] font-semibold text-mute">
               <span className={cn("h-2 w-2 shrink-0 rounded-full", state.dot)} />

@@ -8,12 +8,12 @@ import { isoFromEpochMs, istDateOf, nowIso, addDays, istToday } from "../ist";
 import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall } from "../journey";
 import { orderToDb, orderToDomain, storeToDomain } from "../prisma-map";
 import type { Order, ShipmentStatus, Source, Store } from "../types";
-import { EshipzTrackingSource, eshipzConfigured } from "./eshipz-source";
+import { EshipzTrackingSource, eshipzConfigured, mapShipment, type EshipzShipment } from "./eshipz-source";
 import { UcApiOrderSource } from "./uc-source";
 import { ucConfigured } from "./uc-client";
 import type { TrackingUpdate, UcOrderUpdate } from "./types";
 
-export type SyncSource = "UC" | "ESHIPZ";
+export type SyncSource = "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK";
 
 export interface SyncSummary {
   source: SyncSource;
@@ -425,6 +425,56 @@ export async function runEshipzSync(): Promise<SyncSummary> {
   return summary;
 }
 
+/**
+ * Real-time webhook path (complements polling, does not replace it). Reuses the
+ * exact mapping (mapShipment) and write rules (buildShipmentPatch/applySyncPatch)
+ * of the polling sync. Each webhook POST gets a SyncRun row tagged
+ * ESHIPZ_WEBHOOK; unmatched tracking numbers land in that row's errors — a
+ * signal the LR wasn't captured on dispatch, never a silent drop.
+ */
+export async function runEshipzWebhook(shipments: EshipzShipment[]): Promise<SyncSummary> {
+  if (!databaseConfigured()) throw new Error("webhook processing requires DATABASE_URL");
+
+  const run = await startRun("ESHIPZ_WEBHOOK");
+  const summary: SyncSummary = { source: "ESHIPZ_WEBHOOK", ok: false, fetched: shipments.length, upserted: 0, conflicts: 0, errors: [] };
+  const db = prisma();
+
+  for (const s of shipments) {
+    try {
+      const u = mapShipment(s);
+      if (!u) {
+        summary.errors.push("shipment payload without tracking_number/order_id");
+        continue;
+      }
+      // Look up by LR first; fall back to order_id (as SO number, then as LR).
+      let row = await db.order.findFirst({ where: { lrNumber: u.trackingNumber } });
+      if (!row && s.order_id && s.order_id !== u.trackingNumber) {
+        row = await db.order.findFirst({
+          where: { OR: [{ soNumber: s.order_id }, { lrNumber: s.order_id }] },
+        });
+      }
+      if (!row) {
+        summary.errors.push(
+          `unmatched: ${u.trackingNumber}${s.order_id && s.order_id !== u.trackingNumber ? ` (order_id ${s.order_id})` : ""} — no order with this LR`,
+        );
+        continue;
+      }
+      const o = orderToDomain(row);
+      const { patch, events } = buildShipmentPatch(o, u);
+      const conflictEvents = events.filter((e) => e.note === "sync conflict — manual value kept").length;
+      const res = await applySyncPatch(o, patch, events);
+      if (res.changed) summary.upserted += 1;
+      summary.conflicts += res.conflicts + conflictEvents;
+    } catch (e) {
+      summary.errors.push(e instanceof Error ? e.message : String(e));
+    }
+  }
+  summary.ok = summary.errors.length === 0;
+
+  await finishRun(run.id, summary);
+  return summary;
+}
+
 // ---------------------------------------------------------------------------
 
 export async function runAllSyncs(): Promise<SyncSummary[]> {
@@ -440,11 +490,16 @@ export async function getSyncHealth() {
     return { lastRuns: {} as Record<SyncSource, undefined>, recentRuns: [], unmatched: [] };
   }
   const db = prisma();
-  const [uc, eshipz, recentRuns, unmatched] = await Promise.all([
+  const [uc, eshipz, webhook, recentRuns, unmatched] = await Promise.all([
     db.syncRun.findFirst({ where: { source: "UC" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "ESHIPZ" }, orderBy: { startedAt: "desc" } }),
+    db.syncRun.findFirst({ where: { source: "ESHIPZ_WEBHOOK" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findMany({ orderBy: { startedAt: "desc" }, take: 20 }),
     db.unmatchedChannel.findMany({ orderBy: { lastSeenAt: "desc" } }),
   ]);
-  return { lastRuns: { UC: uc ?? undefined, ESHIPZ: eshipz ?? undefined }, recentRuns, unmatched };
+  return {
+    lastRuns: { UC: uc ?? undefined, ESHIPZ: eshipz ?? undefined, ESHIPZ_WEBHOOK: webhook ?? undefined },
+    recentRuns,
+    unmatched,
+  };
 }

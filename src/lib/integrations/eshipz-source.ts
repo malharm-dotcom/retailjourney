@@ -15,19 +15,23 @@ export function eshipzConfigured(): boolean {
   return Boolean(process.env.ESHIPZ_API_TOKEN);
 }
 
+export function eshipzWebhookConfigured(): boolean {
+  return Boolean(process.env.ESHIPZ_WEBHOOK_SECRET);
+}
+
 function baseUrl(): string {
   return (process.env.ESHIPZ_BASE_URL ?? "https://app.eshipz.com").replace(/\/+$/, "");
 }
 
 interface EshipzCheckpoint {
   city?: string;
-  date?: string; // RFC-1123 GMT
+  date?: string; // RFC-1123 GMT (polling) or ISO (webhook) — Date.parse handles both
   remark?: string;
   tag?: string;
   subtag?: string;
 }
 
-interface EshipzShipment {
+export interface EshipzShipment {
   tag?: string;
   subtag?: string;
   checkpoints?: EshipzCheckpoint[]; // newest first
@@ -44,7 +48,10 @@ interface EshipzResponse {
   trackings?: EshipzShipment[];
 }
 
-function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
+/** Shared by the polling sync AND the webhook (same payload shape, so the two
+ *  paths can never diverge in behaviour). Webhook dates are ISO; polling dates
+ *  are RFC-1123 — isoFromRfc1123 uses Date.parse, which accepts both. */
+export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
   const trackingNumber = s.tracking_number ?? s.order_id;
   if (!trackingNumber) return undefined;
 

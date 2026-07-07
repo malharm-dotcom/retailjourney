@@ -7,7 +7,7 @@ import { Icon } from "@/components/icon";
 import { PageHead } from "@/components/shell/page-head";
 import { googleConfigured } from "@/lib/auth";
 import { databaseConfigured } from "@/lib/db";
-import { eshipzConfigured } from "@/lib/integrations/eshipz-source";
+import { eshipzConfigured, eshipzWebhookConfigured } from "@/lib/integrations/eshipz-source";
 import { getSyncHealth } from "@/lib/integrations/sync";
 import { ucConfigured } from "@/lib/integrations/uc-client";
 import { fmtDateTime } from "@/lib/ist";
@@ -66,6 +66,15 @@ export default async function AdminPage() {
       icon: "radar-2-bold-duotone",
       configured: eshipzConfigured(),
       lastRun: toRunView(health.lastRuns.ESHIPZ),
+    },
+    {
+      source: "ESHIPZ_WEBHOOK",
+      name: "eShipz webhook",
+      detail: "Real-time tracking pushes (POST /api/webhooks/eshipz)",
+      icon: "bolt-bold-duotone",
+      configured: eshipzWebhookConfigured(),
+      passive: true,
+      lastRun: toRunView(health.lastRuns.ESHIPZ_WEBHOOK),
     },
   ];
 

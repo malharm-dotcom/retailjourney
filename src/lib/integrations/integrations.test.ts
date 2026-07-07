@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 import { behaviourFor } from "./eshipz-map";
+import { mapShipment } from "./eshipz-source";
 import { deriveWhStatus, mapSaleOrder } from "./uc-map";
 import { findColumn, parseCsv } from "./uc-source";
 
@@ -30,6 +31,32 @@ describe("eshipz-map behaviourFor", () => {
   it("ignores unknown tags", () => {
     expect(behaviourFor("Whatever")).toBe("ignore");
     expect(behaviourFor(undefined)).toBe("ignore");
+  });
+});
+
+describe("eshipz-source mapShipment", () => {
+  it("handles ISO dates (webhook) and RFC-1123 dates (polling) identically", () => {
+    const base = {
+      tag: "Delivered",
+      tracking_number: "LR777",
+      pod_link: "https://pod.example/1",
+      checkpoints: [{ city: "Gurugram", remark: "Delivered", tag: "Delivered", date: "" }],
+    };
+    const iso = mapShipment({ ...base, delivery_date: "2026-07-05T09:30:00.000Z", checkpoints: [{ ...base.checkpoints[0], date: "2026-07-05T09:30:00.000Z" }] });
+    const rfc = mapShipment({ ...base, delivery_date: "Sun, 05 Jul 2026 09:30:00 GMT", checkpoints: [{ ...base.checkpoints[0], date: "Sun, 05 Jul 2026 09:30:00 GMT" }] });
+    expect(iso?.status).toBe("DELIVERED");
+    expect(iso?.deliveredTs).toBe("2026-07-05T09:30:00.000Z");
+    expect(rfc?.deliveredTs).toBe(iso?.deliveredTs);
+    expect(rfc?.checkpoints[0].date).toBe(iso?.checkpoints[0].date);
+    expect(iso?.podLink).toBe("https://pod.example/1");
+  });
+
+  it("falls back to order_id and drops undated checkpoints", () => {
+    const u = mapShipment({ tag: "InTransit", order_id: "SO900", checkpoints: [{ remark: "no date" }] });
+    expect(u?.trackingNumber).toBe("SO900");
+    expect(u?.status).toBe("IN_TRANSIT");
+    expect(u?.checkpoints).toEqual([]);
+    expect(mapShipment({ tag: "InTransit" })).toBeUndefined();
   });
 });
 

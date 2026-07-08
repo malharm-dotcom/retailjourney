@@ -14,7 +14,7 @@ import { fmtDateTime } from "@/lib/ist";
 import { ROLE_POLICY } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
-import { FACILITY_SHORT } from "@/components/shell/facility-switcher";
+import { FACILITY_SHORT } from "@/lib/facilities";
 import { cn } from "@/lib/ui";
 import { SyncHealthCards, UnmatchedChannels, type SourceCard, type SyncRunView } from "./sync-panel";
 

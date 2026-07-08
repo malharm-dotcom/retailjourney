@@ -3,14 +3,9 @@
 import { useRouter } from "next/navigation";
 import { useTransition } from "react";
 import { setFacilityScope } from "@/app/actions";
+import { FACILITY_SHORT } from "@/lib/facilities";
 import { cn } from "@/lib/ui";
 import type { Facility, FacilityScope } from "@/lib/types";
-
-export const FACILITY_SHORT: Record<Facility, string> = {
-  "SAPL-NORTH-TAURU": "North",
-  "SAPL-WH1": "WH-1",
-  "SAPL-WH2": "WH-2",
-};
 
 export function FacilitySwitcher({
   current,

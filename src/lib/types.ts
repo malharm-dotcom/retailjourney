@@ -55,6 +55,7 @@ export interface User {
 /** One eShipz tracking checkpoint (latest N stored on the order). */
 export interface TrackingCheckpoint {
   city?: string;
+  state?: string;
   date: string; // ISO UTC
   remark?: string;
   tag?: string;

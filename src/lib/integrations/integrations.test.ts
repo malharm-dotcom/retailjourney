@@ -18,7 +18,10 @@ describe("eshipz-map behaviourFor", () => {
     expect(behaviourFor("Delivered")).toBe("delivered");
   });
 
-  it("splits exceptions into NDR vs transit", () => {
+  it("splits exceptions into pickup vs NDR vs transit", () => {
+    // Live Bluedart example (AWB 53667523140): pickup cancelled before transit.
+    expect(behaviourFor("Exception", "PickupException")).toBe("pickup_pending");
+    expect(behaviourFor("Exception", "PickupAttemptFailed")).toBe("pickup_pending");
     expect(behaviourFor("Exception", "Undelivered")).toBe("ndr");
     expect(behaviourFor("Exception", "DeliveryAttemptFailed")).toBe("ndr");
     expect(behaviourFor("Exception", "ConsigneeUnavailable")).toBe("ndr");
@@ -49,6 +52,22 @@ describe("eshipz-source mapShipment", () => {
     expect(rfc?.deliveredTs).toBe(iso?.deliveredTs);
     expect(rfc?.checkpoints[0].date).toBe(iso?.checkpoints[0].date);
     expect(iso?.podLink).toBe("https://pod.example/1");
+  });
+
+  it("resolves exception subtags from the latest checkpoint (live v2 shape)", () => {
+    // Real v2 payloads carry no top-level subtag — it lives on the checkpoint.
+    const u = mapShipment({
+      tag: "Exception",
+      tracking_number: "53667523140",
+      checkpoints: [
+        { city: "NEW DELHI", state: "DELHI", date: "Thu, 02 Jul 2026 16:19:00 GMT", remark: "PICKUP CANCELLED BY CALL", tag: "Exception", subtag: "PickupException" },
+        { city: "NEW DELHI", state: "DELHI", date: "Wed, 01 Jul 2026 17:54:00 GMT", remark: "PICKUP HAS BEEN REGISTERED", tag: "InfoReceived", subtag: "PickupRegistered" },
+      ],
+    });
+    expect(u?.status).toBeUndefined(); // pickup exception ≠ IN_TRANSIT
+    expect(u?.subtag).toBe("PickupException");
+    expect(u?.exceptionNote).toBe("PICKUP CANCELLED BY CALL");
+    expect(u?.checkpoints[0].state).toBe("DELHI");
   });
 
   it("falls back to order_id and drops undated checkpoints", () => {

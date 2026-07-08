@@ -8,7 +8,7 @@ import { isoFromEpochMs, istDateOf, nowIso, addDays, istToday } from "../ist";
 import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall } from "../journey";
 import { orderToDb, orderToDomain, storeToDomain } from "../prisma-map";
 import type { Order, ShipmentStatus, Source, Store } from "../types";
-import { EshipzTrackingSource, eshipzConfigured, mapShipment, type EshipzShipment } from "./eshipz-source";
+import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
 import { UcApiOrderSource } from "./uc-source";
 import { ucConfigured } from "./uc-client";
 import type { TrackingUpdate, UcOrderUpdate } from "./types";
@@ -40,6 +40,7 @@ const QUIET_FIELDS = new Set<keyof Order>([
   "trackingStatus",
   "trackingSubStatus",
   "expectedDate",
+  "trackingLink",
   "ucStatus",
   "fulfilledQty",
   "latestOfdDate",
@@ -68,8 +69,22 @@ interface PendingEvent {
   note?: string;
 }
 
+/** Stable stringify — Postgres jsonb does NOT preserve object key order, so a
+ *  plain JSON.stringify compare of stored vs fresh checkpoints always differs
+ *  (verified live: every run re-updated identical checkpoints). */
+function canonical(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(",")}]`;
+  if (v !== null && typeof v === "object") {
+    const entries = Object.entries(v as Record<string, unknown>)
+      .filter(([, val]) => val !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : 1));
+    return `{${entries.map(([k, val]) => `${JSON.stringify(k)}:${canonical(val)}`).join(",")}}`;
+  }
+  return JSON.stringify(v) ?? "undefined";
+}
+
 function eq(a: unknown, b: unknown): boolean {
-  if (typeof a === "object" || typeof b === "object") return JSON.stringify(a) === JSON.stringify(b);
+  if (typeof a === "object" || typeof b === "object") return canonical(a) === canonical(b);
   return a === b;
 }
 
@@ -306,11 +321,13 @@ function buildShipmentPatch(o: Order, u: TrackingUpdate): { patch: Partial<Order
           checkpoints: u.checkpoints,
           trackingLatestMessage: u.checkpoints[0]?.remark,
           lastCheckpointCity: u.checkpoints[0]?.city,
+          lastCheckpointState: u.checkpoints[0]?.state,
           trackingLatestLocation: u.checkpoints[0]?.city,
         }
       : {}),
     ...(u.expectedDate ? { expectedDate: u.expectedDate } : {}),
     ...(u.podLink ? { podLink: u.podLink } : {}),
+    ...(u.trackingLink && !o.trackingLink ? { trackingLink: u.trackingLink } : {}),
   };
   const events: PendingEvent[] = [];
   const next = u.status;
@@ -384,25 +401,49 @@ export async function runEshipzSync(): Promise<SyncSummary> {
   const db = prisma();
 
   try {
-    // Every order with an LR and a non-terminal shipment; SELF has no feed.
+    // Every non-delivered order that has an AWB (trackingNumber, falling back
+    // to lrNumber) — regardless of WH stage, so pickup-pending shipments are
+    // tracked too. SELF (self-delivery) has no eShipz feed.
     const rows = await db.order.findMany({
       where: {
-        lrNumber: { not: null },
-        status: "DISPATCHED_TO_STORE",
-        logisticsPartner: { not: "SELF" },
-        OR: [{ shipmentStatus: null }, { shipmentStatus: { not: "DELIVERED" } }],
+        AND: [
+          { OR: [{ trackingNumber: { not: null } }, { lrNumber: { not: null } }] },
+          { OR: [{ shipmentStatus: null }, { shipmentStatus: { not: "DELIVERED" } }] },
+          { OR: [{ logisticsPartner: null }, { logisticsPartner: { not: "SELF" } }] },
+        ],
       },
     });
     const orders = rows.map(orderToDomain);
-    const byLr = new Map(orders.map((o) => [o.lrNumber!, o]));
+    const byAwb = new Map<string, Order>();
+    for (const o of orders) {
+      if (o.lrNumber) byAwb.set(o.lrNumber, o);
+      if (o.trackingNumber) byAwb.set(o.trackingNumber, o); // preferred key wins
+    }
+    const awbs = [...new Set(orders.map((o) => o.trackingNumber ?? o.lrNumber!))];
     summary.fetched = orders.length;
 
     if (orders.length) {
       const source = new EshipzTrackingSource();
-      const updates = await source.fetchTracking([...byLr.keys()]);
+      const updates = await source.fetchTracking(awbs);
+
+      // v1 enrichment ONLY for matched orders still missing trackingLink.
+      let meta = new Map<string, { trackingLink?: string }>();
+      const needLink = updates
+        .map((u) => byAwb.get(u.trackingNumber))
+        .filter((o): o is Order => Boolean(o && !o.trackingLink))
+        .map((o) => o.trackingNumber ?? o.lrNumber!);
+      if (needLink.length) {
+        try {
+          meta = await fetchShipmentMeta([...new Set(needLink)]);
+        } catch (e) {
+          summary.errors.push(`enrichment: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
+
       for (const u of updates) {
-        const o = byLr.get(u.trackingNumber);
+        const o = byAwb.get(u.trackingNumber);
         if (!o) continue;
+        u.trackingLink = meta.get(u.trackingNumber)?.trackingLink;
         try {
           const { patch, events } = buildShipmentPatch(o, u);
           // Conflict events for manual shipmentStatus are built above; count them.

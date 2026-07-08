@@ -25,6 +25,7 @@ function baseUrl(): string {
 
 interface EshipzCheckpoint {
   city?: string;
+  state?: string;
   date?: string; // RFC-1123 GMT (polling) or ISO (webhook) — Date.parse handles both
   remark?: string;
   tag?: string;
@@ -59,6 +60,7 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
     .slice(0, MAX_CHECKPOINTS)
     .map((c) => ({
       city: c.city,
+      state: c.state,
       date: isoFromRfc1123(c.date) ?? "",
       remark: c.remark,
       tag: c.tag,
@@ -66,7 +68,12 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
     }))
     .filter((c) => c.date !== "");
 
-  const behaviour = behaviourFor(s.tag, s.subtag);
+  // Live v2 payloads carry no top-level subtag — the latest checkpoint with the
+  // same tag holds it (e.g. tag "Exception" → checkpoint subtag "PickupException").
+  const latest = (s.checkpoints ?? [])[0];
+  const subtag = s.subtag ?? (latest && latest.tag === s.tag ? latest.subtag : undefined);
+
+  const behaviour = behaviourFor(s.tag, subtag);
   const deliveredIso = isoFromRfc1123(s.delivery_date);
   const expectedIso = isoFromRfc1123(s.expected_delivery_date);
   const latestException = checkpoints.find((c) => behaviourFor(c.tag, c.subtag) === "transit_exception");
@@ -84,16 +91,20 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
               ? "DELIVERY_FAILED"
               : undefined, // pickup_pending / ignore — no shipment transition
     tag: s.tag,
-    subtag: s.subtag,
+    subtag,
     checkpoints,
     expectedDate: expectedIso ? istDateOf(expectedIso) : undefined,
     deliveredTs: deliveredIso,
-    podLink: s.pod_link,
+    podLink: s.pod_link ?? undefined,
     carrier: s.slug,
+    // Pickup exceptions (e.g. "PICKUP CANCELLED BY CALL") also surface on the
+    // journey timeline even though they cause no shipment transition.
     exceptionNote:
       behaviour === "transit_exception"
-        ? (latestException?.remark ?? s.subtag ?? "Transit exception")
-        : undefined,
+        ? (latestException?.remark ?? subtag ?? "Transit exception")
+        : behaviour === "pickup_pending" && (s.tag ?? "").toUpperCase().includes("EXCEPTION")
+          ? (latest?.remark ?? subtag ?? "Pickup exception")
+          : undefined,
   };
 }
 
@@ -105,14 +116,12 @@ export class EshipzTrackingSource implements TrackingSource {
     const updates: TrackingUpdate[] = [];
     for (let i = 0; i < lrNumbers.length; i += CHUNK_SIZE) {
       const chunk = lrNumbers.slice(i, i + CHUNK_SIZE);
+      // Body is track_id ONLY (comma-separated batch) — verified live 2026-07-08:
+      // adding include_split/include_child_accounts makes the API return [].
       const res = await fetch(`${baseUrl()}/api/v2/trackings`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-API-TOKEN": token },
-        body: JSON.stringify({
-          track_id: chunk.join(","),
-          include_split: true,
-          include_child_accounts: true,
-        }),
+        body: JSON.stringify({ track_id: chunk.join(",") }),
       });
       if (!res.ok) {
         const text = await res.text().catch(() => "");
@@ -127,4 +136,38 @@ export class EshipzTrackingSource implements TrackingSource {
     }
     return updates;
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shipment-metadata enrichment (v1) — used ONLY for fields the v2 tracking
+// payload doesn't carry (trackingLink). One batched call via db_filters $in.
+
+interface EshipzV1Shipment {
+  awb?: string;
+  tracking_link?: string;
+}
+
+/** trackingLink (and future metadata) per AWB, best-effort. */
+export async function fetchShipmentMeta(awbs: string[]): Promise<Map<string, { trackingLink?: string }>> {
+  const token = process.env.ESHIPZ_API_TOKEN;
+  const out = new Map<string, { trackingLink?: string }>();
+  if (!token || awbs.length === 0) return out;
+
+  for (let i = 0; i < awbs.length; i += CHUNK_SIZE) {
+    const chunk = awbs.slice(i, i + CHUNK_SIZE);
+    const filters = encodeURIComponent(JSON.stringify({ awb: { $in: chunk } }));
+    const res = await fetch(`${baseUrl()}/api/v1/get-shipments?db_filters=${filters}`, {
+      headers: { "Content-Type": "application/json", "X-API-TOKEN": token },
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      throw new Error(`eShipz get-shipments failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+    }
+    const body = (await res.json()) as EshipzV1Shipment[] | { data?: EshipzV1Shipment[] };
+    const records = Array.isArray(body) ? body : (body.data ?? []);
+    for (const r of records) {
+      if (r.awb) out.set(r.awb, { trackingLink: r.tracking_link || undefined });
+    }
+  }
+  return out;
 }

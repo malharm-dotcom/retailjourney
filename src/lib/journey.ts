@@ -51,7 +51,10 @@ export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
 }
 
 export function canTransitionShipment(from: ShipmentStatus | undefined, to: ShipmentStatus): boolean {
-  if (!from) return to === "IN_TRANSIT"; // first courier scan
+  // No shipment state yet → any first state is forward: the first poll after
+  // dispatch may find the shipment already OFD / DELIVERED / FAILED, not just
+  // freshly scanned (verified live with a delivered Bluedart AWB).
+  if (!from) return true;
   return SHIPMENT_TRANSITIONS[from]?.includes(to) ?? false;
 }
 

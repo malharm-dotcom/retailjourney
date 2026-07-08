@@ -41,6 +41,10 @@ const NDR_SUBTAG_PATTERNS: RegExp[] = [
   /CUSTOMER.?NOT.?AVAILABLE/,
 ];
 
+/** Exception subtags about pickup — the shipment is NOT in transit yet
+ *  (live example: Bluedart "PickupException" / "PICKUP CANCELLED BY CALL"). */
+const PICKUP_EXCEPTION_PATTERNS: RegExp[] = [/PICKUP/];
+
 /** Exception subtags that are transit hiccups — shipment keeps moving. */
 const TRANSIT_EXCEPTION_PATTERNS: RegExp[] = [
   /INTRANSITEXCEPTION/,
@@ -58,6 +62,7 @@ export function behaviourFor(tag?: string, subtag?: string): EshipzBehaviour {
   const t = norm(tag);
   if (t === "EXCEPTION") {
     const s = norm(subtag);
+    if (PICKUP_EXCEPTION_PATTERNS.some((p) => p.test(s))) return "pickup_pending";
     if (NDR_SUBTAG_PATTERNS.some((p) => p.test(s))) return "ndr";
     if (TRANSIT_EXCEPTION_PATTERNS.some((p) => p.test(s))) return "transit_exception";
     // Unknown exception: keep the shipment moving but surface it on the timeline.

@@ -79,7 +79,8 @@ describe("mapDistributionRows — grain", () => {
         INVOICE_NUMBER: "INV-1",
         TRACKING_NUMBER: "53667523140",
         COURIER_PARTNER: "BLUEDART",
-        ESHIP_STATUS: "InfoReceived", // pickup pending — no transit state yet
+        STATUS: "INFORECEIVED", // pickup pending — no transit state yet
+        ESHIP_STATUS: "pickup_schedule", // internal state — must not drive status
         OVERALL_STATUS: "Pickup Pending",
       }),
       row({
@@ -87,8 +88,9 @@ describe("mapDistributionRows — grain", () => {
         STORE: "SNITCH - COCO - MARGAO",
         INVOICE_NUMBER: "INV-1",
         TRACKING_NUMBER: "98765432",
-        COURIER_PARTNER: "MUDITACARGO",
-        ESHIP_STATUS: "Delivered",
+        COURIER_PARTNER: "MUDITA_CARGO",
+        STATUS: "DELIVERED",
+        ESHIP_STATUS: "success",
         LOGISTICS_DELIVERY_TIMESTAMP: "2026-07-10 18:05:00.000",
         OVERALL_STATUS: "Pickup Pending",
       }),
@@ -138,7 +140,9 @@ describe("mapDistributionRows — grain", () => {
         TARGET_ORDER_CUTOFF: "11AM",
         ORDER_CUTOFF_TS: "2026-07-06 11:00:00.000",
         HANDOVER_DEADLINE_TS: "2026-07-08 18:00:00.000",
-        IDEAL_DELIVERY_DATE: "2026-07-11",
+        PICKUP_TAT: "2026-07-09 23:59:59.000", // NTZ deadline ts (verified live)
+        IDEAL_DELIVERY_DATE: "2026-07-11 23:59:59.000",
+        DELIVERY_TAT: "2026-07-11 23:59:59.000",
         ORDER_PLACEMENT_SLA: "WITHIN_SLA",
       }),
     ]);
@@ -147,7 +151,9 @@ describe("mapDistributionRows — grain", () => {
     expect(m.patch.targetOrderDay).toBe("Mon");
     expect(m.patch.orderCutoffTs).toBe("2026-07-06T05:30:00.000Z");
     expect(m.patch.handoverDeadlineTs).toBe("2026-07-08T12:30:00.000Z");
+    expect(m.patch.pickupTat).toBe("2026-07-09T18:29:59.000Z");
     expect(m.patch.idealDeliveryDate).toBe("2026-07-11");
+    expect(m.patch.deliveryTat).toBe("2026-07-11T18:29:59.000Z");
     expect(m.patch.orderPlacementSla).toBe("WITHIN_SLA");
   });
 });

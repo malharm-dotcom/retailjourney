@@ -139,7 +139,7 @@ export function computeOrderSla(order: Order, rule?: RulebookEntry, now: string 
   const t = {
     orderCutoffTs: order.orderCutoffTs ?? derived.orderCutoffTs,
     handoverDeadlineTs: order.handoverDeadlineTs ?? derived.handoverDeadlineTs,
-    pickupTargetTs: derived.pickupTargetTs,
+    pickupTargetTs: order.pickupTat ?? derived.pickupTargetTs,
     idealDeliveryDate: order.idealDeliveryDate ?? derived.idealDeliveryDate,
   };
   const idealDeliveryTs = t.idealDeliveryDate ? atIstCutoff(t.idealDeliveryDate) : undefined;

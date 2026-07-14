@@ -6,6 +6,7 @@
 import { config as loadEnv } from "dotenv";
 loadEnv({ path: [".env.local", ".env"] });
 
+import { mapDistributionRows } from "../src/lib/distribution-map";
 import { queryDistributionAnalytics, type DistributionRow } from "../src/lib/snowflake";
 
 function distinct(rows: DistributionRow[], key: keyof DistributionRow): string[] {
@@ -72,6 +73,32 @@ async function main() {
       );
     }
   }
+
+  // --- run the real mapper over the live rows (validation a/b) ---
+  const mapped = mapDistributionRows(rows);
+  console.log(`--- mapper: ${mapped.length} orders ---`);
+  const split = mapped.filter((m) => m.shipments.length > 1);
+  console.log(`split orders (2+ shipments): ${split.length}`);
+  for (const m of split.slice(0, 3).concat(mapped.filter((x) => process.argv.slice(2).includes(x.soNumber)))) {
+    console.log(
+      `  ${m.soNumber}: shipments=[${m.shipments
+        .map((s) => `${s.awb}/${s.courier} pollable=${s.isPollable} status=${s.shipmentStatus ?? "∅"}`)
+        .join(" | ")}] seed=${m.overallStatusSeed}`,
+    );
+  }
+  const selfMapped = mapped.filter((m) => m.shipments.some((s) => !s.isPollable));
+  console.log(`orders with non-pollable shipments: ${selfMapped.length}`);
+  const pseudoPollable = mapped
+    .flatMap((m) => m.shipments)
+    .filter((s) => s.isPollable && (/^SN\d+$/.test(s.awb) || /self|porter/i.test(s.courier ?? "")));
+  console.log(`pseudo/self AWBs wrongly marked pollable: ${pseudoPollable.length}`);
+  const nonPollableSample = selfMapped[0]?.shipments.find((s) => !s.isPollable);
+  if (nonPollableSample) {
+    console.log(
+      `  sample non-pollable: ${nonPollableSample.awb} courier=${nonPollableSample.courier} status=${nonPollableSample.shipmentStatus ?? "∅"}`,
+    );
+  }
+  console.log(`distinct STORE keys: ${new Set(mapped.map((m) => m.storeKey)).size}`);
 }
 
 main().catch((e) => {

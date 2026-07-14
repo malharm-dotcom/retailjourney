@@ -186,9 +186,9 @@ export interface Order {
   targetDeliveryDay?: string;
   orderCutoffTs?: string; // ISO UTC
   handoverDeadlineTs?: string; // ISO UTC
-  pickupTat?: string;
+  pickupTat?: string; // ISO UTC — pickup deadline
   idealDeliveryDate?: string; // YYYY-MM-DD
-  deliveryTat?: string;
+  deliveryTat?: string; // ISO UTC — delivery deadline
 
   // Phase-A SLA — Snowflake seeds, app recomputes against actuals every sync
   orderPlacementSla?: string;

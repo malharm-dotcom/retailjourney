@@ -103,10 +103,10 @@ function mapShipmentRow(r: DistributionRow): MappedShipment | undefined {
   if (!awb) return undefined; // still in WH — no AWB yet
   const courier = str(r.COURIER_PARTNER);
 
-  // One normalizer for every source: try the eShipz-vocabulary column first,
-  // then the human status, then the last checkpoint tag/subtag.
+  // One normalizer for every source. STATUS carries the eShipz tag vocabulary
+  // (DELIVERED / INTRANSIT / EXCEPTION …, verified live); ESHIP_STATUS is an
+  // internal state (cancelled / pickup_schedule / success) kept as provenance.
   const shipmentStatus: ShipmentStatus | undefined =
-    statusForTag(str(r.ESHIP_STATUS)) ??
     statusForTag(str(r.STATUS)) ??
     statusForTag(str(r.LAST_CHECKPOINT_TAG), str(r.LAST_CHECKPOINT_SUBTAG));
 
@@ -115,7 +115,7 @@ function mapShipmentRow(r: DistributionRow): MappedShipment | undefined {
     courier,
     isPollable: isPollableAwb(awb, courier),
     shipmentStatus,
-    eshipStatus: str(r.ESHIP_STATUS) ?? str(r.STATUS),
+    eshipStatus: str(r.STATUS) ?? str(r.ESHIP_STATUS),
     logisticsCreatedTs: isoFromIstNtz(r.LOGISTICS_CREATED_TIMESTAMP),
     trackingPickTs: isoFromIstNtz(r.TRACKING_PICK_DATE),
     deliveredTs: isoFromIstNtz(r.LOGISTICS_DELIVERY_TIMESTAMP),
@@ -174,9 +174,9 @@ function mapOrderPatch(r: DistributionRow): Partial<Order> {
     targetDeliveryDay: str(r.TARGET_DELIVERY_DAY),
     orderCutoffTs: isoFromIstNtz(r.ORDER_CUTOFF_TS),
     handoverDeadlineTs: isoFromIstNtz(r.HANDOVER_DEADLINE_TS),
-    pickupTat: str(r.PICKUP_TAT),
+    pickupTat: isoFromIstNtz(r.PICKUP_TAT),
     idealDeliveryDate: istDateFromNtz(r.IDEAL_DELIVERY_DATE),
-    deliveryTat: str(r.DELIVERY_TAT),
+    deliveryTat: isoFromIstNtz(r.DELIVERY_TAT),
 
     // Phase-A SLA seeds — the sync recomputes them against actuals when the
     // deadline timestamps are present

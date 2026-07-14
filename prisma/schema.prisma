@@ -187,9 +187,9 @@ model Order {
   targetDeliveryDay    String?
   orderCutoffTs        DateTime?
   handoverDeadlineTs   DateTime?
-  pickupTat            String?
+  pickupTat            DateTime? // pickup deadline (NTZ "…23:59:59" in source)
   idealDeliveryDate    DateTime? @db.Date
-  deliveryTat          String?
+  deliveryTat          DateTime? // delivery deadline
 
   // Phase-A SLA — Snowflake seeds, app recomputes against actuals every sync
   orderPlacementSla String?

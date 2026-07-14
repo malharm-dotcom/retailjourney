@@ -22,9 +22,9 @@ ADD COLUMN     "targetPickupDay" TEXT,
 ADD COLUMN     "targetDeliveryDay" TEXT,
 ADD COLUMN     "orderCutoffTs" TIMESTAMP(3),
 ADD COLUMN     "handoverDeadlineTs" TIMESTAMP(3),
-ADD COLUMN     "pickupTat" TEXT,
+ADD COLUMN     "pickupTat" TIMESTAMP(3),
 ADD COLUMN     "idealDeliveryDate" DATE,
-ADD COLUMN     "deliveryTat" TEXT,
+ADD COLUMN     "deliveryTat" TIMESTAMP(3),
 ADD COLUMN     "orderPlacementSla" TEXT,
 ADD COLUMN     "handoverSla" TEXT;
 

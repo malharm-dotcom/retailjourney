@@ -6,6 +6,7 @@
 import type {
   Order as DbOrder,
   OrderEvent as DbOrderEvent,
+  OrderShipment as DbOrderShipment,
   RulebookEntry as DbRulebookEntry,
   Store as DbStore,
   User as DbUser,
@@ -14,6 +15,7 @@ import type {
   Facility,
   Order,
   OrderEvent,
+  OrderShipment,
   RulebookEntry,
   Store,
   TrackingCheckpoint,
@@ -37,6 +39,8 @@ export const ORDER_TS_FIELDS = [
   "cancelledTs",
   "firstOfdDate",
   "latestOfdDate",
+  "orderCutoffTs",
+  "handoverDeadlineTs",
   "createdAt",
   "updatedAt",
 ] as const;
@@ -51,6 +55,7 @@ export const ORDER_DATE_FIELDS = [
   "deliveredDate",
   "orderReceivedDate",
   "inwardedDate",
+  "idealDeliveryDate",
 ] as const;
 
 const TS_SET = new Set<string>(ORDER_TS_FIELDS);
@@ -91,6 +96,45 @@ export function orderToDb(patch: Partial<Order>): Record<string, unknown> {
     if (v === undefined) continue;
     if (typeof v === "string" && TS_SET.has(k)) row[k] = new Date(v);
     else if (typeof v === "string" && DATE_SET.has(k)) row[k] = toDay(v);
+    else row[k] = v;
+  }
+  return row;
+}
+
+/** OrderShipment fields stored as DateTime — ISO strings in the domain. */
+export const SHIPMENT_TS_FIELDS = [
+  "logisticsCreatedTs",
+  "trackingPickTs",
+  "deliveredTs",
+  "firstOfdTs",
+  "latestOfdTs",
+  "createdAt",
+  "lastSyncedAt",
+] as const;
+
+/** OrderShipment fields stored as @db.Date — "YYYY-MM-DD" in the domain. */
+export const SHIPMENT_DATE_FIELDS = ["expectedDeliveryDate"] as const;
+
+const SHIPMENT_TS_SET = new Set<string>(SHIPMENT_TS_FIELDS);
+const SHIPMENT_DATE_SET = new Set<string>(SHIPMENT_DATE_FIELDS);
+
+export function shipmentToDomain(r: DbOrderShipment): OrderShipment {
+  const s: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(r)) {
+    if (v === null) continue;
+    if (v instanceof Date) s[k] = SHIPMENT_TS_SET.has(k) ? iso(v) : SHIPMENT_DATE_SET.has(k) ? day(v) : iso(v);
+    else s[k] = v;
+  }
+  return s as unknown as OrderShipment;
+}
+
+/** Domain shipment patch -> Prisma data (skips undefined; string dates -> Date). */
+export function shipmentToDb(patch: Partial<OrderShipment>): Record<string, unknown> {
+  const row: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue;
+    if (typeof v === "string" && SHIPMENT_TS_SET.has(k)) row[k] = new Date(v);
+    else if (typeof v === "string" && SHIPMENT_DATE_SET.has(k)) row[k] = toDay(v);
     else row[k] = v;
   }
   return row;

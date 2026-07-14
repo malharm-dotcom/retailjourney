@@ -7,7 +7,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { databaseConfigured, prisma } from "@/lib/db";
-import { runAllSyncs, runEshipzSync, runUcSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
+import { runAllSyncs, runEshipzSync, runSnowflakeSync, runUcSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { FACILITY_COOKIE, currentUser } from "@/lib/session";
@@ -128,6 +128,7 @@ export async function runSyncNow(source?: SyncSource): Promise<ActionResult & { 
     let summaries: SyncSummary[];
     if (source === "UC") summaries = [await runUcSync()];
     else if (source === "ESHIPZ") summaries = [await runEshipzSync()];
+    else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync()];
     else summaries = await runAllSyncs();
     revalidatePath("/", "layout");
     return { ok: true, summaries };

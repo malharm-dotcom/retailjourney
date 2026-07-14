@@ -3,17 +3,20 @@
 // through OrderEvents with source=SYNCED; fields last edited MANUAL are never
 // overwritten (the conflict is logged instead — manual wins, PRD §2).
 
+import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
 import { prisma, databaseConfigured } from "../db";
 import { isoFromEpochMs, istDateOf, nowIso, addDays, istToday } from "../ist";
-import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall } from "../journey";
-import { orderToDb, orderToDomain, storeToDomain } from "../prisma-map";
-import type { Order, ShipmentStatus, Source, Store } from "../types";
+import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall, rollupShipments } from "../journey";
+import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
+import { slaState } from "../sla";
+import { queryDistributionAnalytics, snowflakeConfigured } from "../snowflake";
+import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
 import { UcApiOrderSource } from "./uc-source";
 import { ucConfigured } from "./uc-client";
 import type { TrackingUpdate, UcOrderUpdate } from "./types";
 
-export type SyncSource = "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK";
+export type SyncSource = "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
 
 export interface SyncSummary {
   source: SyncSource;
@@ -55,6 +58,28 @@ const QUIET_FIELDS = new Set<keyof Order>([
   "createdTs",
   "dispatchedTs",
   "dispatchedDate",
+  // Snowflake enrichment — refreshed hourly, would drown the timeline:
+  "receiverCity",
+  "receiverState",
+  "receiverPostalCode",
+  "sales30d",
+  "storeRank",
+  "bestTat",
+  "targetOrderDay",
+  "targetOrderCutoff",
+  "targetHandoverDay",
+  "targetHandoverCutoff",
+  "targetPickupDay",
+  "targetDeliveryDay",
+  "pickupTat",
+  "deliveryTat",
+  "orderPlacementSla",
+  "handoverSla",
+  "trackingNumber",
+  "courierPartner",
+  "laneClassification",
+  "merchandiser",
+  "areaManager",
 ]);
 
 const val = (v: unknown): string =>
@@ -97,6 +122,8 @@ async function applySyncPatch(
   o: Order,
   patch: Partial<Order>,
   extraEvents: PendingEvent[] = [],
+  source: Source = "SYNCED",
+  overallStatusOverride?: OverallStatus,
 ): Promise<{ changed: boolean; conflicts: number }> {
   const manual = new Set(o.manualFields ?? []);
   const alreadyLogged = new Set(extraEvents.map((e) => e.field));
@@ -115,7 +142,7 @@ async function applySyncPatch(
         field: k,
         fromValue: val(prev),
         toValue: val(v),
-        source: "SYNCED",
+        source,
         actorId: null,
         note: "sync conflict — manual value kept",
       });
@@ -123,14 +150,14 @@ async function applySyncPatch(
     }
     data[k] = v;
     if (!QUIET_FIELDS.has(key) && !alreadyLogged.has(k)) {
-      events.push({ field: k, fromValue: prev == null ? null : val(prev), toValue: val(v), source: "SYNCED", actorId: null });
+      events.push({ field: k, fromValue: prev == null ? null : val(prev), toValue: val(v), source, actorId: null });
     }
   }
 
   if (Object.keys(data).length === 0 && events.length === 0) return { changed: false, conflicts };
 
   const merged = { ...o, ...(data as Partial<Order>) };
-  data.overallStatus = rollupOverall(merged);
+  data.overallStatus = overallStatusOverride ?? rollupOverall(merged);
 
   const db = prisma();
   await db.$transaction([
@@ -413,7 +440,17 @@ export async function runEshipzSync(): Promise<SyncSummary> {
         ],
       },
     });
-    const orders = rows.map(orderToDomain);
+    // Skip non-pollable shipments entirely — self-delivery/porter pseudo-AWBs
+    // ("SN417") have no eShipz feed; Snowflake is their transit authority.
+    const nonPollableAwbs = new Set(
+      (
+        await db.orderShipment.findMany({ where: { isPollable: false }, select: { awb: true } })
+      ).map((r) => r.awb),
+    );
+    const orders = rows.map(orderToDomain).filter((o) => {
+      const awb = o.trackingNumber ?? o.lrNumber!;
+      return isPollableAwb(awb, o.courierPartner ?? o.logisticsPartner) && !nonPollableAwbs.has(awb);
+    });
     const byAwb = new Map<string, Order>();
     for (const o of orders) {
       if (o.lrNumber) byAwb.set(o.lrNumber, o);
@@ -454,6 +491,318 @@ export async function runEshipzSync(): Promise<SyncSummary> {
         } catch (e) {
           summary.errors.push(`${u.trackingNumber}: ${e instanceof Error ? e.message : String(e)}`);
         }
+      }
+    }
+    summary.ok = summary.errors.length === 0;
+  } catch (e) {
+    summary.errors.push(e instanceof Error ? e.message : String(e));
+    summary.ok = false;
+  }
+
+  await finishRun(run.id, summary);
+  return summary;
+}
+
+// ---------------------------------------------------------------------------
+// Snowflake distribution_analytics (hourly) — the order data source that
+// replaced the abandoned UC integration. Order (parent) + OrderShipment
+// (children) grain; precedence manual > eShipz-poller > Snowflake, EXCEPT that
+// the poller only outranks Snowflake on pollable shipments — for
+// self-delivery/porter, Snowflake IS the transit authority.
+
+/** Order-level Phase-B fields owned by the poller on pollable shipments. */
+const ORDER_TRANSIT_FIELDS: (keyof Order)[] = [
+  "shipmentStatus",
+  "shipmentSource",
+  "eshipStatus",
+  "trackingStatus",
+  "trackingSubStatus",
+  "trackingLatestLocation",
+  "trackingLatestMessage",
+  "lastCheckpointCity",
+  "lastCheckpointState",
+  "trackingLink",
+  "podLink",
+  "expectedDate",
+  "deliveredDate",
+  "deliveredTs",
+  "deliveryAttempts",
+  "pickupAttempts",
+  "firstOfdDate",
+  "latestOfdDate",
+  "shippedTs",
+];
+
+function isKnownFacility(f?: string): boolean {
+  return Boolean(f && (FACILITIES as readonly string[]).includes(f));
+}
+
+/** Order-level transit patch from the (single) authoritative child — applied
+ *  only when the order has NO pollable shipment (self-delivery/porter). */
+function transitPatchFromChild(o: Order, s: OrderShipment): Partial<Order> {
+  const patch: Partial<Order> = {
+    eshipStatus: s.eshipStatus,
+    trackingStatus: s.trackingStatus ?? s.eshipStatus,
+    trackingSubStatus: s.trackingSubStatus,
+    trackingLatestLocation: s.trackingLatestLocation,
+    trackingLatestMessage: s.trackingLatestMessage,
+    lastCheckpointCity: s.lastCheckpointCity,
+    lastCheckpointState: s.lastCheckpointState,
+    trackingLink: s.trackingLink,
+    podLink: s.podLink,
+    expectedDate: s.expectedDeliveryDate,
+    deliveryAttempts: s.deliveryAttempts,
+    pickupAttempts: s.pickupAttempts,
+    firstOfdDate: s.firstOfdTs,
+    latestOfdDate: s.latestOfdTs,
+  };
+  const next = s.shipmentStatus;
+  const manualShipment = (o.manualFields ?? []).includes("shipmentStatus");
+  if (next && next !== o.shipmentStatus && !manualShipment && canTransitionShipment(o.shipmentStatus, next)) {
+    patch.shipmentStatus = next;
+    patch.shipmentSource = "SYNCED_SNOWFLAKE";
+    if (next === "IN_TRANSIT" && !o.shippedTs) patch.shippedTs = s.trackingPickTs ?? nowIso();
+    if (next === "DELIVERED") {
+      const deliveredTs = s.deliveredTs ?? nowIso();
+      patch.deliveredTs = deliveredTs;
+      patch.deliveredDate = istDateOf(deliveredTs);
+    }
+  }
+  return patch;
+}
+
+/** Recompute the Phase-A SLA verdicts against actuals (Snowflake only seeds). */
+function phaseASla(patch: Partial<Order>, existing?: Order): Partial<Order> {
+  const out: Partial<Order> = {};
+  const orderTs = patch.orderTimestamp ?? existing?.orderTimestamp;
+  const placement = slaState(patch.orderCutoffTs ?? existing?.orderCutoffTs, orderTs);
+  if (placement) out.orderPlacementSla = placement;
+  const handoverActual =
+    existing?.dispatchedTs ?? patch.manifestedTs ?? existing?.manifestedTs;
+  const handover = slaState(patch.handoverDeadlineTs ?? existing?.handoverDeadlineTs, handoverActual);
+  if (handover) out.handoverSla = handover;
+  return out;
+}
+
+async function upsertShipments(
+  soNumber: string,
+  mapped: MappedOrder["shipments"],
+  existingChildren: OrderShipment[],
+): Promise<{ children: OrderShipment[]; events: PendingEvent[] }> {
+  const db = prisma();
+  const events: PendingEvent[] = [];
+  const children = new Map(existingChildren.map((c) => [c.awb, c]));
+
+  for (const s of mapped) {
+    const prev = children.get(s.awb);
+    const { awb, ...rest } = s;
+    const data = shipmentToDb(rest);
+    // Never regress a child that already reached DELIVERED (terminal).
+    if (prev?.shipmentStatus === "DELIVERED") {
+      delete data.shipmentStatus;
+      delete data.deliveredTs;
+    }
+    const row = await db.orderShipment.upsert({
+      where: { soNumber_awb: { soNumber, awb } },
+      create: { soNumber, awb, ...data } as never,
+      update: data,
+    });
+    const next = shipmentToDomain(row);
+    children.set(awb, next);
+    if (!prev) {
+      events.push({
+        field: "shipment",
+        fromValue: null,
+        toValue: awb,
+        source: "SYNCED_SNOWFLAKE",
+        actorId: null,
+        note: `AWB ${awb}${s.courier ? ` via ${s.courier}` : ""}${s.isPollable ? "" : " (not pollable)"}`,
+      });
+    } else if (s.shipmentStatus && next.shipmentStatus !== prev.shipmentStatus) {
+      events.push({
+        field: "shipmentStatus",
+        fromValue: prev.shipmentStatus ?? null,
+        toValue: next.shipmentStatus ?? "",
+        source: "SYNCED_SNOWFLAKE",
+        actorId: null,
+        note: `AWB ${awb}`,
+      });
+    }
+  }
+  return { children: [...children.values()], events };
+}
+
+async function createOrderFromSnowflake(m: MappedOrder, store: Store): Promise<void> {
+  const db = prisma();
+  const status: OrderStatus = m.shipments.length
+    ? "DISPATCHED_TO_STORE"
+    : m.patch.manifestedTs
+      ? "RTS_LOGIC"
+      : "NOT_STARTED";
+  const shipRollup = rollupShipments(m.shipments.map((s) => s.shipmentStatus));
+  const primary = m.shipments.find((s) => s.isPollable) ?? m.shipments[0];
+
+  const base: Partial<Order> = {
+    soNumber: m.soNumber,
+    orderDate: m.patch.orderDate ?? istToday(),
+    orderTimestamp: m.patch.orderTimestamp ?? nowIso(),
+    channel: store.channel,
+    storeId: store.id,
+    storeNameFormat: store.storeName,
+    finalStore: store.finalStore,
+    ownership: store.ownership,
+    state: store.storeState,
+    type: "OTHER",
+    qty: 0,
+    ...m.patch,
+    facility: isKnownFacility(m.patch.facility) ? m.patch.facility : store.facility,
+    status,
+    statusSource: "SYNCED_SNOWFLAKE",
+    deliveryAttempts: primary?.deliveryAttempts ?? 0,
+    pickupAttempts: primary?.pickupAttempts ?? 0,
+    trackingNumber: primary?.awb,
+    courierPartner: primary?.courier,
+    ...phaseASla(m.patch),
+  };
+  base.overallStatus = m.shipments.length
+    ? rollupOverall({ status, shipmentStatus: shipRollup })
+    : (m.overallStatusSeed ?? rollupOverall({ status, shipmentStatus: undefined }));
+  // A lone non-pollable shipment makes Snowflake the transit authority from birth.
+  const pollable = m.shipments.some((s) => s.isPollable);
+  if (!pollable && primary) {
+    Object.assign(
+      base,
+      transitPatchFromChild({ ...(base as Order), manualFields: [] }, primary as OrderShipment),
+    );
+    base.overallStatus = rollupOverall({ status, shipmentStatus: base.shipmentStatus });
+  }
+
+  const row = await db.order.create({ data: orderToDb(base) as never });
+  const events: PendingEvent[] = [
+    {
+      field: "status",
+      fromValue: null,
+      toValue: status,
+      source: "SYNCED_SNOWFLAKE",
+      actorId: null,
+      note: "Order ingested from Snowflake distribution_analytics",
+    },
+  ];
+  const { events: shipmentEvents } = await upsertShipments(m.soNumber, m.shipments, []);
+  await db.orderEvent.createMany({
+    data: [...events, ...shipmentEvents].map((e) => ({ ...e, orderId: row.id })),
+  });
+}
+
+async function syncSnowflakeOrder(
+  m: MappedOrder,
+  existing: Order,
+  existingChildren: OrderShipment[],
+): Promise<{ changed: boolean; conflicts: number }> {
+  // Terminal-freeze: a delivered rollup (or all children delivered) is never
+  // reopened by the hourly sync — spine/enrichment may still refresh.
+  const frozen =
+    existing.overallStatus === "DELIVERED" ||
+    (existingChildren.length > 0 && existingChildren.every((c) => c.shipmentStatus === "DELIVERED"));
+
+  const { children, events } = await upsertShipments(m.soNumber, m.shipments, existingChildren);
+
+  const patch: Partial<Order> = { ...m.patch, ...phaseASla(m.patch, existing) };
+  if (!isKnownFacility(patch.facility)) delete patch.facility;
+
+  const inferred: OrderStatus | undefined = m.shipments.length
+    ? "DISPATCHED_TO_STORE"
+    : m.patch.manifestedTs
+      ? "RTS_LOGIC"
+      : undefined;
+  patch.status = frozen ? undefined : guardedStatus(existing.status, inferred);
+  if (patch.status) patch.statusSource = "SYNCED_SNOWFLAKE";
+
+  const hasPollable = children.some((c) => c.isPollable);
+  let overallOverride: OverallStatus | undefined;
+
+  if (frozen) {
+    for (const f of ORDER_TRANSIT_FIELDS) delete patch[f];
+  } else if (children.length) {
+    if (!hasPollable) {
+      // Self-delivery/porter: Snowflake owns the order-level transit fields.
+      const primary = children[children.length - 1];
+      Object.assign(patch, transitPatchFromChild(existing, primary));
+    } else {
+      // The poller owns transit on pollable shipments — Snowflake only fills
+      // the keys the poller needs and never touches its fields.
+      if (!existing.trackingNumber) {
+        const p = children.find((c) => c.isPollable)!;
+        patch.trackingNumber = p.awb;
+        if (!existing.courierPartner) patch.courierPartner = p.courier;
+      }
+    }
+    // Split-dispatch rollup: least-progressed child wins; the poller-tracked
+    // AWB uses the fresher order-level state.
+    const states = children.map((c) =>
+      c.isPollable && (existing.trackingNumber === c.awb || existing.lrNumber === c.awb)
+        ? (existing.shipmentStatus ?? c.shipmentStatus)
+        : c.shipmentStatus,
+    );
+    overallOverride = rollupOverall({
+      status: patch.status ?? existing.status,
+      shipmentStatus: rollupShipments(states),
+    });
+  } else if (m.overallStatusSeed) {
+    // Zero children: Snowflake's OVERALL_STATUS is used verbatim (seed only).
+    overallOverride = m.overallStatusSeed;
+  }
+
+  return applySyncPatch(existing, patch, events, "SYNCED_SNOWFLAKE", overallOverride);
+}
+
+export async function runSnowflakeSync(): Promise<SyncSummary> {
+  if (!databaseConfigured()) throw new Error("Snowflake sync requires DATABASE_URL");
+  if (!snowflakeConfigured()) {
+    throw new Error("Snowflake sync requires SNOWFLAKE_ACCOUNT / SNOWFLAKE_USERNAME / SNOWFLAKE_PRIVATE_KEY");
+  }
+
+  const run = await startRun("SNOWFLAKE");
+  const summary: SyncSummary = { source: "SNOWFLAKE", ok: false, fetched: 0, upserted: 0, conflicts: 0, errors: [] };
+  const db = prisma();
+
+  try {
+    const rows = await queryDistributionAnalytics();
+    summary.fetched = rows.length;
+    const mapped = mapDistributionRows(rows);
+
+    const stores = (await db.store.findMany()).map(storeToDomain);
+    const norm = (s: string) => s.trim().toUpperCase();
+    const byFinalStore = new Map(stores.map((s) => [norm(s.finalStore), s]));
+    const byChannelCode = new Map(
+      stores.filter((s) => s.channelCode).map((s) => [norm(s.channelCode!), s]),
+    );
+
+    for (const m of mapped) {
+      try {
+        const existingRow = await db.order.findUnique({ where: { soNumber: m.soNumber } });
+        const store = m.storeKey
+          ? (byFinalStore.get(norm(m.storeKey)) ?? byChannelCode.get(norm(m.storeKey)))
+          : undefined;
+
+        if (!existingRow) {
+          if (!store) {
+            // Admin review queue — an unmatched STORE is never dropped silently.
+            await recordUnmatchedChannel(m.storeKey || "(no store)", m.soNumber);
+            continue;
+          }
+          await createOrderFromSnowflake(m, store);
+          summary.upserted += 1;
+        } else {
+          const existingChildren = (
+            await db.orderShipment.findMany({ where: { soNumber: m.soNumber } })
+          ).map(shipmentToDomain);
+          const res = await syncSnowflakeOrder(m, orderToDomain(existingRow), existingChildren);
+          if (res.changed || m.shipments.length) summary.upserted += 1;
+          summary.conflicts += res.conflicts;
+        }
+      } catch (e) {
+        summary.errors.push(`${m.soNumber}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
     summary.ok = summary.errors.length === 0;
@@ -518,6 +867,8 @@ export async function runEshipzWebhook(shipments: EshipzShipment[]): Promise<Syn
 
 // ---------------------------------------------------------------------------
 
+/** The 15-min tick (UC + eShipz poller). Snowflake runs on its OWN hourly
+ *  cadence (instrumentation-node.ts) — never merged into this slot. */
 export async function runAllSyncs(): Promise<SyncSummary[]> {
   const out: SyncSummary[] = [];
   if (ucConfigured()) out.push(await runUcSync());
@@ -531,15 +882,21 @@ export async function getSyncHealth() {
     return { lastRuns: {} as Record<SyncSource, undefined>, recentRuns: [], unmatched: [] };
   }
   const db = prisma();
-  const [uc, eshipz, webhook, recentRuns, unmatched] = await Promise.all([
+  const [uc, eshipz, webhook, snowflake, recentRuns, unmatched] = await Promise.all([
     db.syncRun.findFirst({ where: { source: "UC" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "ESHIPZ" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "ESHIPZ_WEBHOOK" }, orderBy: { startedAt: "desc" } }),
+    db.syncRun.findFirst({ where: { source: "SNOWFLAKE" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findMany({ orderBy: { startedAt: "desc" }, take: 20 }),
     db.unmatchedChannel.findMany({ orderBy: { lastSeenAt: "desc" } }),
   ]);
   return {
-    lastRuns: { UC: uc ?? undefined, ESHIPZ: eshipz ?? undefined, ESHIPZ_WEBHOOK: webhook ?? undefined },
+    lastRuns: {
+      UC: uc ?? undefined,
+      ESHIPZ: eshipz ?? undefined,
+      ESHIPZ_WEBHOOK: webhook ?? undefined,
+      SNOWFLAKE: snowflake ?? undefined,
+    },
     recentRuns,
     unmatched,
   };

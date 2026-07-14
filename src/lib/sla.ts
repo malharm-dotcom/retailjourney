@@ -101,7 +101,14 @@ export function ruleFor(
  *   pickup  = next target pickup day on/after handover
  *   delivery= next target delivery day on/after pickup
  */
-export function deriveTargets(orderDate: string, rule?: RulebookEntry) {
+export interface DerivedTargets {
+  orderCutoffTs?: string;
+  handoverDeadlineTs?: string;
+  pickupTargetTs?: string;
+  idealDeliveryDate?: string;
+}
+
+export function deriveTargets(orderDate: string, rule?: RulebookEntry): DerivedTargets {
   if (!rule) return {};
   const cutoffDate = rule.targetOrderDay ? nextWeekday(orderDate, rule.targetOrderDay) : orderDate;
   const orderCutoffTs = atIstCutoff(cutoffDate, rule.targetOrderCutoff);
@@ -125,7 +132,16 @@ export function deriveTargets(orderDate: string, rule?: RulebookEntry) {
 
 /** Compute every leg's SLA for one order. */
 export function computeOrderSla(order: Order, rule?: RulebookEntry, now: string = nowIso()): OrderSla {
-  const t = deriveTargets(order.orderDate, rule);
+  // Snowflake-persisted deadlines are the sole authority when present (the
+  // rulebook values are baked into each distribution_analytics row); the
+  // rulebook derivation is the fallback for orders that predate that sync.
+  const derived = deriveTargets(order.orderDate, rule);
+  const t = {
+    orderCutoffTs: order.orderCutoffTs ?? derived.orderCutoffTs,
+    handoverDeadlineTs: order.handoverDeadlineTs ?? derived.handoverDeadlineTs,
+    pickupTargetTs: derived.pickupTargetTs,
+    idealDeliveryDate: order.idealDeliveryDate ?? derived.idealDeliveryDate,
+  };
   const idealDeliveryTs = t.idealDeliveryDate ? atIstCutoff(t.idealDeliveryDate) : undefined;
   const expectedTs = order.expectedDate ? atIstCutoff(order.expectedDate) : undefined;
   const deliveredTs =

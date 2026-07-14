@@ -28,7 +28,7 @@ export type ShipmentStatus = "IN_TRANSIT" | "OUT_FOR_DELIVERY" | "DELIVERED" | "
 export type ReceiptStatus = "RECEIVED" | "INWARDED" | "CLOSED";
 
 export type EntryStatus = "OPEN" | "CLOSED";
-export type Source = "SYNCED" | "MANUAL";
+export type Source = "SYNCED" | "SYNCED_SNOWFLAKE" | "MANUAL";
 
 export type Role =
   | "ADMIN"
@@ -169,11 +169,76 @@ export interface Order {
   adjustmentOnLogic?: boolean;
   entryStatus?: EntryStatus;
 
+  // Snowflake distribution_analytics — spine enrichment (source SYNCED_SNOWFLAKE)
+  receiverCity?: string;
+  receiverState?: string;
+  receiverPostalCode?: string;
+  sales30d?: number;
+  storeRank?: number;
+  bestTat?: number;
+
+  // Deadlines/TAT — Snowflake sole authority; only manual overrides
+  targetOrderDay?: string;
+  targetOrderCutoff?: string;
+  targetHandoverDay?: string;
+  targetHandoverCutoff?: string;
+  targetPickupDay?: string;
+  targetDeliveryDay?: string;
+  orderCutoffTs?: string; // ISO UTC
+  handoverDeadlineTs?: string; // ISO UTC
+  pickupTat?: string;
+  idealDeliveryDate?: string; // YYYY-MM-DD
+  deliveryTat?: string;
+
+  // Phase-A SLA — Snowflake seeds, app recomputes against actuals every sync
+  orderPlacementSla?: string;
+  handoverSla?: string;
+
   /** Field names last written MANUAL — sync never overwrites these (manual wins). */
   manualFields?: string[];
 
   createdAt: string;
   updatedAt: string;
+}
+
+/** One physical shipment (AWB) of an order — 0..n per order, 2+ on a split
+ *  dispatch. Unique on (soNumber, awb). */
+export interface OrderShipment {
+  id: string;
+  soNumber: string;
+  awb: string;
+  courier?: string;
+  /** FALSE for self-delivery/porter pseudo-AWBs — the eShipz poller skips these. */
+  isPollable: boolean;
+  shipmentStatus?: ShipmentStatus;
+  eshipStatus?: string;
+  logisticsCreatedTs?: string; // ISO UTC
+  trackingPickTs?: string;
+  deliveredTs?: string;
+  expectedDeliveryDate?: string; // YYYY-MM-DD
+  firstOfdTs?: string;
+  latestOfdTs?: string;
+  deliveryAttempts?: number;
+  pickupAttempts?: number;
+  trackingLink?: string;
+  trackingStatus?: string;
+  trackingSubStatus?: string;
+  trackingLatestLocation?: string;
+  trackingLatestMessage?: string;
+  lastCheckpointCity?: string;
+  lastCheckpointState?: string;
+  lastCheckpointRemark?: string;
+  lastCheckpointSubtag?: string;
+  lastCheckpointTag?: string;
+  podLink?: string;
+  packageCount?: number;
+  pickupSla?: string;
+  deliverySla?: string;
+  logisticsDeliverySla?: string;
+  perfectOrderSla?: string;
+  source: string; // SNOWFLAKE | ESHIPZ | MANUAL
+  createdAt: string;
+  lastSyncedAt: string;
 }
 
 export interface Store {

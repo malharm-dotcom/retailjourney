@@ -10,6 +10,7 @@ import { databaseConfigured } from "@/lib/db";
 import { eshipzConfigured, eshipzWebhookConfigured } from "@/lib/integrations/eshipz-source";
 import { getSyncHealth } from "@/lib/integrations/sync";
 import { ucConfigured } from "@/lib/integrations/uc-client";
+import { snowflakeConfigured } from "@/lib/snowflake";
 import { fmtDateTime } from "@/lib/ist";
 import { ROLE_POLICY } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
@@ -66,6 +67,14 @@ export default async function AdminPage() {
       icon: "radar-2-bold-duotone",
       configured: eshipzConfigured(),
       lastRun: toRunView(health.lastRuns.ESHIPZ),
+    },
+    {
+      source: "SNOWFLAKE",
+      name: "Snowflake",
+      detail: "distribution_analytics — orders, deadlines, split shipments (hourly)",
+      icon: "database-bold-duotone",
+      configured: snowflakeConfigured(),
+      lastRun: toRunView(health.lastRuns.SNOWFLAKE),
     },
     {
       source: "ESHIPZ_WEBHOOK",

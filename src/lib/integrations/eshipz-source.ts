@@ -5,7 +5,7 @@
 
 import { isoFromRfc1123, istDateOf } from "../ist";
 import type { TrackingCheckpoint } from "../types";
-import { behaviourFor } from "./eshipz-map";
+import { behaviourFor, statusForTag } from "./eshipz-map";
 import type { TrackingSource, TrackingUpdate } from "./types";
 
 const CHUNK_SIZE = 50;
@@ -80,16 +80,7 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
 
   return {
     trackingNumber,
-    status:
-      behaviour === "in_transit" || behaviour === "transit_exception"
-        ? "IN_TRANSIT"
-        : behaviour === "ofd"
-          ? "OUT_FOR_DELIVERY"
-          : behaviour === "delivered"
-            ? "DELIVERED"
-            : behaviour === "ndr"
-              ? "DELIVERY_FAILED"
-              : undefined, // pickup_pending / ignore — no shipment transition
+    status: statusForTag(s.tag, subtag), // pickup_pending / ignore → undefined
     tag: s.tag,
     subtag,
     checkpoints,

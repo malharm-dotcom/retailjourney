@@ -13,7 +13,7 @@ import { LEG_LABEL } from "@/lib/sla";
 import { policyOf } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
-import type { OrderEvent, OverallStatus } from "@/lib/types";
+import type { OrderEvent, OverallStatus, Source } from "@/lib/types";
 import {
   OVERALL_VISUAL,
   RECEIPT_VISUAL,
@@ -54,7 +54,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
   const terminal = ["CANCELLED", "UNFULFILLABLE"].includes(o.status);
 
   // Per-field provenance: the last event wins; untouched fields read as synced.
-  const lastSource = new Map<string, "SYNCED" | "MANUAL">();
+  const lastSource = new Map<string, Source>();
   for (const e of events) lastSource.set(e.field, e.source);
 
   return (
@@ -158,7 +158,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
                     </div>
                     <div className="mt-0.5 text-[12px] text-mute">
                       {e.fromValue ? `from ${eventTitle({ ...e, toValue: e.fromValue })} · ` : ""}
-                      {e.actorName ?? (e.source === "SYNCED" ? "System sync" : "Unknown")}
+                      {e.actorName ?? (e.source !== "MANUAL" ? "System sync" : "Unknown")}
                       {e.note ? <span className="text-ink-soft"> — “{e.note}”</span> : null}
                     </div>
                   </div>

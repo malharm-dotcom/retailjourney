@@ -8,6 +8,8 @@
 //   ndr               — DELIVERY_FAILED + attempts++
 //   transit_exception — stays IN_TRANSIT, exception checkpoint logged as OrderEvent
 
+import type { ShipmentStatus } from "../types";
+
 export type EshipzBehaviour =
   | "pickup_pending"
   | "in_transit"
@@ -20,6 +22,9 @@ export type EshipzBehaviour =
 const TAG_BEHAVIOUR: Record<string, EshipzBehaviour> = {
   INFORECEIVED: "pickup_pending",
   PENDING: "pickup_pending",
+  // Snowflake distribution_analytics human-form statuses (same enum space —
+  // its STATUS column is fed by the same eShipz pipeline).
+  PICKUPPENDING: "pickup_pending",
   PICKEDUP: "in_transit",
   INTRANSIT: "in_transit",
   OUTFORDELIVERY: "ofd",
@@ -69,4 +74,26 @@ export function behaviourFor(tag?: string, subtag?: string): EshipzBehaviour {
     return "transit_exception";
   }
   return TAG_BEHAVIOUR[t] ?? "ignore";
+}
+
+/**
+ * Behaviour → ShipmentStatus, THE single tag normalizer for every source
+ * (eShipz polling, eShipz webhook, Snowflake distribution_analytics) so all
+ * status values land in the same enum space. undefined = no transition
+ * (pickup_pending / unknown tag).
+ */
+export function statusForTag(tag?: string, subtag?: string): ShipmentStatus | undefined {
+  switch (behaviourFor(tag, subtag)) {
+    case "in_transit":
+    case "transit_exception":
+      return "IN_TRANSIT";
+    case "ofd":
+      return "OUT_FOR_DELIVERY";
+    case "delivered":
+      return "DELIVERED";
+    case "ndr":
+      return "DELIVERY_FAILED";
+    default:
+      return undefined;
+  }
 }

@@ -62,6 +62,7 @@ enum EntryStatus {
 
 enum Source {
   SYNCED
+  SYNCED_SNOWFLAKE
   MANUAL
 }
 
@@ -168,10 +169,37 @@ model Order {
   adjustmentOnLogic     Boolean?
   entryStatus           EntryStatus?
 
+  // Snowflake distribution_analytics — spine enrichment (source SYNCED_SNOWFLAKE)
+  receiverCity       String?
+  receiverState      String?
+  receiverPostalCode String?
+  sales30d           Float?
+  storeRank          Int?
+  bestTat            Int?
+
+  // Deadlines/TAT — Snowflake is the SOLE authority (rulebook values baked into
+  // each row); only manual can override, the app never recomputes these.
+  targetOrderDay       String?
+  targetOrderCutoff    String?
+  targetHandoverDay    String?
+  targetHandoverCutoff String?
+  targetPickupDay      String?
+  targetDeliveryDay    String?
+  orderCutoffTs        DateTime?
+  handoverDeadlineTs   DateTime?
+  pickupTat            String?
+  idealDeliveryDate    DateTime? @db.Date
+  deliveryTat          String?
+
+  // Phase-A SLA — Snowflake seeds, app recomputes against actuals every sync
+  orderPlacementSla String?
+  handoverSla       String?
+
   /// Field names last written MANUAL — sync never overwrites these (manual wins)
   manualFields String[] @default([])
 
   events    OrderEvent[]
+  shipments OrderShipment[]
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
 
@@ -180,6 +208,60 @@ model Order {
   @@index([areaManager])
   @@index([storeId, orderDate])
   @@index([lrNumber])
+}
+
+/// One physical shipment (AWB) of an order. distribution_analytics is
+/// order-grain except when an order splits into multiple AWBs — keying on the
+/// order alone silently collapses exactly the split-dispatch signal this tool
+/// exists to surface (observed live: SPMARG15638, one AWB "Pickup Pending",
+/// one "Delivered"). 0 rows while in WH (no AWB yet), normally 1, 2+ on split.
+model OrderShipment {
+  id       String @id @default(cuid())
+  soNumber String
+  order    Order  @relation(fields: [soNumber], references: [soNumber], onDelete: Cascade)
+  awb      String
+  courier  String?
+  /// FALSE for self-delivery/porter pseudo-AWBs ("SN417") — the eShipz poller
+  /// skips these; Snowflake stays the transit authority for them.
+  isPollable Boolean @default(false)
+
+  // Phase B transit state (normalized through the eShipz tag normalizer)
+  shipmentStatus         ShipmentStatus?
+  eshipStatus            String?
+  logisticsCreatedTs     DateTime?
+  trackingPickTs         DateTime?
+  deliveredTs            DateTime?
+  expectedDeliveryDate   DateTime? @db.Date
+  firstOfdTs             DateTime?
+  latestOfdTs            DateTime?
+  deliveryAttempts       Int?
+  pickupAttempts         Int?
+  trackingLink           String?
+  trackingStatus         String?
+  trackingSubStatus      String?
+  trackingLatestLocation String?
+  trackingLatestMessage  String?
+  lastCheckpointCity     String?
+  lastCheckpointState    String?
+  lastCheckpointRemark   String?
+  lastCheckpointSubtag   String?
+  lastCheckpointTag      String?
+  podLink                String?
+  packageCount           Float?
+
+  // Per-shipment SLA legs — Snowflake seeds, app recomputes against actuals
+  pickupSla            String?
+  deliverySla          String?
+  logisticsDeliverySla String?
+  perfectOrderSla      String?
+
+  source       String   @default("SNOWFLAKE") // SNOWFLAKE | ESHIPZ | MANUAL
+  createdAt    DateTime @default(now())
+  lastSyncedAt DateTime @updatedAt
+
+  @@unique([soNumber, awb])
+  @@index([awb])
+  @@index([isPollable, shipmentStatus])
 }
 
 model OrderEvent {

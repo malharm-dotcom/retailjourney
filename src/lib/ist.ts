@@ -24,6 +24,30 @@ export function isoFromRfc1123(s?: string | null): string | undefined {
   return Number.isNaN(t) ? undefined : new Date(t).toISOString();
 }
 
+/**
+ * Snowflake TIMESTAMP_NTZ values are IST wall-clock strings
+ * ("2026-07-08 14:35:00.000" or "2026-07-08") — NOT UTC. Interpret the wall
+ * clock as IST and return the true UTC instant (epoch −5.5h), never Date-parse
+ * them directly (that would treat them as local/UTC and skew by the offset).
+ */
+export function isoFromIstNtz(s?: string | null): string | undefined {
+  if (!s) return undefined;
+  const m = s
+    .trim()
+    .match(/^(\d{4}-\d{2}-\d{2})[T ]?(\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?)?/);
+  if (!m) return undefined;
+  const t = Date.parse(`${m[1]}T${m[2] ?? "00:00:00"}Z`);
+  if (Number.isNaN(t)) return undefined;
+  return new Date(t - IST_OFFSET_MS).toISOString();
+}
+
+/** Snowflake DATE values ("YYYY-MM-DD" in the IST session) → IST business date. */
+export function istDateFromNtz(s?: string | null): string | undefined {
+  if (!s) return undefined;
+  const m = s.trim().match(/^(\d{4}-\d{2}-\d{2})/);
+  return m ? m[1] : undefined;
+}
+
 /** IST business date (YYYY-MM-DD) for a UTC instant. */
 export function istDateOf(iso: string | Date): string {
   const t = typeof iso === "string" ? Date.parse(iso) : iso.getTime();

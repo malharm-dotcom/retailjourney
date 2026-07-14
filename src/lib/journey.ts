@@ -101,6 +101,37 @@ export function rollupOverall(o: Pick<Order, "status" | "shipmentStatus">): Over
   return "WH_PROCESSING";
 }
 
+/** Progression rank for the worst-of shipment rollup. `undefined` = no courier
+ *  movement yet (pickup pending); DELIVERY_FAILED sits below IN_TRANSIT — an
+ *  NDR'd shipment needs attention, it is not "progressing". */
+const SHIPMENT_RANK: Record<ShipmentStatus, number> = {
+  DELIVERY_FAILED: 1,
+  IN_TRANSIT: 2,
+  OUT_FOR_DELIVERY: 3,
+  DELIVERED: 4,
+};
+
+/**
+ * Least-progressed state across an order's shipments (split-dispatch rollup):
+ * an order with one Delivered and one Pickup Pending AWB is NOT delivered.
+ * Returns undefined when any shipment has no movement yet (or there are none).
+ */
+export function rollupShipments(
+  states: (ShipmentStatus | undefined)[],
+): ShipmentStatus | undefined {
+  if (states.length === 0) return undefined;
+  let worst: ShipmentStatus | undefined;
+  let worstRank = Number.POSITIVE_INFINITY;
+  for (const s of states) {
+    if (!s) return undefined; // a shipment with no scan floors the whole order
+    if (SHIPMENT_RANK[s] < worstRank) {
+      worst = s;
+      worstRank = SHIPMENT_RANK[s];
+    }
+  }
+  return worst;
+}
+
 export const STATUS_LABEL: Record<OrderStatus, string> = {
   NOT_STARTED: "Not Started",
   PICKING: "Picking",

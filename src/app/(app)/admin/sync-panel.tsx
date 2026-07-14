@@ -30,7 +30,7 @@ export interface UnmatchedChannelView {
 }
 
 export interface SourceCard {
-  source: "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK";
+  source: "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
   name: string;
   detail: string;
   icon: string;
@@ -44,7 +44,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
   const [pending, startTransition] = useTransition();
   const [running, setRunning] = useState<string | null>(null);
 
-  const trigger = (source: "UC" | "ESHIPZ") => {
+  const trigger = (source: "UC" | "ESHIPZ" | "SNOWFLAKE") => {
     setRunning(source);
     startTransition(async () => {
       const res = await runSyncNow(source);
@@ -89,7 +89,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
                   variant="outline"
                   className="ml-auto px-3 py-1.5 text-[12px]"
                   disabled={pending || !c.configured || !dbReady}
-                  onClick={() => trigger(c.source as "UC" | "ESHIPZ")}
+                  onClick={() => trigger(c.source as "UC" | "ESHIPZ" | "SNOWFLAKE")}
                 >
                   <Icon name="refresh-bold-duotone" size={14} className={cn(running === c.source && "animate-spin")} />
                   Sync now

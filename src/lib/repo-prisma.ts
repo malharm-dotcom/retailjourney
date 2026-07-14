@@ -18,14 +18,17 @@ import {
   orderToDb,
   orderToDomain,
   ruleToDomain,
+  shipmentToDb,
+  shipmentToDomain,
   storeToDomain,
   userToDomain,
 } from "./prisma-map";
-import type { Actor, OrderRepo } from "./repo";
+import type { Actor, OrderRepo, ShipmentUpsert } from "./repo";
 import type {
   FacilityScope,
   Order,
   OrderEvent,
+  OrderShipment,
   OrderStatus,
   RulebookEntry,
   ShipmentStatus,
@@ -237,5 +240,27 @@ export class PrismaRepo implements OrderRepo {
     }
     data.overallStatus = rollupOverall({ ...o, ...data });
     return this.commit(o, data, events);
+  }
+
+  async listShipments(soNumber: string): Promise<OrderShipment[]> {
+    const rows = await prisma().orderShipment.findMany({
+      where: { soNumber },
+      orderBy: { createdAt: "asc" },
+    });
+    return rows.map(shipmentToDomain);
+  }
+
+  async upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment> {
+    const { soNumber, awb, ...rest } = shipment;
+    const data = shipmentToDb(rest as Partial<OrderShipment>);
+    delete data.id;
+    delete data.createdAt;
+    delete data.lastSyncedAt;
+    const row = await prisma().orderShipment.upsert({
+      where: { soNumber_awb: { soNumber, awb } },
+      create: { soNumber, awb, ...data } as never,
+      update: data,
+    });
+    return shipmentToDomain(row);
   }
 }

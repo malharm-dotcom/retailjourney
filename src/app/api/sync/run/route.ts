@@ -1,12 +1,12 @@
 // On-demand sync trigger (admin-only) — used by the Admin "Sync now" button's
 // server action for UI flows and by curl for pipeline testing:
-//   POST /api/sync/run          → run all configured sources
-//   POST /api/sync/run {"source":"UC"|"ESHIPZ"} → run one
+//   POST /api/sync/run          → run the 15-min sources (UC + eShipz)
+//   POST /api/sync/run {"source":"UC"|"ESHIPZ"|"SNOWFLAKE"} → run one
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { buildAuthOptions } from "@/lib/auth";
-import { runAllSyncs, runEshipzSync, runUcSync, type SyncSummary } from "@/lib/integrations/sync";
+import { runAllSyncs, runEshipzSync, runSnowflakeSync, runUcSync, type SyncSummary } from "@/lib/integrations/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +26,7 @@ export async function POST(req: Request) {
     let summaries: SyncSummary[];
     if (source === "UC") summaries = [await runUcSync()];
     else if (source === "ESHIPZ") summaries = [await runEshipzSync()];
+    else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync()];
     else summaries = await runAllSyncs();
     return NextResponse.json({ summaries });
   } catch (e) {

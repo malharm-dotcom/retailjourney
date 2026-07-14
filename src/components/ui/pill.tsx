@@ -31,10 +31,13 @@ export function StatusPill({
   );
 }
 
-/** ● synced (from UC/eShipz) vs ✎ manual (hand-entered / overridden). */
+/** ● synced (from UC/eShipz/Snowflake) vs ✎ manual (hand-entered / overridden). */
 export function SourceBadge({ source, className }: { source: Source; className?: string }) {
-  return source === "SYNCED" ? (
-    <span className={cn("text-[10px] font-medium text-deliv", className)} title="Synced from API">
+  return source !== "MANUAL" ? (
+    <span
+      className={cn("text-[10px] font-medium text-deliv", className)}
+      title={source === "SYNCED_SNOWFLAKE" ? "Synced from Snowflake" : "Synced from API"}
+    >
       ● synced
     </span>
   ) : (

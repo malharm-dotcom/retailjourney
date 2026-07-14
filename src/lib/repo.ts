@@ -17,6 +17,7 @@ import type {
   FacilityScope,
   Order,
   OrderEvent,
+  OrderShipment,
   OrderStatus,
   RulebookEntry,
   ShipmentStatus,
@@ -46,12 +47,20 @@ export interface OrderRepo {
   transitionShipment(soNumber: string, to: ShipmentStatus, actor: Actor, source: Source, note?: string): Promise<Order>;
   recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Promise<Order>;
   updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Promise<Order>;
+  /** Child shipments (AWBs) of an order, oldest first. */
+  listShipments(soNumber: string): Promise<OrderShipment[]>;
+  /** Upsert one shipment by its natural key (soNumber, awb). */
+  upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment>;
 }
+
+/** Natural-key patch for OrderShipment upserts. */
+export type ShipmentUpsert = Partial<OrderShipment> & { soNumber: string; awb: string };
 
 interface Db {
   orders: Map<string, Order>; // keyed by soNumber
   events: OrderEvent[];
   evSeq: number;
+  shipments: Map<string, OrderShipment>; // keyed by `${soNumber}::${awb}`
 }
 
 // globalThis singleton so the store survives Next.js HMR / route module reloads.
@@ -64,6 +73,7 @@ function db(): Db {
       orders: new Map(orders.map((o) => [o.soNumber, o])),
       events: [...events],
       evSeq: events.length,
+      shipments: new Map(),
     };
   }
   return g.__retailjourneyDb;
@@ -235,6 +245,35 @@ class InMemoryRepo implements OrderRepo {
     o.updatedAt = now;
     return o;
   }
+
+  async listShipments(soNumber: string): Promise<OrderShipment[]> {
+    return [...db().shipments.values()]
+      .filter((s) => s.soNumber === soNumber)
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
+  }
+
+  async upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment> {
+    const d = db();
+    mustGet(d, shipment.soNumber); // parent must exist
+    const key = `${shipment.soNumber}::${shipment.awb}`;
+    const now = nowIso();
+    const existing = d.shipments.get(key);
+    const merged: OrderShipment = {
+      isPollable: false,
+      source: "SNOWFLAKE",
+      createdAt: now,
+      ...(existing ?? {}),
+      ...(Object.fromEntries(
+        Object.entries(shipment).filter(([, v]) => v !== undefined),
+      ) as Partial<OrderShipment>),
+      id: existing?.id ?? `shp_${key}`,
+      soNumber: shipment.soNumber,
+      awb: shipment.awb,
+      lastSyncedAt: now,
+    } as OrderShipment;
+    d.shipments.set(key, merged);
+    return merged;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -268,4 +307,6 @@ export const repo: OrderRepo = {
   transitionShipment: (soNumber, to, actor, source, note) => impl().transitionShipment(soNumber, to, actor, source, note),
   recordNdrAttempt: (soNumber, actor, note) => impl().recordNdrAttempt(soNumber, actor, note),
   updateFields: (soNumber, patch, actor, source, note) => impl().updateFields(soNumber, patch, actor, source, note),
+  listShipments: (soNumber) => impl().listShipments(soNumber),
+  upsertShipment: (shipment) => impl().upsertShipment(shipment),
 };

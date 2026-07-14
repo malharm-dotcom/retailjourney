@@ -47,6 +47,7 @@ enum ShipmentStatus {
   OUT_FOR_DELIVERY
   DELIVERED
   DELIVERY_FAILED
+  RETURN
 }
 
 enum ReceiptStatus {

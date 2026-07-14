@@ -37,9 +37,11 @@ export const WH_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 
 /** Allowed Phase B transitions (manual override may set any of these). */
 export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, ShipmentStatus[]> = {
-  IN_TRANSIT: ["OUT_FOR_DELIVERY", "DELIVERY_FAILED", "DELIVERED"],
-  OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED"],
-  DELIVERY_FAILED: ["IN_TRANSIT", "OUT_FOR_DELIVERY"],
+  IN_TRANSIT: ["OUT_FOR_DELIVERY", "DELIVERY_FAILED", "DELIVERED", "RETURN"],
+  OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED", "RETURN"],
+  DELIVERY_FAILED: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "RETURN"],
+  // A returned label occasionally resumes (re-forward) — sync may move it on.
+  RETURN: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"],
   DELIVERED: [],
 };
 
@@ -101,10 +103,11 @@ export function rollupOverall(o: Pick<Order, "status" | "shipmentStatus">): Over
   return "WH_PROCESSING";
 }
 
-/** Progression rank for the worst-of shipment rollup. `undefined` = no courier
- *  movement yet (pickup pending); DELIVERY_FAILED sits below IN_TRANSIT — an
- *  NDR'd shipment needs attention, it is not "progressing". */
+/** Progression rank for the worst-of shipment rollup. DELIVERY_FAILED sits
+ *  below IN_TRANSIT — an NDR'd shipment needs attention, it is not
+ *  "progressing". RETURN is ranked only for the all-returned edge case. */
 const SHIPMENT_RANK: Record<ShipmentStatus, number> = {
+  RETURN: 0,
   DELIVERY_FAILED: 1,
   IN_TRANSIT: 2,
   OUT_FOR_DELIVERY: 3,
@@ -112,22 +115,25 @@ const SHIPMENT_RANK: Record<ShipmentStatus, number> = {
 };
 
 /**
- * Least-progressed state across an order's shipments (split-dispatch rollup):
- * an order with one Delivered and one Pickup Pending AWB is NOT delivered.
- * Returns undefined when any shipment has no movement yet (or there are none).
+ * Split-dispatch rollup across an order's shipments. RETURN children are dead
+ * labels (cancelled / RTO'd) and are excluded — observed live: an AWB is
+ * returned, its replacement delivers, and the order IS delivered. Likewise a
+ * sibling with no scan yet is ignored once any sibling is moving (one AWB
+ * delivered + one never picked up → Delivered, not Pickup Pending). Among the
+ * active shipments the least-progressed state wins (one delivered + one in
+ * transit is still In Transit). undefined = no courier movement anywhere.
  */
 export function rollupShipments(
   states: (ShipmentStatus | undefined)[],
 ): ShipmentStatus | undefined {
   if (states.length === 0) return undefined;
-  let worst: ShipmentStatus | undefined;
-  let worstRank = Number.POSITIVE_INFINITY;
-  for (const s of states) {
-    if (!s) return undefined; // a shipment with no scan floors the whole order
-    if (SHIPMENT_RANK[s] < worstRank) {
-      worst = s;
-      worstRank = SHIPMENT_RANK[s];
-    }
+  const live: (ShipmentStatus | undefined)[] = states.filter((s) => s !== "RETURN");
+  if (live.length === 0) return "RETURN"; // everything RTO'd
+  const active = live.filter((s): s is ShipmentStatus => s !== undefined);
+  if (active.length === 0) return undefined; // nothing scanned yet
+  let worst: ShipmentStatus = active[0];
+  for (const s of active) {
+    if (SHIPMENT_RANK[s] < SHIPMENT_RANK[worst]) worst = s;
   }
   return worst;
 }
@@ -156,6 +162,7 @@ export const SHIPMENT_LABEL: Record<ShipmentStatus, string> = {
   OUT_FOR_DELIVERY: "Out for Delivery",
   DELIVERED: "Delivered",
   DELIVERY_FAILED: "Delivery Failed",
+  RETURN: "Return",
 };
 
 export const RECEIPT_LABEL: Record<ReceiptStatus, string> = {

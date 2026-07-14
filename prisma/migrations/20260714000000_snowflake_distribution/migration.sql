@@ -7,6 +7,10 @@
 -- AlterEnum
 ALTER TYPE "Source" ADD VALUE 'SYNCED_SNOWFLAKE';
 
+-- AlterEnum — RETURN: shipment cancelled/RTO'd (courier tag "Return",
+-- observed live on split dispatches where a replacement AWB delivers)
+ALTER TYPE "ShipmentStatus" ADD VALUE 'RETURN';
+
 -- AlterTable
 ALTER TABLE "Order" ADD COLUMN     "receiverCity" TEXT,
 ADD COLUMN     "receiverState" TEXT,

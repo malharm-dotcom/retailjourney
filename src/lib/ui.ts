@@ -59,6 +59,12 @@ export const SHIPMENT_VISUAL: Record<ShipmentStatus, StatusVisual> = {
     pill: "bg-breach-bg text-breach",
     rail: "#BE5340",
   },
+  RETURN: {
+    icon: "rewind-back-bold-duotone",
+    label: "Return",
+    pill: "bg-pending-bg text-ink-soft",
+    rail: "#9A9080",
+  },
 };
 
 export const WH_STATUS_VISUAL: Record<OrderStatus, StatusVisual> = {

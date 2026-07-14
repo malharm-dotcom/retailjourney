@@ -71,45 +71,45 @@ describe("isPollableAwb", () => {
 });
 
 describe("mapDistributionRows — grain", () => {
-  it("a split order produces exactly 1 order + 2 shipments (SPMARG15638)", () => {
+  it("a split order produces exactly 1 order + 2 shipments (SPMARG15638, live rows)", () => {
     const rows = [
       row({
         ORDER_NAME: "SPMARG15638",
-        STORE: "SNITCH - COCO - MARGAO",
-        INVOICE_NUMBER: "INV-1",
-        TRACKING_NUMBER: "53667523140",
+        STORE: "SNITCH - FOCO - PRAYAGRAJ",
+        INVOICE_NUMBER: "2627/94/WS-4120",
+        TRACKING_NUMBER: "53668790195",
         COURIER_PARTNER: "BLUEDART",
-        STATUS: "INFORECEIVED", // pickup pending — no transit state yet
-        ESHIP_STATUS: "pickup_schedule", // internal state — must not drive status
+        STATUS: "RETURN", // dead label — RTO'd, replaced by the second AWB
+        ESHIP_STATUS: "cancelled", // internal state — must not drive status
         OVERALL_STATUS: "Pickup Pending",
       }),
       row({
         ORDER_NAME: "SPMARG15638",
-        STORE: "SNITCH - COCO - MARGAO",
-        INVOICE_NUMBER: "INV-1",
-        TRACKING_NUMBER: "98765432",
-        COURIER_PARTNER: "MUDITA_CARGO",
+        STORE: "SNITCH - FOCO - PRAYAGRAJ",
+        INVOICE_NUMBER: "2627/94/WS-4120",
+        TRACKING_NUMBER: "53668827505",
+        COURIER_PARTNER: "BLUEDART",
         STATUS: "DELIVERED",
-        ESHIP_STATUS: "success",
+        ESHIP_STATUS: "pickup_schedule",
         LOGISTICS_DELIVERY_TIMESTAMP: "2026-07-10 18:05:00.000",
-        OVERALL_STATUS: "Pickup Pending",
+        OVERALL_STATUS: "Delivered",
       }),
     ];
     const mapped = mapDistributionRows(rows);
     expect(mapped).toHaveLength(1);
     const m = mapped[0];
     expect(m.soNumber).toBe("SPMARG15638");
-    expect(m.storeKey).toBe("SNITCH - COCO - MARGAO");
+    expect(m.storeKey).toBe("SNITCH - FOCO - PRAYAGRAJ");
     expect(m.shipments).toHaveLength(2);
-    expect(m.shipments[0].shipmentStatus).toBeUndefined(); // pickup pending
+    expect(m.shipments[0].shipmentStatus).toBe("RETURN");
     expect(m.shipments[1].shipmentStatus).toBe("DELIVERED");
     expect(m.shipments[1].deliveredTs).toBe("2026-07-10T12:35:00.000Z");
 
-    // The rollup must NOT read "Delivered" — least-progressed child wins.
+    // The RETURN label is dead — the delivered replacement decides the order.
     const rolled = rollupShipments(m.shipments.map((s) => s.shipmentStatus));
-    expect(rolled).toBeUndefined();
+    expect(rolled).toBe("DELIVERED");
     expect(rollupOverall({ status: "DISPATCHED_TO_STORE", shipmentStatus: rolled })).toBe(
-      "PICKUP_PENDING",
+      "DELIVERED",
     );
   });
 
@@ -178,11 +178,23 @@ describe("normalizers", () => {
 });
 
 describe("rollupShipments", () => {
-  it("least-progressed child wins; DELIVERY_FAILED needs attention", () => {
+  it("least-progressed ACTIVE child wins; DELIVERY_FAILED needs attention", () => {
     expect(rollupShipments([])).toBeUndefined();
     expect(rollupShipments(["DELIVERED", "DELIVERED"])).toBe("DELIVERED");
     expect(rollupShipments(["DELIVERED", "IN_TRANSIT"])).toBe("IN_TRANSIT");
     expect(rollupShipments(["OUT_FOR_DELIVERY", "DELIVERY_FAILED"])).toBe("DELIVERY_FAILED");
-    expect(rollupShipments(["DELIVERED", undefined])).toBeUndefined();
+  });
+
+  it("a delivered AWB beats an unscanned sibling (dead label)", () => {
+    expect(rollupShipments(["DELIVERED", undefined])).toBe("DELIVERED");
+    expect(rollupShipments(["IN_TRANSIT", undefined])).toBe("IN_TRANSIT");
+    expect(rollupShipments([undefined, undefined])).toBeUndefined();
+  });
+
+  it("RETURN children are excluded unless the order has nothing else", () => {
+    expect(rollupShipments(["RETURN", "DELIVERED"])).toBe("DELIVERED");
+    expect(rollupShipments(["RETURN", "IN_TRANSIT"])).toBe("IN_TRANSIT");
+    expect(rollupShipments(["RETURN", undefined])).toBeUndefined();
+    expect(rollupShipments(["RETURN", "RETURN"])).toBe("RETURN");
   });
 });

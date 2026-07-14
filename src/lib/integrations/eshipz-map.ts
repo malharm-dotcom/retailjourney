@@ -16,6 +16,7 @@ export type EshipzBehaviour =
   | "ofd"
   | "delivered"
   | "ndr"
+  | "return"
   | "transit_exception"
   | "ignore";
 
@@ -29,6 +30,12 @@ const TAG_BEHAVIOUR: Record<string, EshipzBehaviour> = {
   INTRANSIT: "in_transit",
   OUTFORDELIVERY: "ofd",
   DELIVERED: "delivered",
+  // Cancelled / RTO'd label (observed live in distribution_analytics STATUS
+  // on split dispatches) — a dead shipment, excluded from the order rollup.
+  RETURN: "return",
+  RETURNED: "return",
+  RTO: "return",
+  RETURNTOORIGIN: "return",
   // Exception is resolved per-subtag below.
 };
 
@@ -93,6 +100,8 @@ export function statusForTag(tag?: string, subtag?: string): ShipmentStatus | un
       return "DELIVERED";
     case "ndr":
       return "DELIVERY_FAILED";
+    case "return":
+      return "RETURN";
     default:
       return undefined;
   }

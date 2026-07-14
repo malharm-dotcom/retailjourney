@@ -15,7 +15,7 @@ import { SHIPMENT_LABEL } from "@/lib/journey";
 import { SHIPMENT_VISUAL, cn } from "@/lib/ui";
 import type { ShipmentStatus } from "@/lib/types";
 
-const ALL: ShipmentStatus[] = ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED"];
+const ALL: ShipmentStatus[] = ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED", "RETURN"];
 
 export function ShipmentDialog({
   soNumber,

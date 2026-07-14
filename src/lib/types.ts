@@ -23,7 +23,12 @@ export type OrderStatus =
 
 export type OverallStatus = "WH_PROCESSING" | "PICKUP_PENDING" | "IN_TRANSIT" | "DELIVERED";
 
-export type ShipmentStatus = "IN_TRANSIT" | "OUT_FOR_DELIVERY" | "DELIVERED" | "DELIVERY_FAILED";
+export type ShipmentStatus =
+  | "IN_TRANSIT"
+  | "OUT_FOR_DELIVERY"
+  | "DELIVERED"
+  | "DELIVERY_FAILED"
+  | "RETURN"; // cancelled / RTO — a dead label, excluded from the order rollup
 
 export type ReceiptStatus = "RECEIVED" | "INWARDED" | "CLOSED";
 

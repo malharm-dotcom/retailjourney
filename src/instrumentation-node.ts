@@ -9,8 +9,28 @@ const g = globalThis as unknown as {
   __retailjourneySnowflakeTimer?: ReturnType<typeof setInterval>;
 };
 
+const PROD_DB_HOST = "168.144.81.147";
+
+/** Structural dev-isolation guard: a non-production process must never hold a
+ *  connection string to the production database. (PowerShell's `$env:X=''`
+ *  DELETES the variable, so "blank the vars before next dev" silently fails —
+ *  this assert makes the failure loud instead of letting dev write to prod.)
+ *  Override DATABASE_URL in .env.development.local for local work. */
+function assertDevIsolation(): void {
+  if (process.env.NODE_ENV === "production") return;
+  if ((process.env.DATABASE_URL ?? "").includes(PROD_DB_HOST)) {
+    const msg =
+      `[boot] REFUSING TO START: NODE_ENV=${process.env.NODE_ENV ?? "(unset)"} but DATABASE_URL points at the production host ${PROD_DB_HOST}. ` +
+      `Local dev must never touch the production database. Create .env.development.local (see .env.development.local.example) — ` +
+      `next dev loads it OVER .env.local, keeping prod credentials out of dev processes.`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+}
+
 /** Boot-time node setup: baseline reference data, then the sync scheduler. */
 export function bootNode(): void {
+  assertDevIsolation();
   void (async () => {
     try {
       const { ensureBaseline } = await import("./lib/baseline");
@@ -19,6 +39,12 @@ export function bootNode(): void {
       console.error("[boot] baseline bootstrap failed:", e instanceof Error ? e.message : e);
     }
   })();
+  if (process.env.NODE_ENV !== "production") {
+    // Scheduled syncs are a production concern only — a dev process firing
+    // them is exactly the incident this guard exists to prevent.
+    console.log("[sync] schedulers disabled outside production");
+    return;
+  }
   startSyncScheduler();
   startSnowflakeScheduler();
 }

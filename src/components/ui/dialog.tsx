@@ -23,9 +23,12 @@ export function DialogContent({
   return (
     <DialogPrimitive.Portal>
       <DialogPrimitive.Overlay className="fixed inset-0 z-40 bg-ink/30 backdrop-blur-[2px] data-[state=open]:animate-rise" />
+      {/* Centered via inset-0 + m-auto (not transforms): the `rise` keyframe ends
+          at `transform: none` with fill both, which would permanently override a
+          translate(-50%,-50%) and anchor the dialog bottom-right. */}
       <DialogPrimitive.Content
         className={cn(
-          "fixed left-1/2 top-1/2 z-50 w-[min(94vw,480px)] -translate-x-1/2 -translate-y-1/2 rounded-2xl bg-card p-6 shadow-pop outline-none data-[state=open]:animate-rise",
+          "fixed inset-0 z-50 m-auto h-fit max-h-[85dvh] w-[min(94vw,480px)] overflow-y-auto rounded-2xl bg-card p-6 shadow-pop outline-none data-[state=open]:animate-rise",
           className,
         )}
         {...props}

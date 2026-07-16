@@ -206,24 +206,34 @@ function guardedStatus(current: Order["status"], next?: Order["status"]): Order[
   return next;
 }
 
-async function recordUnmatchedChannel(channel: string, soNumber: string): Promise<void> {
+/** Unmatched channels are collected in-memory per run, then flushed once.
+ *  orderCount is SET to the run's distinct-order count — never incremented —
+ *  so the number always means "orders currently held for this channel", not
+ *  cumulative sync attempts (previous inflated counts self-correct on the
+ *  next run). */
+type UnmatchedMap = Map<string, Set<string>>;
+
+function noteUnmatched(map: UnmatchedMap, channel: string, soNumber: string): void {
+  let sos = map.get(channel);
+  if (!sos) map.set(channel, (sos = new Set()));
+  sos.add(soNumber);
+}
+
+async function flushUnmatched(map: UnmatchedMap, resolves: (channel: string) => boolean): Promise<void> {
   const db = prisma();
-  const existing = await db.unmatchedChannel.findUnique({ where: { channel } });
-  if (existing) {
-    await db.unmatchedChannel.update({
+  for (const [channel, sos] of map) {
+    const sample = [...sos].slice(0, 10);
+    await db.unmatchedChannel.upsert({
       where: { channel },
-      data: {
-        lastSeenAt: new Date(),
-        orderCount: { increment: 1 },
-        ...(existing.sampleSoNumbers.includes(soNumber) || existing.sampleSoNumbers.length >= 10
-          ? {}
-          : { sampleSoNumbers: [...existing.sampleSoNumbers, soNumber] }),
-      },
+      create: { channel, orderCount: sos.size, sampleSoNumbers: sample },
+      update: { lastSeenAt: new Date(), orderCount: sos.size, sampleSoNumbers: sample },
     });
-  } else {
-    await db.unmatchedChannel.create({
-      data: { channel, orderCount: 1, sampleSoNumbers: [soNumber] },
-    });
+  }
+  // Queue rows whose channel now resolves to a store (mapped in Admin or bulk
+  // loaded) are done reviewing — drop them so the queue only shows live gaps.
+  const rows = await db.unmatchedChannel.findMany();
+  for (const u of rows) {
+    if (resolves(u.channel)) await db.unmatchedChannel.delete({ where: { id: u.id } });
   }
 }
 
@@ -292,6 +302,7 @@ export async function runUcSync(): Promise<SyncSummary> {
 
     const stores = (await db.store.findMany({ where: { channelCode: { not: null } } })).map(storeToDomain);
     const byChannel = new Map(stores.map((s) => [s.channelCode!, s]));
+    const unmatched: UnmatchedMap = new Map();
 
     for (const code of codes) {
       try {
@@ -315,7 +326,7 @@ export async function runUcSync(): Promise<SyncSummary> {
         } else {
           const store = update.ucChannel ? byChannel.get(update.ucChannel) : undefined;
           if (!store) {
-            await recordUnmatchedChannel(update.ucChannel || "(no channel)", update.soNumber);
+            noteUnmatched(unmatched, update.ucChannel || "(no channel)", update.soNumber);
             continue; // held in the Admin review queue — never dropped silently
           }
           await createOrderFromUc(update, store);
@@ -325,6 +336,7 @@ export async function runUcSync(): Promise<SyncSummary> {
         summary.errors.push(`${code}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    await flushUnmatched(unmatched, (c) => byChannel.has(c));
     summary.ok = summary.errors.length === 0;
   } catch (e) {
     summary.errors.push(e instanceof Error ? e.message : String(e));
@@ -777,6 +789,7 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
     const byChannelCode = new Map(
       stores.filter((s) => s.channelCode).map((s) => [norm(s.channelCode!), s]),
     );
+    const unmatched: UnmatchedMap = new Map();
 
     for (const m of mapped) {
       try {
@@ -788,7 +801,7 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
         if (!existingRow) {
           if (!store) {
             // Admin review queue — an unmatched STORE is never dropped silently.
-            await recordUnmatchedChannel(m.storeKey || "(no store)", m.soNumber);
+            noteUnmatched(unmatched, m.storeKey || "(no store)", m.soNumber);
             continue;
           }
           await createOrderFromSnowflake(m, store);
@@ -805,6 +818,10 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
         summary.errors.push(`${m.soNumber}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    await flushUnmatched(unmatched, (c) => {
+      const k = norm(c);
+      return byFinalStore.has(k) || byChannelCode.has(k);
+    });
     summary.ok = summary.errors.length === 0;
   } catch (e) {
     summary.errors.push(e instanceof Error ? e.message : String(e));

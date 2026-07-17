@@ -45,6 +45,13 @@ export function bootNode(): void {
     console.log("[sync] schedulers disabled outside production");
     return;
   }
+  if (process.env.RETAILJOURNEY_DEPLOY_ENV !== "production") {
+    // NODE_ENV=production is satisfied by `next start` on a laptop; the
+    // deploy marker is set only in Coolify. A local production build never
+    // starts schedulers — no interval-env blanking to remember.
+    console.log("[sync] schedulers disabled — RETAILJOURNEY_DEPLOY_ENV is not 'production' (not a deployed environment)");
+    return;
+  }
   startSyncScheduler();
   startSnowflakeScheduler();
 }

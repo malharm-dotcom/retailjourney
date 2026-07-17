@@ -2,6 +2,7 @@ import Link from "next/link";
 import { FacilitySwitcher } from "./facility-switcher";
 import { Nav } from "./nav";
 import { PersonaMenu } from "./persona-menu";
+import { SyncStatus } from "./sync-status";
 import { devPersonaEnabled } from "@/lib/auth";
 import { entitledFacilities, policyOf } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
@@ -33,6 +34,11 @@ export async function TopBar({ user, scope }: { user: User; scope: FacilityScope
           personas={personas}
           isAdmin={policy.isAdmin}
         />
+      </div>
+      {/* Sync-freshness strip — its own slim row so it never fights the main
+          bar for width; the 66px row has zero slack below ~1300px. */}
+      <div className="wrap flex justify-end border-t border-line/60 py-[3px]">
+        <SyncStatus />
       </div>
     </header>
   );

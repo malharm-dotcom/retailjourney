@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
+import { JourneyLink } from "@/components/journey-link";
 import { ShipmentDialog } from "@/components/shipment-dialog";
 import { StatusPill, SourceBadge } from "@/components/ui/pill";
 import { Chip, Input } from "@/components/ui/primitives";
@@ -166,13 +167,7 @@ export function TransitBoard({
                       <Icon name="routing-2-linear" size={17} />
                     </a>
                   ) : null}
-                  <Link
-                    href={`/orders/${r.so}`}
-                    title="Journey"
-                    className="grid h-[34px] w-[34px] place-items-center rounded-[10px] border border-line-strong bg-paper text-ink-soft transition-all hover:-translate-y-px hover:border-sage hover:bg-sage-soft hover:text-sage"
-                  >
-                    <Icon name="map-arrow-square-linear" size={17} />
-                  </Link>
+                  <JourneyLink so={r.so} />
                   {canEdit && r.overall !== "DELIVERED" ? (
                     <ShipmentDialog soNumber={r.so} current={r.shipment} self={r.self}>
                       <button

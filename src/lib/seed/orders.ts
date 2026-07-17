@@ -202,6 +202,9 @@ function build(): Built {
       updatedAt: new Date(orderMs).toISOString(),
     };
     pushEvent(id, "status", null, "NOT_STARTED", "SYNCED", orderMs, undefined, "B2B SO created in UC");
+    // Quick-commerce orders demo the inherited-TAT banner (prod: set by the
+    // Snowflake sync when a QC store resolves its parent by branch code).
+    if (type === "Q_COMM") o.tatInheritedFrom = store.finalStore;
 
     // Simulate the WH pipeline hour-by-hour up to the planned stopping point.
     let t = orderMs;

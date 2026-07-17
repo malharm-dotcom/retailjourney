@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Icon } from "@/components/icon";
@@ -155,7 +156,7 @@ export function RulebookTabs({
             <table className="w-full min-w-[900px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-line bg-paper text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute">
-                  {["Code", "Store", "City", "Zone", "Serving WH", "Area manager", "Merchandiser", "Rank", "30d sales"].map((h) => (
+                  {["Code", "Store", "City", "Zone", "Serving WH", "Area manager", "Merchandiser", "Rank", "30d sales", "Orders"].map((h) => (
                     <th key={h} className="px-4 py-3.5 font-semibold first:px-5">
                       {h}
                     </th>
@@ -175,6 +176,18 @@ export function RulebookTabs({
                     <td className="mono px-4 py-3 text-ink-soft">#{s.rank}</td>
                     <td className="mono px-4 py-3 text-ink-soft">
                       ₹{((s.sales30d ?? 0) / 100000).toFixed(1)}L
+                    </td>
+                    <td className="px-4 py-3">
+                      {/* Rulebook rows are stores, not orders — the journey
+                          affordance lives one hop away on this store's order
+                          list, where every row carries the shared link. */}
+                      <Link
+                        href={`/reports/order-lookup?q=${encodeURIComponent(s.finalStore)}`}
+                        title={`Order journeys for ${s.storeName}`}
+                        className="text-[12px] font-semibold text-sage hover:underline"
+                      >
+                        Journeys →
+                      </Link>
                     </td>
                   </tr>
                 ))}

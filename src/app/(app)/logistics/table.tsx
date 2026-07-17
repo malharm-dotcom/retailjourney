@@ -6,6 +6,7 @@ import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { overrideOrderFields } from "@/app/actions";
 import { Icon } from "@/components/icon";
+import { JourneyLink } from "@/components/journey-link";
 import { ShipmentDialog } from "@/components/shipment-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/ui/pill";
@@ -200,6 +201,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                       </td>
                       <td className="px-3 py-3.5">
                         <div className="flex justify-end gap-1.5">
+                          <JourneyLink so={r.so} size={32} />
                           {canEdit ? (
                             <>
                               <button
@@ -220,14 +222,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                                 </ShipmentDialog>
                               ) : null}
                             </>
-                          ) : (
-                            <Link
-                              href={`/orders/${r.so}`}
-                              className="grid h-8 w-8 place-items-center rounded-[9px] border border-line-strong bg-paper text-ink-soft transition-all hover:border-sage hover:text-sage"
-                            >
-                              <Icon name="map-arrow-square-linear" size={15} />
-                            </Link>
-                          )}
+                          ) : null}
                         </div>
                       </td>
                     </tr>

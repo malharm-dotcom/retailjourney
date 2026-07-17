@@ -1,7 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { Icon } from "@/components/icon";
+import { JourneyLink } from "@/components/journey-link";
 import { Input, Select } from "@/components/ui/primitives";
 import { LOGISTICS_PARTNERS } from "@/lib/types";
 import type { ReportTableData } from "@/lib/reports";
@@ -114,13 +114,7 @@ export function ReportTable({
                   <tr key={i} className="border-b border-line text-[12.5px] last:border-b-0 hover:bg-[#FCFBF7]">
                     {row.map((cell, j) => (
                       <td key={j} className="mono px-4 py-2.5 text-ink-soft first:px-5">
-                        {data.linkCol === j ? (
-                          <Link href={`/orders/${cell}`} className="font-semibold text-ink hover:text-sage">
-                            {cell}
-                          </Link>
-                        ) : (
-                          cell
-                        )}
+                        {data.linkCol === j ? <JourneyLink so={String(cell)} variant="text" /> : cell}
                       </td>
                     ))}
                   </tr>

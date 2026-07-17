@@ -48,6 +48,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
   if (!row) notFound();
   const { order: o, sla } = row;
   const events = await repo.listEvents(o.id);
+  const shipments = await repo.listShipments(o.soNumber);
   const policy = policyOf(user.role);
 
   const stageIdx = STAGES.indexOf(o.overallStatus);
@@ -202,6 +203,40 @@ export default async function OrderPage({ params }: { params: { soNumber: string
               ) : null}
             </div>
           </section>
+
+          {/* Shipments — every AWB child, split dispatches and RETURN labels
+              included (the order-level rollup excludes RETURN, so this panel
+              is the only place a dead label stays visible). */}
+          {shipments.length > 0 ? (
+            <section className="overflow-hidden rounded-2xl bg-card shadow-card">
+              <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
+                <Icon name="box-bold-duotone" size={17} className="text-sage" />
+                <h2 className="text-[13px] font-bold">Shipments</h2>
+                <span className="ml-auto text-[11.5px] text-mute">
+                  {shipments.length > 1 ? `split dispatch — ${shipments.length} AWBs` : "1 AWB"}
+                </span>
+              </header>
+              <div>
+                {shipments.map((s) => (
+                  <div key={s.awb} className="flex items-center gap-3 border-b border-line px-5 py-3 last:border-b-0">
+                    <div className="min-w-0 flex-1">
+                      <div className="mono font-display text-[12.5px] font-semibold">{s.awb}</div>
+                      <div className="mt-0.5 text-[11px] text-mute">
+                        {(s.courier ?? "—").replace("_", " ")}
+                        {s.isPollable ? "" : " · manual lane"}
+                        {s.deliveredTs ? ` · delivered ${fmtDate(s.deliveredTs)}` : s.expectedDeliveryDate ? ` · expected ${fmtDate(s.expectedDeliveryDate)}` : ""}
+                      </div>
+                    </div>
+                    {s.shipmentStatus ? (
+                      <StatusPill size="sm" visual={SHIPMENT_VISUAL[s.shipmentStatus]} />
+                    ) : (
+                      <span className="text-[11px] text-mute">no scan yet</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          ) : null}
 
           {/* Tracking */}
           {o.lrNumber ? (

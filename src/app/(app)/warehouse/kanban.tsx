@@ -6,6 +6,7 @@ import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { advanceOrderStatus } from "@/app/actions";
 import { Icon } from "@/components/icon";
+import { JourneyLink } from "@/components/journey-link";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import {
   Dropdown,
@@ -37,6 +38,10 @@ export interface KanbanCard {
 
 const LANES: OrderStatus[] = [...WH_FLOW, "ON_HOLD"];
 
+/** Cards rendered per lane before "Show more" — keeps the DOM bounded at live
+ *  volume (hundreds of orders per lane) while the lane header shows the true count. */
+const LANE_PAGE = 25;
+
 interface PendingMove {
   card: KanbanCard;
   to: OrderStatus;
@@ -56,6 +61,9 @@ export function Kanban({
   const [values, setValues] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
+  // Live volume is hundreds of cards per lane (RTS-Logic alone carries 150+);
+  // rendering them all is a DOM/layout problem, so lanes page in increments.
+  const [laneShown, setLaneShown] = useState<Record<string, number>>({});
 
   const byLane = useMemo(() => {
     const m = new Map<OrderStatus, KanbanCard[]>();
@@ -73,7 +81,19 @@ export function Kanban({
       commit(card, to, {});
       return;
     }
-    setValues({});
+    // Values already on the order (captured earlier or synced) prefill the
+    // dialog — in-flight orders never re-type what the floor already entered.
+    const known: Record<string, string | number | undefined> = {
+      boxCount: card.boxCount,
+      weightKg: card.weightKg,
+      saleInvoiceNumber: card.invoice,
+    };
+    const prefill: Record<string, string> = {};
+    for (const f of fields) {
+      const v = known[f.field as string];
+      if (v != null && v !== "") prefill[f.field as string] = String(v);
+    }
+    setValues(prefill);
     setNote("");
     setMove({ card, to });
   };
@@ -110,13 +130,17 @@ export function Kanban({
 
   return (
     <>
-      <div className="-mx-5 overflow-x-auto px-5 pb-4 sm:-mx-8 sm:px-8">
-        <div className="flex min-w-max gap-3">
-          {LANES.map((lane) => {
-            const v = WH_STATUS_VISUAL[lane];
-            const list = byLane.get(lane)!;
-            return (
-              <section key={lane} className="w-[248px] shrink-0">
+      {/* Lanes wrap instead of side-scrolling: auto-fit keeps every status
+          column on screen at any width without shrinking the type scale. */}
+      <div className="grid gap-3 pb-4 [grid-template-columns:repeat(auto-fit,minmax(218px,1fr))]">
+        {LANES.map((lane) => {
+          const v = WH_STATUS_VISUAL[lane];
+          const list = byLane.get(lane)!;
+          const shown = laneShown[lane] ?? LANE_PAGE;
+          const visible = list.slice(0, shown);
+          const hidden = list.length - visible.length;
+          return (
+            <section key={lane} className="min-w-0">
                 <header
                   className="mb-2.5 flex items-center gap-2 rounded-xl border-t-[3px] bg-card px-3.5 py-2.5 shadow-card"
                   style={{ borderTopColor: v.rail }}
@@ -134,7 +158,7 @@ export function Kanban({
                       Empty lane
                     </div>
                   ) : (
-                    list.map((c) => {
+                    visible.map((c) => {
                       const nexts = WH_TRANSITIONS[c.status].filter((s) => WH_FLOW.includes(s) && WH_FLOW.indexOf(s) > WH_FLOW.indexOf(c.status));
                       const primaryNext = nexts[0];
                       const others = WH_TRANSITIONS[c.status].filter((s) => s !== primaryNext);
@@ -148,9 +172,11 @@ export function Kanban({
                           )}
                         >
                           <div className="flex items-start justify-between gap-2">
-                            <Link href={`/orders/${c.so}`} className="mono font-display text-[13px] font-bold hover:text-sage">
-                              {c.so}
-                            </Link>
+                            <JourneyLink
+                              so={c.so}
+                              variant="text"
+                              className="mono font-display text-[13px] font-bold text-ink"
+                            />
                             {c.due ? (
                               <span
                                 className={cn(
@@ -223,11 +249,20 @@ export function Kanban({
                       );
                     })
                   )}
+                  {hidden > 0 ? (
+                    <button
+                      onClick={() =>
+                        setLaneShown((s) => ({ ...s, [lane]: shown + LANE_PAGE * 2 }))
+                      }
+                      className="rounded-xl border border-dashed border-line-strong px-3 py-2.5 text-xs font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+                    >
+                      Show more — {hidden} hidden
+                    </button>
+                  ) : null}
                 </div>
               </section>
             );
           })}
-        </div>
       </div>
 
       <div className="pb-8 text-[12.5px] text-mute">

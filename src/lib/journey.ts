@@ -65,11 +65,13 @@ export function canTransitionShipment(from: ShipmentStatus | undefined, to: Ship
  * The UI raises a capture dialog for these; the server action validates them.
  */
 export const REQUIRED_CAPTURES: Partial<Record<OrderStatus, { field: keyof Order; label: string; kind: "text" | "number" | "date" | "partner"; optional?: boolean }[]>> = {
-  READY_TO_DISPATCH: [
+  // Packing → Ready-to-Dispatch prompts for nothing: boxes are counted and
+  // weighed when the consignment leaves Ready for RTS-Logic, not while the
+  // floor is still closing cartons. (Fields already on the order — captured
+  // earlier or synced — satisfy the check without re-entry.)
+  RTS_LOGIC: [
     { field: "boxCount", label: "Box count", kind: "number" },
     { field: "weightKg", label: "Weight (kg)", kind: "number" },
-  ],
-  RTS_LOGIC: [
     { field: "saleInvoiceNumber", label: "Sale invoice no.", kind: "text" },
     { field: "rtsLogicDate", label: "RTS Logic date", kind: "date" },
   ],

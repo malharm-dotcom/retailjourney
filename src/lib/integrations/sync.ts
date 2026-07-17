@@ -9,8 +9,10 @@ import { isoFromEpochMs, istDateOf, nowIso, addDays, istToday } from "../ist";
 import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
+import { flattenRulebook, rulebookTemplateFor, type RulebookOrderType, type RulebookViewRow } from "../rulebook-map";
 import { slaState } from "../sla";
 import { queryDistributionAnalytics, snowflakeConfigured } from "../snowflake";
+import { readRulebookSnapshot } from "../snowflake-rulebook";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
 import { UcApiOrderSource } from "./uc-source";
@@ -650,52 +652,48 @@ async function upsertShipments(
   return { children: [...children.values()], events };
 }
 
-/** Latest TAT pattern carried on the parent store's own orders (same type
- *  preferred, any type as fallback) — the source a QC order inherits from. */
-async function parentTatTemplate(
-  parentStoreId: string,
+/** The parent's authoritative TAT pattern, read from its rulebook row (serving
+ *  WH preferred, the other type as fallback) — the source a QC order inherits
+ *  from now that the rulebook table is available. Replaces the old heuristic
+ *  that scavenged the pattern off the parent's most recent order. */
+function parentRulebookTemplate(
+  rulebookRows: RulebookViewRow[],
+  parent: Store,
   type: Order["type"] | undefined,
-  cache: Map<string, TatTemplate | undefined>,
-): Promise<TatTemplate | undefined> {
-  const cacheKey = `${parentStoreId}:${type ?? ""}`;
-  if (cache.has(cacheKey)) return cache.get(cacheKey);
-  const db = prisma();
-  const base = { storeId: parentStoreId, targetOrderDay: { not: null } };
+): TatTemplate | undefined {
+  const preferred: RulebookOrderType = type === "RPL" ? "RPL" : "FRESH";
+  const other: RulebookOrderType = preferred === "FRESH" ? "RPL" : "FRESH";
   const row =
-    (type
-      ? await db.order.findFirst({ where: { ...base, type }, orderBy: { orderTimestamp: "desc" } })
-      : null) ??
-    (await db.order.findFirst({ where: base, orderBy: { orderTimestamp: "desc" } }));
-  const tmpl: TatTemplate | undefined = row
-    ? {
-        targetOrderDay: row.targetOrderDay ?? undefined,
-        targetOrderCutoff: row.targetOrderCutoff ?? undefined,
-        targetHandoverDay: row.targetHandoverDay ?? undefined,
-        targetHandoverCutoff: row.targetHandoverCutoff ?? undefined,
-        targetPickupDay: row.targetPickupDay ?? undefined,
-        targetDeliveryDay: row.targetDeliveryDay ?? undefined,
-        bestTat: row.bestTat ?? undefined,
-        laneClassification: row.laneClassification ?? undefined,
-        zone: row.zone ?? undefined,
-      }
-    : undefined;
-  cache.set(cacheKey, tmpl);
-  return tmpl;
+    rulebookTemplateFor(rulebookRows, parent.finalStore, preferred, parent.facility) ??
+    rulebookTemplateFor(rulebookRows, parent.finalStore, other, parent.facility);
+  if (!row) return undefined;
+  return {
+    targetOrderDay: row.targetOrderDay,
+    targetOrderCutoff: row.targetOrderCutoff,
+    targetHandoverDay: row.targetHandoverDay,
+    targetHandoverCutoff: row.targetHandoverCutoff,
+    targetPickupDay: row.targetPickupDay,
+    targetDeliveryDay: row.targetDeliveryDay,
+    bestTat: row.bestTatDays,
+    laneClassification: row.laneClassification,
+    zone: row.zone,
+  };
 }
 
 /**
  * QC TAT inheritance (in place on m.patch): a quick-commerce store has no
- * rulebook row, so its rows carry no deadlines — inherit the parent store's
- * pattern via the shared branchCode, re-anchored on this order's date.
- * Edge cases surface instead of guessing: no parent / ambiguous parent leaves
- * the patch untouched (legs read "no target", never a false breach) and the
- * situation is reported on the SyncRun note.
+ * rulebook row of its own, so its rows carry no deadlines — inherit the PARENT
+ * store's rulebook row (resolved via the shared branchCode), re-anchored on
+ * this order's date. Edge cases surface instead of guessing: no parent /
+ * ambiguous parent / parent without a rulebook row all leave the patch
+ * untouched (legs read "no target", never a false breach) and the situation is
+ * reported on the SyncRun note.
  */
 async function applyQcInheritance(
   m: MappedOrder,
   store: Store,
   stores: Store[],
-  tmplCache: Map<string, TatTemplate | undefined>,
+  rulebookRows: RulebookViewRow[],
   notes: Set<string>,
 ): Promise<void> {
   const r = resolveQcParent(store, stores);
@@ -707,11 +705,11 @@ async function applyQcInheritance(
     );
     return;
   }
-  const tmpl = await parentTatTemplate(r.parent.id, m.patch.type, tmplCache);
+  const tmpl = parentRulebookTemplate(rulebookRows, r.parent, m.patch.type);
   const inherited = tmpl && buildInheritedTat(m.patch.orderDate ?? istToday(), tmpl);
   if (!inherited) {
     notes.add(
-      `QC store ${store.finalStore}: parent ${r.parent.finalStore} has no TAT pattern on record yet — no TAT inherited`,
+      `QC store ${store.finalStore}: parent ${r.parent.finalStore} has no rulebook row — no TAT inherited`,
     );
     return;
   }
@@ -879,8 +877,26 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
       stores.filter((s) => s.channelCode).map((s) => [norm(s.channelCode!), s]),
     );
     const unmatched: UnmatchedMap = new Map();
-    const tmplCache = new Map<string, TatTemplate | undefined>();
     const qcNotes = new Set<string>();
+
+    // QC TAT inheritance reads the parent's rulebook row. Load the latest
+    // rulebook snapshot lazily and once per run — the fetch is paid only when a
+    // QC order that needs inheritance actually appears (0 in the live window
+    // today). A fetch failure degrades to "no TAT inherited", never a crash.
+    let rulebookRows: RulebookViewRow[] | undefined;
+    const loadRulebook = async (): Promise<RulebookViewRow[]> => {
+      if (rulebookRows === undefined) {
+        try {
+          rulebookRows = flattenRulebook((await readRulebookSnapshot()).rows);
+        } catch (e) {
+          rulebookRows = [];
+          qcNotes.add(
+            `QC TAT inheritance: rulebook fetch failed (${e instanceof Error ? e.message : String(e)}) — no TAT inherited this run`,
+          );
+        }
+      }
+      return rulebookRows;
+    };
 
     for (const m of mapped) {
       try {
@@ -891,7 +907,7 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
 
         if (store?.isQuickCommerce) {
           if (shouldInheritQcTat(store, m.patch)) {
-            await applyQcInheritance(m, store, stores, tmplCache, qcNotes);
+            await applyQcInheritance(m, store, stores, await loadRulebook(), qcNotes);
           } else if (existingRow?.tatInheritedFrom) {
             // Upstream now bakes the QC store's own rulebook TAT — the
             // inherited marker no longer applies.

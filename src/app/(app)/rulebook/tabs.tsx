@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
-import { toast } from "sonner";
 import { Icon } from "@/components/icon";
 import { Chip } from "@/components/ui/primitives";
-import { WEEKDAYS, type OrderType, type RulebookEntry, type Store, type Weekday } from "@/lib/types";
+import { normStoreKey } from "@/lib/qc-tat";
+import type { RulebookOrderType, RulebookViewRow } from "@/lib/rulebook-map";
+import { WEEKDAYS, type Store, type Weekday } from "@/lib/types";
 import { cn } from "@/lib/ui";
 
 const LEGS = [
@@ -15,26 +17,57 @@ const LEGS = [
   { key: "targetDeliveryDay", short: "D", label: "Store delivery", color: "#3E7A5C", bg: "#E6F0EA" },
 ] as const;
 
-const TYPES: OrderType[] = ["FRESH", "RPL", "OTHER"];
+// The source rulebook carries only FRESH and RPL — there is no OTHER schedule.
+const TYPES: RulebookOrderType[] = ["FRESH", "RPL"];
 type Tab = "grid" | "stores" | "lanes";
+
+/** A store row paired with the rulebook line for the active order type + WH.
+ *  A store served from both WHs yields two lines; a store with no rulebook row
+ *  yields one line with rule=null (the coverage gap stays visible). */
+interface GridLine {
+  store: Store;
+  rule: RulebookViewRow | null;
+}
 
 export function RulebookTabs({
   stores,
   rules,
-  isAdmin,
+  snapshots,
+  version,
 }: {
   stores: Store[];
-  rules: RulebookEntry[];
-  isAdmin: boolean;
+  rules: RulebookViewRow[];
+  snapshots: string[];
+  version: string | null;
 }) {
   const [tab, setTab] = useState<Tab>("grid");
-  const [type, setType] = useState<OrderType>("FRESH");
+  const [type, setType] = useState<RulebookOrderType>("FRESH");
 
-  const ruleOf = useMemo(() => {
-    const m = new Map<string, RulebookEntry>();
-    for (const r of rules) m.set(`${r.storeId}:${r.orderType}`, r);
+  // Rulebook rows grouped by normalized store key for the store-joined views.
+  const byStoreKey = useMemo(() => {
+    const m = new Map<string, RulebookViewRow[]>();
+    for (const r of rules) {
+      const list = m.get(r.storeKey) ?? [];
+      list.push(r);
+      m.set(r.storeKey, list);
+    }
     return m;
   }, [rules]);
+
+  const gridLines = useMemo<GridLine[]>(() => {
+    const lines: GridLine[] = [];
+    for (const store of stores) {
+      const rowsForStore = (byStoreKey.get(normStoreKey(store.finalStore)) ?? []).filter(
+        (r) => r.orderType === type,
+      );
+      if (rowsForStore.length === 0) {
+        lines.push({ store, rule: null });
+      } else {
+        for (const rule of rowsForStore) lines.push({ store, rule });
+      }
+    }
+    return lines;
+  }, [stores, byStoreKey, type]);
 
   return (
     <>
@@ -68,15 +101,7 @@ export function RulebookTabs({
             ))}
           </div>
         ) : null}
-        {isAdmin ? (
-          <button
-            onClick={() => toast("CSV upload + inline editing land in M4", { description: "Rulebook maintenance is read-only on seed data." })}
-            className="ml-auto flex items-center gap-2 rounded-[10px] border border-line-strong bg-paper px-3.5 py-2 text-[12.5px] font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
-          >
-            <Icon name="upload-bold-duotone" size={15} />
-            Upload CSV (monthly version)
-          </button>
-        ) : null}
+        <VersionSelector snapshots={snapshots} version={version} />
       </div>
 
       {tab === "grid" ? (
@@ -109,40 +134,42 @@ export function RulebookTabs({
                   </tr>
                 </thead>
                 <tbody>
-                  {stores.map((s) => {
-                    const r = ruleOf.get(`${s.id}:${type}`);
-                    return (
-                      <tr key={s.id} className="border-b border-line last:border-b-0 hover:bg-[#FCFBF7]">
-                        <td className="sticky left-0 z-10 bg-card px-5 py-2.5">
-                          <span className="block text-[12.5px] font-semibold">{s.storeName}</span>
-                          <span className="block text-[10.5px] text-mute">
-                            {s.zone} · {r?.laneClassification ?? "—"} · best {r?.bestTatDays ?? "—"}d
-                          </span>
-                        </td>
-                        {WEEKDAYS.map((d) => (
-                          <td key={d} className="px-2 py-2.5 text-center align-middle">
-                            <div className="flex items-center justify-center gap-1">
-                              {LEGS.filter((l) => (r?.[l.key] as Weekday | undefined) === d).map((l) => (
-                                <span key={l.key} className="inline-flex flex-col items-center" title={l.label}>
-                                  <span
-                                    className="grid h-[22px] w-[22px] place-items-center rounded-md text-[10.5px] font-bold"
-                                    style={{ background: l.bg, color: l.color }}
-                                  >
-                                    {l.short}
-                                  </span>
-                                  {l.key === "targetOrderDay" && r?.targetOrderCutoff ? (
-                                    <span className="mt-0.5 text-[9px] text-mute">{r.targetOrderCutoff}</span>
-                                  ) : l.key === "targetHandoverDay" && r?.targetHandoverCutoff ? (
-                                    <span className="mt-0.5 text-[9px] text-mute">{r.targetHandoverCutoff}</span>
-                                  ) : null}
+                  {gridLines.map(({ store: s, rule: r }, i) => (
+                    <tr
+                      key={`${s.id}:${r?.wh ?? "none"}:${i}`}
+                      className="border-b border-line last:border-b-0 hover:bg-[#FCFBF7]"
+                    >
+                      <td className="sticky left-0 z-10 bg-card px-5 py-2.5">
+                        <span className="block text-[12.5px] font-semibold">{s.storeName}</span>
+                        <span className="block text-[10.5px] text-mute">
+                          {r
+                            ? `${r.wh || "—"} · ${r.zone ?? s.zone} · ${r.laneClassification ?? "—"} · best ${r.bestTatDays ?? "—"}d`
+                            : "no rulebook row"}
+                        </span>
+                      </td>
+                      {WEEKDAYS.map((d) => (
+                        <td key={d} className="px-2 py-2.5 text-center align-middle">
+                          <div className="flex items-center justify-center gap-1">
+                            {LEGS.filter((l) => (r?.[l.key] as Weekday | undefined) === d).map((l) => (
+                              <span key={l.key} className="inline-flex flex-col items-center" title={l.label}>
+                                <span
+                                  className="grid h-[22px] w-[22px] place-items-center rounded-md text-[10.5px] font-bold"
+                                  style={{ background: l.bg, color: l.color }}
+                                >
+                                  {l.short}
                                 </span>
-                              ))}
-                            </div>
-                          </td>
-                        ))}
-                      </tr>
-                    );
-                  })}
+                                {l.key === "targetOrderDay" && r?.targetOrderCutoff ? (
+                                  <span className="mt-0.5 text-[9px] text-mute">{r.targetOrderCutoff}</span>
+                                ) : l.key === "targetHandoverDay" && r?.targetHandoverCutoff ? (
+                                  <span className="mt-0.5 text-[9px] text-mute">{r.targetHandoverCutoff}</span>
+                                ) : null}
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>
@@ -153,10 +180,10 @@ export function RulebookTabs({
       {tab === "stores" ? (
         <div className="overflow-hidden rounded-2xl bg-card shadow-card">
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[900px] border-collapse text-left">
+            <table className="w-full min-w-[960px] border-collapse text-left">
               <thead>
                 <tr className="border-b border-line bg-paper text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute">
-                  {["Code", "Store", "City", "Zone", "Serving WH", "Area manager", "Merchandiser", "Rank", "30d sales", "Orders"].map((h) => (
+                  {["Code", "Store", "City", "Zone", "Rulebook WH", "Serving WH", "Area manager", "Merchandiser", "Rank", "30d sales", "Orders"].map((h) => (
                     <th key={h} className="px-4 py-3.5 font-semibold first:px-5">
                       {h}
                     </th>
@@ -164,60 +191,87 @@ export function RulebookTabs({
                 </tr>
               </thead>
               <tbody>
-                {stores.map((s) => (
-                  <tr key={s.id} className="border-b border-line text-[12.5px] last:border-b-0 hover:bg-[#FCFBF7]">
-                    <td className="mono px-5 py-3 text-mute">{s.branchCode}</td>
-                    <td className="px-4 py-3 font-semibold">{s.storeName}</td>
-                    <td className="px-4 py-3 text-ink-soft">{s.storeCity}</td>
-                    <td className="px-4 py-3 text-ink-soft">{s.zone}</td>
-                    <td className="mono px-4 py-3 text-ink-soft">{s.facility}</td>
-                    <td className="px-4 py-3 text-ink-soft">{s.areaManager}</td>
-                    <td className="px-4 py-3 text-ink-soft">{s.merchandiser}</td>
-                    <td className="mono px-4 py-3 text-ink-soft">#{s.rank}</td>
-                    <td className="mono px-4 py-3 text-ink-soft">
-                      ₹{((s.sales30d ?? 0) / 100000).toFixed(1)}L
-                    </td>
-                    <td className="px-4 py-3">
-                      {/* Rulebook rows are stores, not orders — the journey
-                          affordance lives one hop away on this store's order
-                          list, where every row carries the shared link. */}
-                      <Link
-                        href={`/reports/order-lookup?q=${encodeURIComponent(s.finalStore)}`}
-                        title={`Order journeys for ${s.storeName}`}
-                        className="text-[12px] font-semibold text-sage hover:underline"
-                      >
-                        Journeys →
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
+                {stores.map((s) => {
+                  const rbWhs = [
+                    ...new Set(
+                      (byStoreKey.get(normStoreKey(s.finalStore)) ?? []).map((r) => r.wh).filter(Boolean),
+                    ),
+                  ];
+                  return (
+                    <tr key={s.id} className="border-b border-line text-[12.5px] last:border-b-0 hover:bg-[#FCFBF7]">
+                      <td className="mono px-5 py-3 text-mute">{s.branchCode}</td>
+                      <td className="px-4 py-3 font-semibold">{s.storeName}</td>
+                      <td className="px-4 py-3 text-ink-soft">{s.storeCity}</td>
+                      <td className="px-4 py-3 text-ink-soft">{s.zone}</td>
+                      <td className="px-4 py-3 text-ink-soft">{rbWhs.length ? rbWhs.join(" / ") : "—"}</td>
+                      <td className="mono px-4 py-3 text-ink-soft">{s.facility}</td>
+                      <td className="px-4 py-3 text-ink-soft">{s.areaManager}</td>
+                      <td className="px-4 py-3 text-ink-soft">{s.merchandiser}</td>
+                      <td className="mono px-4 py-3 text-ink-soft">#{s.rank}</td>
+                      <td className="mono px-4 py-3 text-ink-soft">
+                        ₹{((s.sales30d ?? 0) / 100000).toFixed(1)}L
+                      </td>
+                      <td className="px-4 py-3">
+                        {/* Rulebook rows are stores, not orders — the journey
+                            affordance lives one hop away on this store's order
+                            list, where every row carries the shared link. */}
+                        <Link
+                          href={`/reports/order-lookup?q=${encodeURIComponent(s.finalStore)}`}
+                          title={`Order journeys for ${s.storeName}`}
+                          className="text-[12px] font-semibold text-sage hover:underline"
+                        >
+                          Journeys →
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         </div>
       ) : null}
 
-      {tab === "lanes" ? (
-        <LaneView stores={stores} rules={rules} />
-      ) : null}
+      {tab === "lanes" ? <LaneView rules={rules} /> : null}
     </>
   );
 }
 
-function LaneView({ stores, rules }: { stores: Store[]; rules: RulebookEntry[] }) {
+function VersionSelector({ snapshots, version }: { snapshots: string[]; version: string | null }) {
+  const router = useRouter();
+  const pathname = usePathname();
+  if (snapshots.length === 0) return null;
+  return (
+    <label className="ml-auto flex items-center gap-2 text-[12px] font-semibold text-ink-soft">
+      <span className="text-mute">Version</span>
+      <select
+        value={version ?? snapshots[0]}
+        onChange={(e) => router.push(`${pathname}?v=${e.target.value}`)}
+        className="rounded-[10px] border border-line-strong bg-paper px-3 py-2 text-[12.5px] font-semibold text-ink transition-colors hover:border-sage focus:border-sage focus:outline-none"
+      >
+        {snapshots.map((s) => (
+          <option key={s} value={s}>
+            {s}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function LaneView({ rules }: { rules: RulebookViewRow[] }) {
   const lanes = useMemo(() => {
     const m = new Map<string, { stores: Set<string>; zones: Set<string>; tats: number[] }>();
     for (const r of rules) {
-      const s = stores.find((x) => x.id === r.storeId);
-      if (!s || !r.laneClassification) continue;
+      if (!r.laneClassification) continue;
       const e = m.get(r.laneClassification) ?? { stores: new Set(), zones: new Set(), tats: [] };
-      e.stores.add(s.storeName);
-      e.zones.add(s.zone);
+      e.stores.add(r.storeName);
+      if (r.zone) e.zones.add(r.zone);
       if (r.bestTatDays != null) e.tats.push(r.bestTatDays);
       m.set(r.laneClassification, e);
     }
     return [...m.entries()].sort((a, b) => b[1].stores.size - a[1].stores.size);
-  }, [stores, rules]);
+  }, [rules]);
 
   return (
     <div className="grid gap-3.5 md:grid-cols-2 xl:grid-cols-3">
@@ -233,7 +287,7 @@ function LaneView({ stores, rules }: { stores: Store[]; rules: RulebookEntry[] }
             </span>
           </div>
           <div className="mt-3 text-[12px] text-mute">
-            Zones {[...e.zones].join(" · ")} · best TAT{" "}
+            Zones {[...e.zones].join(" · ") || "—"} · best TAT{" "}
             {e.tats.length ? `${Math.min(...e.tats)}–${Math.max(...e.tats)}d` : "—"}
           </div>
           <div className="mt-3 flex flex-wrap gap-1.5">

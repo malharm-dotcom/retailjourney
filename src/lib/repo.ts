@@ -26,7 +26,6 @@ import type {
   User,
 } from "./types";
 import { seedData } from "./seed/orders";
-import { RULEBOOK } from "./seed/rulebook";
 import { STORES } from "./seed/stores";
 import { USERS } from "./seed/users";
 
@@ -139,7 +138,9 @@ class InMemoryRepo implements OrderRepo {
   }
 
   async listRules(): Promise<RulebookEntry[]> {
-    return RULEBOOK;
+    // Rulebook is read live from Snowflake by the Rulebook tab; the SLA engine
+    // uses Snowflake-baked per-order deadlines. No seed rulebook to serve.
+    return [];
   }
 
   async listUsers(): Promise<User[]> {

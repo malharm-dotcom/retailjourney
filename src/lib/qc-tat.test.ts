@@ -13,6 +13,8 @@ import {
   shouldInheritQcTat,
   toWeekday,
 } from "./qc-tat";
+import { facilityWhGroup, flattenRulebook, rulebookTemplateFor, whGroupOf } from "./rulebook-map";
+import type { RulebookSourceRow } from "./snowflake-rulebook";
 import type { Order, Store } from "./types";
 
 function store(over: Partial<Store>): Store {
@@ -134,5 +136,108 @@ describe("buildInheritedTat", () => {
 
   it("returns undefined when the parent has no usable pattern (No TAT, not a false breach)", () => {
     expect(buildInheritedTat("2026-07-13", {})).toBeUndefined();
+  });
+});
+
+// Rulebook-sourced inheritance (Task STEP 3): QC TAT now reads the parent's
+// rulebook row, not the parent's most-recent order. These cover the flatten +
+// serving-WH lookup that feed buildInheritedTat.
+function rbRow(over: Partial<RulebookSourceRow>): RulebookSourceRow {
+  return {
+    UPLOAD_DATE: "2026-06-01",
+    WH: "North WH",
+    STORE_NAME: "SNITCH - COFO - KALYAN NAGAR",
+    STORE_TYPE: "HS",
+    CITY: "Bengaluru",
+    PINCODE: 560043,
+    LANE_CLASSIFICATION: "Milk Run Lane",
+    ZONE: "South",
+    BEST_TAT: 2,
+    BEST_COURIER_PARTNER: "Milk Run",
+    FRESH_ORDER_CUTOFF: "Friday 9 AM",
+    FRESH_TAT: "Friday 6 PM",
+    FRESH_HANDOVER_DAY: "Saturday",
+    FRESH_DELIVERY_DAY: "Monday",
+    RPL_ORDER_CUTOFF: "Monday 4 PM",
+    RPL_TAT: "Tuesday 5 AM",
+    RPL_HANDOVER_DAY: "Tuesday",
+    RPL_DELIVERY_DAY: "Thursday",
+    ...over,
+  };
+}
+
+describe("WH group mapping", () => {
+  it("maps rulebook WH labels to a group", () => {
+    expect(whGroupOf("North WH")).toBe("NORTH");
+    expect(whGroupOf("South WH")).toBe("SOUTH");
+    expect(whGroupOf(null)).toBeUndefined();
+  });
+  it("maps a serving facility to its rulebook WH group", () => {
+    expect(facilityWhGroup("SAPL-NORTH-TAURU")).toBe("NORTH");
+    expect(facilityWhGroup("SAPL-WH1")).toBe("SOUTH");
+    expect(facilityWhGroup("SAPL-WH2")).toBe("SOUTH");
+    expect(facilityWhGroup(undefined)).toBeUndefined();
+  });
+});
+
+describe("flattenRulebook", () => {
+  it("splits the FRESH/RPL columns into per-order-type target rows (DA semantics)", () => {
+    const rows = flattenRulebook([rbRow({})]);
+    const fresh = rows.find((r) => r.orderType === "FRESH")!;
+    // targetOrderDay+cutoff come from *_ORDER_CUTOFF ("Friday 9 AM")
+    expect(fresh.targetOrderDay).toBe("Fri");
+    expect(fresh.targetOrderCutoff).toBe("9 AM");
+    // handover from *_TAT ("Friday 6 PM"), pickup from *_HANDOVER_DAY, delivery from *_DELIVERY_DAY
+    expect(fresh.targetHandoverDay).toBe("Fri");
+    expect(fresh.targetHandoverCutoff).toBe("6 PM");
+    expect(fresh.targetPickupDay).toBe("Sat");
+    expect(fresh.targetDeliveryDay).toBe("Mon");
+    expect(fresh.zone).toBe("SOUTH");
+    expect(fresh.bestTatDays).toBe(2);
+
+    const rpl = rows.find((r) => r.orderType === "RPL")!;
+    expect(rpl.targetOrderDay).toBe("Mon");
+    expect(rpl.targetOrderCutoff).toBe("4 PM");
+    expect(rpl.targetDeliveryDay).toBe("Thu");
+  });
+});
+
+describe("rulebookTemplateFor", () => {
+  const rows = flattenRulebook([
+    rbRow({ WH: "North WH", LANE_CLASSIFICATION: "Milk Run Lane", BEST_TAT: 2 }),
+    rbRow({ WH: "South WH", LANE_CLASSIFICATION: "South-1", BEST_TAT: 5 }),
+  ]);
+
+  it("prefers the parent's serving-WH row", () => {
+    const north = rulebookTemplateFor(rows, "SNITCH - COFO - KALYAN NAGAR", "FRESH", "SAPL-NORTH-TAURU");
+    expect(north?.laneClassification).toBe("Milk Run Lane");
+    const south = rulebookTemplateFor(rows, "SNITCH - COFO - KALYAN NAGAR", "FRESH", "SAPL-WH1");
+    expect(south?.laneClassification).toBe("South-1");
+  });
+
+  it("falls back to any WH when the serving WH has no row", () => {
+    const northOnly = flattenRulebook([rbRow({ WH: "North WH" })]);
+    const r = rulebookTemplateFor(northOnly, "SNITCH - COFO - KALYAN NAGAR", "FRESH", "SAPL-WH1");
+    expect(r?.wh).toBe("North WH");
+  });
+
+  it("returns undefined when the parent has no rulebook row", () => {
+    expect(rulebookTemplateFor(rows, "SNITCH - COCO - NOWHERE", "FRESH", "SAPL-WH1")).toBeUndefined();
+  });
+
+  it("feeds buildInheritedTat: a parent rulebook row re-anchors on the QC order date", () => {
+    const tmpl = rulebookTemplateFor(rows, "SNITCH - COFO - KALYAN NAGAR", "FRESH", "SAPL-NORTH-TAURU")!;
+    const patch = buildInheritedTat("2026-07-13", {
+      targetOrderDay: tmpl.targetOrderDay,
+      targetOrderCutoff: tmpl.targetOrderCutoff,
+      targetHandoverDay: tmpl.targetHandoverDay,
+      targetHandoverCutoff: tmpl.targetHandoverCutoff,
+      targetPickupDay: tmpl.targetPickupDay,
+      targetDeliveryDay: tmpl.targetDeliveryDay,
+      bestTat: tmpl.bestTatDays,
+    });
+    expect(patch).toBeDefined();
+    expect(patch!.orderCutoffTs).toBeDefined();
+    expect(patch!.idealDeliveryDate).toBeDefined();
   });
 });

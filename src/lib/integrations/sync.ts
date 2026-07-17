@@ -197,8 +197,9 @@ async function finishRun(
 // Unicommerce
 
 /** Forward-only status guard: sync may never regress the floor's progress,
- *  pull an order out of ON_HOLD, or resurrect a terminal order. */
-function guardedStatus(current: Order["status"], next?: Order["status"]): Order["status"] | undefined {
+ *  pull an order out of ON_HOLD, or resurrect a terminal order.
+ *  (Exported for the precedence tests only.) */
+export function guardedStatus(current: Order["status"], next?: Order["status"]): Order["status"] | undefined {
   if (!next || next === current) return undefined;
   if (TERMINAL_STATUSES.includes(current)) return undefined;
   if (TERMINAL_STATUSES.includes(next)) return next;
@@ -525,8 +526,9 @@ export async function runEshipzSync(): Promise<SyncSummary> {
 // the poller only outranks Snowflake on pollable shipments — for
 // self-delivery/porter, Snowflake IS the transit authority.
 
-/** Order-level Phase-B fields owned by the poller on pollable shipments. */
-const ORDER_TRANSIT_FIELDS: (keyof Order)[] = [
+/** Order-level Phase-B fields owned by the poller on pollable shipments.
+ *  (Exported for the precedence tests only.) */
+export const ORDER_TRANSIT_FIELDS: (keyof Order)[] = [
   "shipmentStatus",
   "shipmentSource",
   "eshipStatus",
@@ -553,8 +555,9 @@ function isKnownFacility(f?: string): boolean {
 }
 
 /** Order-level transit patch from the (single) authoritative child — applied
- *  only when the order has NO pollable shipment (self-delivery/porter). */
-function transitPatchFromChild(o: Order, s: OrderShipment): Partial<Order> {
+ *  only when the order has NO pollable shipment (self-delivery/porter).
+ *  (Exported for the precedence tests only.) */
+export function transitPatchFromChild(o: Order, s: OrderShipment): Partial<Order> {
   const patch: Partial<Order> = {
     eshipStatus: s.eshipStatus,
     trackingStatus: s.trackingStatus ?? s.eshipStatus,

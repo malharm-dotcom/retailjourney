@@ -55,18 +55,10 @@ WHERE STORE IS NULL OR TRIM(STORE) = ''
   AND ORDER_DATE >= DATEADD(day, -20, CURRENT_DATE)
 LIMIT 20`;
 
-const norm = (s: string) => s.trim().toUpperCase();
-
-/** "SNITCH - COFO - BANER" → { ownership: "COFO", storeName: "COFO - BANER" } */
-function parseStoreKey(key: string): { ownership?: string; storeName: string } {
-  const m = key.match(/^SNITCH\s*-\s*(COCO|COFO|FOCO)\s*-\s*(.+)$/i);
-  if (!m) return { storeName: key.replace(/^SNITCH\s*-\s*/i, "").trim() };
-  return { ownership: m[1].toUpperCase(), storeName: `${m[1].toUpperCase()} - ${m[2].trim()}` };
-}
-
 async function main() {
   const { querySnowflake } = await import("../src/lib/snowflake");
   const { normFacility } = await import("../src/lib/distribution-map");
+  const { normStoreKey: norm, parseStoreKey, isQcStoreKey, isExcludedStoreKey } = await import("../src/lib/qc-tat");
   const { prisma, databaseConfigured } = await import("../src/lib/db");
 
   const [aggs, noStoreRows] = [
@@ -74,7 +66,8 @@ async function main() {
     await querySnowflake<Record<string, unknown>>(NO_STORE_QUERY),
   ];
 
-  const live = aggs.filter((a) => a.STORE && a.STORE.trim() !== "");
+  // B2BCORPORATE / SAPL-NORTH-TAURU are warehouse/corporate nodes, not stores.
+  const live = aggs.filter((a) => a.STORE && a.STORE.trim() !== "" && !isExcludedStoreKey(a.STORE));
   const blankAgg = aggs.find((a) => !a.STORE || a.STORE.trim() === "");
 
   console.log(`\n=== Snowflake distribution_analytics, 20-day window ===`);
@@ -157,7 +150,8 @@ async function main() {
       storeName: r.storeName,
       finalStore: r.key,
       ownership: r.ownership!,
-      channel: r.ownership === "COCO" ? "OWN_STORE" : "FRANCHISE_STORE",
+      channel: r.ownership === "COCO" || r.ownership === "MFC" ? "OWN_STORE" : "FRANCHISE_STORE",
+      isQuickCommerce: isQcStoreKey(r.key),
       storeCity: r.city ?? null,
       storeState: r.state ?? null,
       zone: r.zone ?? null,

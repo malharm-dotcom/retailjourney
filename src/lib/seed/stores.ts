@@ -19,6 +19,7 @@ function store(
   return {
     id: `st_${String(n).padStart(3, "0")}`,
     branchCode: `SN${String(100 + n)}`,
+    isQuickCommerce: false,
     storeName,
     finalStore: `SNITCH - ${storeName}`,
     ownership,

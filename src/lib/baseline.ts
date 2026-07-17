@@ -15,7 +15,11 @@ export async function ensureBaseline(): Promise<void> {
 
   for (const s of STORES) {
     const { channelCode: _ignored, ...data } = s;
-    await db.store.upsert({ where: { id: s.id }, create: data, update: data });
+    // branchCode is excluded from the update: real branch codes loaded from
+    // the store-branch-codes file must survive the boot upsert (the seed's
+    // synthetic SN1xx values are create-time placeholders only).
+    const { branchCode: _seedCode, ...update } = data;
+    await db.store.upsert({ where: { id: s.id }, create: data, update });
   }
 
   for (const u of USERS) {

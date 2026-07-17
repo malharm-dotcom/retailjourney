@@ -7,7 +7,10 @@ export type FacilityScope = Facility | "ALL";
 
 export type OrderType = "FRESH" | "RPL" | "Q_COMM" | "ACC" | "NON_TRADING" | "OTHER";
 export type Channel = "FRANCHISE_STORE" | "OWN_STORE";
-export type Ownership = "COCO" | "FOCO" | "COFO";
+/** MFC = quick-commerce micro-fulfilment centre (normal store, normal rulebook
+ *  lookup). SUVIDHA = external Suvidha-branded destination (tracked like a
+ *  franchise store). */
+export type Ownership = "COCO" | "FOCO" | "COFO" | "MFC" | "SUVIDHA";
 export type Zone = "NORTH" | "WEST" | "SOUTH" | "EAST" | "UNMAPPED";
 
 export type OrderStatus =
@@ -199,6 +202,9 @@ export interface Order {
   orderPlacementSla?: string;
   handoverSla?: string;
 
+  /** finalStore of the parent whose TAT this order inherited (QC stores). */
+  tatInheritedFrom?: string;
+
   /** Field names last written MANUAL — sync never overwrites these (manual wins). */
   manualFields?: string[];
 
@@ -248,7 +254,11 @@ export interface OrderShipment {
 
 export interface Store {
   id: string;
+  /** Physical-location code — a QC store shares its parent's branchCode. */
   branchCode: string;
+  /** Quick-commerce outlet run from the parent store sharing its branchCode;
+   *  its orders inherit the parent's TAT when Snowflake carries none. */
+  isQuickCommerce: boolean;
   storeName: string; // "COFO - DAHISAR"
   finalStore: string; // "SNITCH - COFO - DAHISAR"
   ownership: Ownership;

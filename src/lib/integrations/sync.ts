@@ -8,6 +8,7 @@ import { prisma, databaseConfigured } from "../db";
 import { isoFromEpochMs, istDateOf, nowIso, addDays, istToday } from "../ist";
 import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
+import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
 import { slaState } from "../sla";
 import { queryDistributionAnalytics, snowflakeConfigured } from "../snowflake";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
@@ -176,6 +177,7 @@ async function startRun(source: SyncSource) {
 async function finishRun(
   id: string,
   summary: Omit<SyncSummary, "source">,
+  note?: string,
 ): Promise<void> {
   await prisma().syncRun.update({
     where: { id },
@@ -186,6 +188,7 @@ async function finishRun(
       rowsUpserted: summary.upserted,
       conflicts: summary.conflicts,
       errors: summary.errors.length ? summary.errors.slice(0, MAX_ERRORS_STORED) : undefined,
+      ...(note ? { note } : {}),
     },
   });
 }
@@ -644,6 +647,77 @@ async function upsertShipments(
   return { children: [...children.values()], events };
 }
 
+/** Latest TAT pattern carried on the parent store's own orders (same type
+ *  preferred, any type as fallback) — the source a QC order inherits from. */
+async function parentTatTemplate(
+  parentStoreId: string,
+  type: Order["type"] | undefined,
+  cache: Map<string, TatTemplate | undefined>,
+): Promise<TatTemplate | undefined> {
+  const cacheKey = `${parentStoreId}:${type ?? ""}`;
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+  const db = prisma();
+  const base = { storeId: parentStoreId, targetOrderDay: { not: null } };
+  const row =
+    (type
+      ? await db.order.findFirst({ where: { ...base, type }, orderBy: { orderTimestamp: "desc" } })
+      : null) ??
+    (await db.order.findFirst({ where: base, orderBy: { orderTimestamp: "desc" } }));
+  const tmpl: TatTemplate | undefined = row
+    ? {
+        targetOrderDay: row.targetOrderDay ?? undefined,
+        targetOrderCutoff: row.targetOrderCutoff ?? undefined,
+        targetHandoverDay: row.targetHandoverDay ?? undefined,
+        targetHandoverCutoff: row.targetHandoverCutoff ?? undefined,
+        targetPickupDay: row.targetPickupDay ?? undefined,
+        targetDeliveryDay: row.targetDeliveryDay ?? undefined,
+        bestTat: row.bestTat ?? undefined,
+        laneClassification: row.laneClassification ?? undefined,
+        zone: row.zone ?? undefined,
+      }
+    : undefined;
+  cache.set(cacheKey, tmpl);
+  return tmpl;
+}
+
+/**
+ * QC TAT inheritance (in place on m.patch): a quick-commerce store has no
+ * rulebook row, so its rows carry no deadlines — inherit the parent store's
+ * pattern via the shared branchCode, re-anchored on this order's date.
+ * Edge cases surface instead of guessing: no parent / ambiguous parent leaves
+ * the patch untouched (legs read "no target", never a false breach) and the
+ * situation is reported on the SyncRun note.
+ */
+async function applyQcInheritance(
+  m: MappedOrder,
+  store: Store,
+  stores: Store[],
+  tmplCache: Map<string, TatTemplate | undefined>,
+  notes: Set<string>,
+): Promise<void> {
+  const r = resolveQcParent(store, stores);
+  if (!r.parent) {
+    notes.add(
+      r.reason === "NO_PARENT"
+        ? `QC store ${store.finalStore}: no parent shares branch code ${store.branchCode} — no TAT inherited`
+        : `QC store ${store.finalStore}: branch code ${store.branchCode} matches ${r.candidates.length} non-QC stores — ambiguous, no TAT inherited`,
+    );
+    return;
+  }
+  const tmpl = await parentTatTemplate(r.parent.id, m.patch.type, tmplCache);
+  const inherited = tmpl && buildInheritedTat(m.patch.orderDate ?? istToday(), tmpl);
+  if (!inherited) {
+    notes.add(
+      `QC store ${store.finalStore}: parent ${r.parent.finalStore} has no TAT pattern on record yet — no TAT inherited`,
+    );
+    return;
+  }
+  Object.assign(m.patch, inherited);
+  if (!m.patch.laneClassification && tmpl.laneClassification) m.patch.laneClassification = tmpl.laneClassification;
+  if ((!m.patch.zone || m.patch.zone === "UNMAPPED") && tmpl.zone) m.patch.zone = tmpl.zone as Order["zone"];
+  m.patch.tatInheritedFrom = r.parent.finalStore;
+}
+
 async function createOrderFromSnowflake(m: MappedOrder, store: Store): Promise<void> {
   const db = prisma();
   const status: OrderStatus = m.shipments.length
@@ -700,6 +774,16 @@ async function createOrderFromSnowflake(m: MappedOrder, store: Store): Promise<v
       note: "Order ingested from Snowflake distribution_analytics",
     },
   ];
+  if (base.tatInheritedFrom) {
+    events.push({
+      field: "tatInheritedFrom",
+      fromValue: null,
+      toValue: base.tatInheritedFrom,
+      source: "SYNCED_SNOWFLAKE",
+      actorId: null,
+      note: "QC store — TAT inherited from the parent store via the shared branch code",
+    });
+  }
   const { events: shipmentEvents } = await upsertShipments(m.soNumber, m.shipments, []);
   await db.orderEvent.createMany({
     data: [...events, ...shipmentEvents].map((e) => ({ ...e, orderId: row.id })),
@@ -784,12 +868,16 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
     const mapped = mapDistributionRows(rows);
 
     const stores = (await db.store.findMany()).map(storeToDomain);
-    const norm = (s: string) => s.trim().toUpperCase();
+    // Whitespace/hyphen-tolerant join key — Snowflake STORE strings drift
+    // ("QC  KALYAN NAGAR", "HSR LAYOUT-2") and must still hit one store.
+    const norm = normStoreKey;
     const byFinalStore = new Map(stores.map((s) => [norm(s.finalStore), s]));
     const byChannelCode = new Map(
       stores.filter((s) => s.channelCode).map((s) => [norm(s.channelCode!), s]),
     );
     const unmatched: UnmatchedMap = new Map();
+    const tmplCache = new Map<string, TatTemplate | undefined>();
+    const qcNotes = new Set<string>();
 
     for (const m of mapped) {
       try {
@@ -797,6 +885,16 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
         const store = m.storeKey
           ? (byFinalStore.get(norm(m.storeKey)) ?? byChannelCode.get(norm(m.storeKey)))
           : undefined;
+
+        if (store?.isQuickCommerce) {
+          if (shouldInheritQcTat(store, m.patch)) {
+            await applyQcInheritance(m, store, stores, tmplCache, qcNotes);
+          } else if (existingRow?.tatInheritedFrom) {
+            // Upstream now bakes the QC store's own rulebook TAT — the
+            // inherited marker no longer applies.
+            (m.patch as Record<string, unknown>).tatInheritedFrom = null;
+          }
+        }
 
         if (!existingRow) {
           if (!store) {
@@ -823,6 +921,8 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
       return byFinalStore.has(k) || byChannelCode.has(k);
     });
     summary.ok = summary.errors.length === 0;
+    await finishRun(run.id, summary, qcNotes.size ? [...qcNotes].join(" | ") : undefined);
+    return summary;
   } catch (e) {
     summary.errors.push(e instanceof Error ? e.message : String(e));
     summary.ok = false;

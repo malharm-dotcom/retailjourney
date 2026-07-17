@@ -196,6 +196,11 @@ model Order {
   orderPlacementSla String?
   handoverSla       String?
 
+  /// finalStore of the parent store whose TAT this order inherited (QC stores
+  /// have no rulebook row; deadlines above were derived from the parent's
+  /// pattern via the shared branchCode). Null = the order's own rulebook TAT.
+  tatInheritedFrom String?
+
   /// Field names last written MANUAL — sync never overwrites these (manual wins)
   manualFields String[] @default([])
 
@@ -283,11 +288,16 @@ model OrderEvent {
 
 model Store {
   id          String  @id @default(cuid())
-  branchCode  String  @unique
+  /// Physical-location code, NOT a row identity — a quick-commerce (QC) store
+  /// operates out of its parent store's premises and legitimately shares the
+  /// parent's branchCode (that sharing is how QC TAT inheritance resolves).
+  branchCode  String
   storeName   String
   finalStore  String
-  ownership   String? // COCO | FOCO | COFO
+  ownership   String? // COCO | FOCO | COFO | MFC | SUVIDHA
   channel     String // FRANCHISE_STORE | OWN_STORE
+  /// Quick-commerce outlet run from the parent store sharing its branchCode.
+  isQuickCommerce Boolean @default(false)
   storeCity   String?
   storeState  String?
   zone        String?

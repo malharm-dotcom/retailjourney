@@ -161,6 +161,7 @@ export function storeToDomain(r: DbStore): Store {
   return {
     id: r.id,
     branchCode: r.branchCode,
+    isQuickCommerce: r.isQuickCommerce,
     storeName: r.storeName,
     finalStore: r.finalStore,
     ownership: (undef(r.ownership) ?? "COCO") as Store["ownership"],

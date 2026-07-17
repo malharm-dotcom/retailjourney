@@ -176,6 +176,11 @@ export default async function OrderPage({ params }: { params: { soNumber: string
               <h2 className="text-[13px] font-bold">SLA by leg</h2>
               <span className="ml-auto text-[11.5px] text-mute">rulebook-derived · advisory</span>
             </header>
+            {o.tatInheritedFrom ? (
+              <div className="border-b border-line bg-ofd-bg px-5 py-2 text-[11.5px] font-semibold text-ofd">
+                Inherited TAT — quick-commerce store, targets from parent {o.tatInheritedFrom}
+              </div>
+            ) : null}
             <div>
               {sla.legs.map((l) => (
                 <div key={l.leg} className="flex items-center gap-3 border-b border-line px-5 py-3 last:border-b-0">

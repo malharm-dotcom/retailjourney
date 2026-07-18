@@ -5,7 +5,7 @@
 
 import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
 import { prisma, databaseConfigured } from "../db";
-import { isoFromEpochMs, istDateOf, nowIso, addDays, istToday } from "../ist";
+import { isoFromEpochMs, istDateOf, nowIso, istToday } from "../ist";
 import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
@@ -15,11 +15,9 @@ import { queryDistributionAnalytics, snowflakeConfigured } from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
-import { UcApiOrderSource } from "./uc-source";
-import { ucConfigured } from "./uc-client";
-import type { TrackingUpdate, UcOrderUpdate } from "./types";
+import type { TrackingUpdate } from "./types";
 
-export type SyncSource = "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
+export type SyncSource = "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
 
 export interface SyncSummary {
   source: SyncSource;
@@ -31,8 +29,6 @@ export interface SyncSummary {
 }
 
 const MAX_ERRORS_STORED = 25;
-const FIRST_RUN_LOOKBACK_DAYS = 7;
-const SWEEP_OVERLAP_DAYS = 1;
 
 /** Fields updated silently (no OrderEvent) — they churn every run and would
  *  drown the journey timeline. Status/shipment/delivery changes always log. */
@@ -196,7 +192,7 @@ async function finishRun(
 }
 
 // ---------------------------------------------------------------------------
-// Unicommerce
+// Shared sync helpers (status guard + unmatched-channel review queue)
 
 /** Forward-only status guard: sync may never regress the floor's progress,
  *  pull an order out of ON_HOLD, or resurrect a terminal order.
@@ -241,116 +237,6 @@ async function flushUnmatched(map: UnmatchedMap, resolves: (channel: string) => 
   for (const u of rows) {
     if (resolves(u.channel)) await db.unmatchedChannel.delete({ where: { id: u.id } });
   }
-}
-
-async function createOrderFromUc(update: UcOrderUpdate, store: Store): Promise<void> {
-  const createdIso = update.patch.createdTs ?? nowIso();
-  const status = update.patch.status ?? "NOT_STARTED";
-  const base: Partial<Order> = {
-    soNumber: update.soNumber,
-    orderDate: istDateOf(createdIso),
-    orderTimestamp: createdIso,
-    facility: store.facility,
-    channel: store.channel,
-    storeId: store.id,
-    storeNameFormat: store.storeName,
-    finalStore: store.finalStore,
-    ownership: store.ownership,
-    state: store.storeState,
-    zone: store.zone,
-    type: "OTHER", // merchandising sets TYPE/PRIORITY/campaign (PRD §3)
-    qty: update.qty,
-    merchandiser: store.merchandiser,
-    areaManager: store.areaManager,
-    ...update.patch,
-    status,
-    statusSource: "SYNCED",
-    deliveryAttempts: 0,
-    pickupAttempts: 0,
-  };
-  base.overallStatus = rollupOverall({ status, shipmentStatus: undefined });
-
-  const db = prisma();
-  const row = await db.order.create({ data: orderToDb(base) as never });
-  await db.orderEvent.create({
-    data: {
-      orderId: row.id,
-      field: "status",
-      fromValue: null,
-      toValue: status,
-      source: "SYNCED",
-      actorId: null,
-      note: "B2B SO created in UC",
-    },
-  });
-}
-
-export async function runUcSync(): Promise<SyncSummary> {
-  if (!databaseConfigured()) throw new Error("UC sync requires DATABASE_URL");
-  if (!ucConfigured()) throw new Error("UC sync requires UC_BASE_URL / UC_USERNAME / UC_PASSWORD");
-
-  const run = await startRun("UC");
-  const summary: SyncSummary = { source: "UC", ok: false, fetched: 0, upserted: 0, conflicts: 0, errors: [] };
-  const source = new UcApiOrderSource();
-  const db = prisma();
-
-  try {
-    const lastOk = await db.syncRun.findFirst({
-      where: { source: "UC", ok: true },
-      orderBy: { startedAt: "desc" },
-    });
-    const since = lastOk
-      ? addDays(istDateOf(lastOk.startedAt.toISOString()), -SWEEP_OVERLAP_DAYS)
-      : addDays(istToday(), -FIRST_RUN_LOOKBACK_DAYS);
-
-    const codes = await source.fetchChangedOrderCodes(since);
-    summary.fetched = codes.length;
-
-    const stores = (await db.store.findMany({ where: { channelCode: { not: null } } })).map(storeToDomain);
-    const byChannel = new Map(stores.map((s) => [s.channelCode!, s]));
-    const unmatched: UnmatchedMap = new Map();
-
-    for (const code of codes) {
-      try {
-        const update = await source.fetchOrder(code);
-        if (!update) continue;
-
-        const existingRow = await db.order.findUnique({ where: { soNumber: update.soNumber } });
-        if (existingRow) {
-          const existing = orderToDomain(existingRow);
-          const patch = { ...update.patch };
-          patch.status = guardedStatus(existing.status, update.patch.status);
-          if (patch.status) patch.statusSource = "SYNCED";
-          // Never let UC clobber the shipment layer's delivery timeline.
-          if (existing.shipmentStatus) {
-            delete patch.deliveredTs;
-            delete patch.deliveredDate;
-          }
-          const res = await applySyncPatch(existing, patch);
-          if (res.changed) summary.upserted += 1;
-          summary.conflicts += res.conflicts;
-        } else {
-          const store = update.ucChannel ? byChannel.get(update.ucChannel) : undefined;
-          if (!store) {
-            noteUnmatched(unmatched, update.ucChannel || "(no channel)", update.soNumber);
-            continue; // held in the Admin review queue — never dropped silently
-          }
-          await createOrderFromUc(update, store);
-          summary.upserted += 1;
-        }
-      } catch (e) {
-        summary.errors.push(`${code}: ${e instanceof Error ? e.message : String(e)}`);
-      }
-    }
-    await flushUnmatched(unmatched, (c) => byChannel.has(c));
-    summary.ok = summary.errors.length === 0;
-  } catch (e) {
-    summary.errors.push(e instanceof Error ? e.message : String(e));
-    summary.ok = false;
-  }
-
-  await finishRun(run.id, summary);
-  return summary;
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,11 +889,10 @@ export async function runEshipzWebhook(shipments: EshipzShipment[]): Promise<Syn
 
 // ---------------------------------------------------------------------------
 
-/** The 15-min tick (UC + eShipz poller). Snowflake runs on its OWN hourly
+/** The 15-min tick (eShipz poller). Snowflake runs on its OWN hourly
  *  cadence (instrumentation-node.ts) — never merged into this slot. */
 export async function runAllSyncs(): Promise<SyncSummary[]> {
   const out: SyncSummary[] = [];
-  if (ucConfigured()) out.push(await runUcSync());
   if (eshipzConfigured()) out.push(await runEshipzSync());
   return out;
 }
@@ -1018,8 +903,7 @@ export async function getSyncHealth() {
     return { lastRuns: {} as Record<SyncSource, undefined>, recentRuns: [], unmatched: [] };
   }
   const db = prisma();
-  const [uc, eshipz, webhook, snowflake, recentRuns, unmatched] = await Promise.all([
-    db.syncRun.findFirst({ where: { source: "UC" }, orderBy: { startedAt: "desc" } }),
+  const [eshipz, webhook, snowflake, recentRuns, unmatched] = await Promise.all([
     db.syncRun.findFirst({ where: { source: "ESHIPZ" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "ESHIPZ_WEBHOOK" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "SNOWFLAKE" }, orderBy: { startedAt: "desc" } }),
@@ -1028,7 +912,6 @@ export async function getSyncHealth() {
   ]);
   return {
     lastRuns: {
-      UC: uc ?? undefined,
       ESHIPZ: eshipz ?? undefined,
       ESHIPZ_WEBHOOK: webhook ?? undefined,
       SNOWFLAKE: snowflake ?? undefined,

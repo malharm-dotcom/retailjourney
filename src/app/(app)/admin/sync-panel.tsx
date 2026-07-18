@@ -1,7 +1,7 @@
 "use client";
 
 // Admin sync controls (M2): per-source health cards, on-demand "Sync now",
-// and the unmatched-channel review queue (UC channel → Store mapping).
+// and the unmatched-channel review queue (channel → Store mapping).
 
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -30,7 +30,7 @@ export interface UnmatchedChannelView {
 }
 
 export interface SourceCard {
-  source: "UC" | "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
+  source: "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
   name: string;
   detail: string;
   icon: string;
@@ -44,7 +44,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
   const [pending, startTransition] = useTransition();
   const [running, setRunning] = useState<string | null>(null);
 
-  const trigger = (source: "UC" | "ESHIPZ" | "SNOWFLAKE") => {
+  const trigger = (source: "ESHIPZ" | "SNOWFLAKE") => {
     setRunning(source);
     startTransition(async () => {
       const res = await runSyncNow(source);
@@ -89,7 +89,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
                   variant="outline"
                   className="ml-auto px-3 py-1.5 text-[12px]"
                   disabled={pending || !c.configured || !dbReady}
-                  onClick={() => trigger(c.source as "UC" | "ESHIPZ" | "SNOWFLAKE")}
+                  onClick={() => trigger(c.source as "ESHIPZ" | "SNOWFLAKE")}
                 >
                   <Icon name="refresh-bold-duotone" size={14} className={cn(running === c.source && "animate-spin")} />
                   Sync now
@@ -140,7 +140,7 @@ export function UnmatchedChannels({
     }
     startTransition(async () => {
       const res = await mapChannelToStore(channel, storeId);
-      if (res.ok) toast.success(`Channel "${channel}" mapped — next UC sweep ingests its orders`);
+      if (res.ok) toast.success(`Channel "${channel}" mapped — next sync ingests its orders`);
       else toast.error(res.error);
     });
   };
@@ -149,7 +149,7 @@ export function UnmatchedChannels({
     <section className="mb-6 overflow-hidden rounded-2xl bg-card shadow-card">
       <header className="flex items-center gap-2.5 border-b border-line bg-ofd-bg px-5 py-3.5">
         <Icon name="danger-triangle-bold-duotone" size={17} className="text-ofd" />
-        <h2 className="text-[13px] font-bold">Unmatched UC channels — review queue</h2>
+        <h2 className="text-[13px] font-bold">Unmatched channels — review queue</h2>
         <span className="ml-auto text-[11.5px] text-mute">
           orders from these channels are held until mapped to a store
         </span>

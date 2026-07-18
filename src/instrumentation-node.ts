@@ -57,7 +57,7 @@ export function bootNode(): void {
 }
 
 /** Hourly Snowflake distribution_analytics reader — its own cadence, kept
- *  separate from the 15-min UC/eShipz slot. SNOWFLAKE_SYNC_INTERVAL_MINUTES
+ *  separate from the 15-min eShipz poller slot. SNOWFLAKE_SYNC_INTERVAL_MINUTES
  *  overrides (default 60; <=0 disables). */
 export function startSnowflakeScheduler(): void {
   if (g.__retailjourneySnowflakeTimer) return;
@@ -87,7 +87,7 @@ export function startSnowflakeScheduler(): void {
 
   g.__retailjourneySnowflakeTimer = setInterval(tick, minutes * 60 * 1000);
   console.log(`[sync] snowflake scheduler started — every ${minutes} min`);
-  // First run shortly after boot, offset from the UC/eShipz first tick.
+  // First run shortly after boot, offset from the eShipz poller first tick.
   setTimeout(tick, 60 * 1000);
 }
 

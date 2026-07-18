@@ -9,7 +9,6 @@ import { googleConfigured } from "@/lib/auth";
 import { databaseConfigured } from "@/lib/db";
 import { eshipzConfigured, eshipzWebhookConfigured } from "@/lib/integrations/eshipz-source";
 import { getSyncHealth } from "@/lib/integrations/sync";
-import { ucConfigured } from "@/lib/integrations/uc-client";
 import { snowflakeConfigured } from "@/lib/snowflake";
 import { fmtDateTime } from "@/lib/ist";
 import { ROLE_POLICY } from "@/lib/rbac";
@@ -52,14 +51,6 @@ export default async function AdminPage() {
   const dbReady = databaseConfigured();
 
   const cards: SourceCard[] = [
-    {
-      source: "UC",
-      name: "Unicommerce",
-      detail: "B2B SO intake + processing lifecycle",
-      icon: "cloud-download-bold-duotone",
-      configured: ucConfigured(),
-      lastRun: toRunView(health.lastRuns.UC),
-    },
     {
       source: "ESHIPZ",
       name: "eShipz",
@@ -184,7 +175,7 @@ export default async function AdminPage() {
         </header>
         {health.recentRuns.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-mute">
-            No sync runs yet — they start once the database and UC/eShipz credentials are configured. Every synced
+            No sync runs yet — they start once the database and integration credentials are configured. Every synced
             write lands here and on each order&rsquo;s timeline.
           </div>
         ) : (

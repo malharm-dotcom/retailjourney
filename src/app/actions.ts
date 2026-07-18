@@ -7,7 +7,7 @@
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { databaseConfigured, prisma } from "@/lib/db";
-import { runAllSyncs, runEshipzSync, runSnowflakeSync, runUcSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
+import { runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { FACILITY_COOKIE, currentUser } from "@/lib/session";
@@ -126,8 +126,7 @@ export async function runSyncNow(source?: SyncSource): Promise<ActionResult & { 
     const user = await currentUser();
     if (policyOf(user.role).isAdmin !== true) throw new Error("Admin only");
     let summaries: SyncSummary[];
-    if (source === "UC") summaries = [await runUcSync()];
-    else if (source === "ESHIPZ") summaries = [await runEshipzSync()];
+    if (source === "ESHIPZ") summaries = [await runEshipzSync()];
     else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync()];
     else summaries = await runAllSyncs();
     revalidatePath("/", "layout");
@@ -137,8 +136,8 @@ export async function runSyncNow(source?: SyncSource): Promise<ActionResult & { 
   }
 }
 
-/** Admin: resolve a UC channel to a Store (sets Store.channelCode, clears the
- *  review-queue row). The next UC sweep ingests the held orders. */
+/** Admin: resolve an unmatched channel to a Store (sets Store.channelCode,
+ *  clears the review-queue row). The next sync sweep ingests the held orders. */
 export async function mapChannelToStore(channel: string, storeId: string): Promise<ActionResult> {
   try {
     const user = await currentUser();

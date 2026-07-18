@@ -60,7 +60,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
 
   return (
     <>
-      <div className="flex flex-wrap items-end justify-between gap-4 pb-4 pt-[30px]">
+      <div className="flex flex-wrap items-end justify-between gap-4 pb-5 pt-8">
         <div>
           <div className="mb-1.5 flex items-center gap-2 text-[12.5px] text-mute">
             <Link href="/in-transit" className="hover:text-sage">
@@ -69,8 +69,8 @@ export default async function OrderPage({ params }: { params: { soNumber: string
             <span>/</span>
             <span className="mono">{o.soNumber}</span>
           </div>
-          <h1 className="font-display text-[28px] font-bold leading-[1.05] tracking-tight sm:text-[33px]">
-            {o.soNumber} <span className="text-sage">#</span>
+          <h1 className="font-display text-[27px] font-bold leading-[1.05] tracking-tight sm:text-[32px]">
+            {o.soNumber}
           </h1>
           <div className="mt-2 text-sm text-mute">
             {o.finalStore} · {o.facility} · {o.type} · {o.qty} pcs

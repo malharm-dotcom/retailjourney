@@ -130,35 +130,53 @@ export function Kanban({
 
   return (
     <>
-      {/* Lanes wrap instead of side-scrolling: auto-fit keeps every status
-          column on screen at any width without shrinking the type scale. */}
-      <div className="grid gap-3 pb-4 [grid-template-columns:repeat(auto-fit,minmax(218px,1fr))]">
+      {/* Every status lane stays visible at desktop width: a fixed row that
+          fills the content column — cards scroll inside a lane, lanes never
+          scroll the page (no horizontal scroll, nothing below the fold). Empty
+          lanes collapse to a slim rail so populated lanes keep their width.
+          Phone width stacks the lanes vertically. */}
+      <div className="mb-4 flex flex-col gap-2.5 lg:h-[calc(100dvh-238px)] lg:flex-row lg:overflow-x-hidden">
         {LANES.map((lane) => {
           const v = WH_STATUS_VISUAL[lane];
           const list = byLane.get(lane)!;
           const shown = laneShown[lane] ?? LANE_PAGE;
           const visible = list.slice(0, shown);
           const hidden = list.length - visible.length;
+          const empty = list.length === 0;
           return (
-            <section key={lane} className="min-w-0">
+            <section
+              key={lane}
+              className={cn("flex min-w-0 flex-col lg:h-full", empty ? "lg:w-[48px] lg:flex-none" : "lg:flex-1")}
+            >
                 <header
-                  className="mb-2.5 flex items-center gap-2 rounded-xl border-t-[3px] bg-card px-3.5 py-2.5 shadow-card"
+                  className={cn(
+                    "mb-2.5 flex items-center gap-2 rounded-xl border-t-[3px] bg-card px-3 py-2.5 shadow-card",
+                    empty && "lg:flex-col lg:gap-1.5 lg:px-1 lg:py-3",
+                  )}
                   style={{ borderTopColor: v.rail }}
                 >
                   <Icon name={v.icon} size={15} className="text-ink-soft" />
-                  <span className="text-[12.5px] font-bold">{STATUS_LABEL[lane]}</span>
-                  <span className="mono ml-auto rounded-md bg-paper px-1.5 py-0.5 font-display text-xs font-bold text-ink-soft">
+                  <span
+                    className={cn(
+                      "truncate text-[12.5px] font-bold",
+                      empty && "lg:rotate-180 lg:[writing-mode:vertical-rl]",
+                    )}
+                  >
+                    {STATUS_LABEL[lane]}
+                  </span>
+                  <span
+                    className={cn(
+                      "mono ml-auto rounded-md bg-paper px-1.5 py-0.5 font-display text-xs font-bold text-ink-soft",
+                      empty && "lg:ml-0",
+                    )}
+                  >
                     {list.length}
                   </span>
                 </header>
 
-                <div className="flex flex-col gap-2">
-                  {list.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-line-strong px-3 py-6 text-center text-xs text-mute">
-                      Empty lane
-                    </div>
-                  ) : (
-                    visible.map((c) => {
+                {empty ? null : (
+                  <div className="flex flex-col gap-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:px-0.5">
+                    {visible.map((c) => {
                       const nexts = WH_TRANSITIONS[c.status].filter((s) => WH_FLOW.includes(s) && WH_FLOW.indexOf(s) > WH_FLOW.indexOf(c.status));
                       const primaryNext = nexts[0];
                       const others = WH_TRANSITIONS[c.status].filter((s) => s !== primaryNext);
@@ -166,7 +184,7 @@ export function Kanban({
                         <article
                           key={c.so}
                           className={cn(
-                            "group rounded-xl bg-card p-3 shadow-card transition-all hover:shadow-lift",
+                            "group rounded-xl bg-card p-2.5 shadow-card transition-all hover:shadow-lift",
                             c.due === "overdue" && "ring-1 ring-breach/60",
                             c.due === "today" && "ring-1 ring-sage/50",
                           )}
@@ -247,19 +265,17 @@ export function Kanban({
                           ) : null}
                         </article>
                       );
-                    })
-                  )}
-                  {hidden > 0 ? (
-                    <button
-                      onClick={() =>
-                        setLaneShown((s) => ({ ...s, [lane]: shown + LANE_PAGE * 2 }))
-                      }
-                      className="rounded-xl border border-dashed border-line-strong px-3 py-2.5 text-xs font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
-                    >
-                      Show more — {hidden} hidden
-                    </button>
-                  ) : null}
-                </div>
+                    })}
+                    {hidden > 0 ? (
+                      <button
+                        onClick={() => setLaneShown((s) => ({ ...s, [lane]: shown + LANE_PAGE * 2 }))}
+                        className="rounded-xl border border-dashed border-line-strong px-3 py-2.5 text-xs font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+                      >
+                        Show more — {hidden} hidden
+                      </button>
+                    ) : null}
+                  </div>
+                )}
               </section>
             );
           })}

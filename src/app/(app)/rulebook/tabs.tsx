@@ -104,6 +104,7 @@ export function RulebookTabs({
         <VersionSelector snapshots={snapshots} version={version} />
       </div>
 
+      <div key={`${tab}:${type}`} className="animate-fade">
       {tab === "grid" ? (
         <>
           <div className="mb-3 flex flex-wrap items-center gap-3 text-[11.5px] text-mute">
@@ -233,6 +234,7 @@ export function RulebookTabs({
       ) : null}
 
       {tab === "lanes" ? <LaneView rules={rules} /> : null}
+      </div>
     </>
   );
 }

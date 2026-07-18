@@ -12,11 +12,10 @@ export default async function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-5 py-10">
       <div className="w-full max-w-[520px]">
-        <div className="mb-8 text-center">
-          <div className="font-display text-[40px] font-extrabold tracking-tight">
-            RetailJourney<span className="text-sage">#</span>
-          </div>
-          <p className="mt-1 text-sm text-mute">
+        <div className="mb-8 flex flex-col items-center text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/snitch-wordmark.png" alt="Snitch" className="h-9 w-auto" />
+          <p className="mt-3 text-sm text-mute">
             The baton passing cleanly between Merchandising, Warehouse, Logistics and Store.
           </p>
         </div>

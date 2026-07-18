@@ -65,8 +65,20 @@ const config: Config = {
       },
       keyframes: {
         rise: {
-          from: { opacity: "0", transform: "translateY(8px)" },
+          from: { opacity: "0", transform: "translateY(6px)" },
           to: { opacity: "1", transform: "none" },
+        },
+        fade: {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        dialogIn: {
+          from: { opacity: "0", transform: "translateY(6px) scale(.985)" },
+          to: { opacity: "1", transform: "none" },
+        },
+        slideIn: {
+          from: { transform: "translateX(-100%)" },
+          to: { transform: "translateX(0)" },
         },
         pulse2: {
           "0%": { boxShadow: "0 0 0 0 rgba(62,122,92,.4)" },
@@ -75,7 +87,12 @@ const config: Config = {
         },
       },
       animation: {
-        rise: "rise .5s cubic-bezier(.2,.7,.3,1) both",
+        // Subtle + fast (150–250ms), nothing bouncy or decorative.
+        rise: "rise .22s cubic-bezier(.2,.7,.3,1) both",
+        fade: "fade .18s ease-out both",
+        dialogIn: "dialogIn .2s cubic-bezier(.2,.7,.3,1)",
+        overlayIn: "fade .16s ease-out",
+        slideIn: "slideIn .2s cubic-bezier(.2,.7,.3,1)",
         pulse2: "pulse2 2.2s infinite",
       },
       maxWidth: {

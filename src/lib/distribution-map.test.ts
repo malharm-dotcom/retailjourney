@@ -209,6 +209,68 @@ describe("normalizers", () => {
     expect(normOverallStatus(null)).toBeUndefined();
   });
 
+  it("maps the spine's extra OVERALL_STATUS vocabulary onto the enum", () => {
+    expect(normOverallStatus("INWARDED")).toBe("INWARDED");
+    expect(normOverallStatus("DISPATCHED")).toBe("PICKUP_PENDING"); // left WH, no scan
+    expect(normOverallStatus("PACKING")).toBe("WH_PROCESSING");
+    expect(normOverallStatus("WH_PROCESSING")).toBe("WH_PROCESSING");
+  });
+
+  it("only an explicit FALSE marks an order out of rulebook", () => {
+    const covered = mapDistributionRows([row({ ORDER_NAME: "A", RULEBOOK_COVERED: true })]);
+    const uncovered = mapDistributionRows([row({ ORDER_NAME: "B", RULEBOOK_COVERED: false })]);
+    const unknown = mapDistributionRows([row({ ORDER_NAME: "C" })]);
+    expect(covered[0].patch.rulebookCovered).toBe(true);
+    expect(uncovered[0].patch.rulebookCovered).toBe(false);
+    // A missing value must NOT read as uncovered, or every order gets badged.
+    expect(unknown[0].patch.rulebookCovered).toBeUndefined();
+  });
+
+  it("delivery target keeps IDEAL primary and falls back to the spine EDD", () => {
+    const [covered] = mapDistributionRows([
+      row({
+        ORDER_NAME: "D",
+        IDEAL_DELIVERY_DATE: "2026-07-11 23:59:59.000",
+        DELIVERY_TARGET_EDD: "2026-07-14 18:30:00.000",
+      }),
+    ]);
+    // Covered orders display exactly what they displayed before the swap.
+    expect(covered.patch.idealDeliveryDate).toBe("2026-07-11");
+
+    const [out] = mapDistributionRows([
+      row({ ORDER_NAME: "E", IDEAL_DELIVERY_DATE: null, DELIVERY_TARGET_EDD: "2026-07-14 18:30:00.000" }),
+    ]);
+    // Out-of-rulebook: same field, same UI, fed by the eShipz EDD.
+    expect(out.patch.idealDeliveryDate).toBe("2026-07-14");
+    expect(out.patch.deliveryTargetEdd).toBe("2026-07-14T13:00:00.000Z");
+  });
+
+  it("the parent takes the MOST-ADVANCED sibling row, not the first", () => {
+    const rows = [
+      row({ ORDER_NAME: "F", OVERALL_STATUS: "DISPATCHED", STORE: "SNITCH - COCO - A" }),
+      row({ ORDER_NAME: "F", OVERALL_STATUS: "INWARDED", STORE: "SNITCH - COCO - A", TRACKING_NUMBER: "111" }),
+    ];
+    expect(mapDistributionRows(rows)[0].overallStatusSeed).toBe("INWARDED");
+    // ...and row order must not change the answer.
+    expect(mapDistributionRows([...rows].reverse())[0].overallStatusSeed).toBe("INWARDED");
+  });
+
+  it("carries store channel and inward data without any UI coupling", () => {
+    const [m] = mapDistributionRows([
+      row({
+        ORDER_NAME: "G",
+        STORE_CHANNEL: "FRANCHISE",
+        INWARDED_DATE: "2026-07-12",
+        STI_QTY: 240,
+        EX_SHORT: -3,
+      }),
+    ]);
+    expect(m.patch.storeChannel).toBe("FRANCHISE");
+    expect(m.patch.inwardedDate).toBe("2026-07-12");
+    expect(m.patch.stiQty).toBe(240);
+    expect(m.patch.exShort).toBe(-3);
+  });
+
   it("maps warehouse names to facilities, passing unknowns through", () => {
     expect(normFacility("North_Wh")).toBe("SAPL-NORTH-TAURU");
     expect(normFacility("TAURU")).toBe("SAPL-NORTH-TAURU");

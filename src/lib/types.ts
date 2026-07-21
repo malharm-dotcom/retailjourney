@@ -24,7 +24,23 @@ export type OrderStatus =
   | "CANCELLED"
   | "UNFULFILLABLE";
 
-export type OverallStatus = "WH_PROCESSING" | "PICKUP_PENDING" | "IN_TRANSIT" | "DELIVERED";
+/**
+ * The order's headline stage. INWARDED is a fifth, terminal stage beyond
+ * DELIVERED: the store has received AND booked the stock. It arrives only from
+ * the Snowflake spine's OVERALL_STATUS, and only through the seed path used for
+ * orders with no AWB children — rollupOverall() is deliberately unchanged, so
+ * no delivered order is silently reclassified. (Distinct from ReceiptStatus,
+ * which is the manual Phase-C reconciliation lifecycle.)
+ */
+export type OverallStatus =
+  | "WH_PROCESSING"
+  | "PICKUP_PENDING"
+  | "IN_TRANSIT"
+  | "DELIVERED"
+  | "INWARDED";
+
+/** Spine STORE_CHANNEL — how the receiving store is operated. */
+export type StoreChannel = "OWN" | "FRANCHISE";
 
 export type ShipmentStatus =
   | "IN_TRANSIT"
@@ -177,13 +193,32 @@ export interface Order {
   adjustmentOnLogic?: boolean;
   entryStatus?: EntryStatus;
 
-  // Snowflake distribution_analytics — spine enrichment (source SYNCED_SNOWFLAKE)
+  // Snowflake RETAIL_JOURNEY_SPINE — spine enrichment (source SYNCED_SNOWFLAKE)
   receiverCity?: string;
   receiverState?: string;
   receiverPostalCode?: string;
   sales30d?: number;
   storeRank?: number;
   bestTat?: number;
+  /** OWN / FRANCHISE — how the receiving store is operated. */
+  storeChannel?: StoreChannel;
+  /**
+   * TRUE only when a REAL rulebook target exists for this order — NOT merely
+   * "the row was present in the source". FALSE means the order is out of
+   * rulebook: it stays visible (the old source hid it) and runs on the
+   * fallback delivery target below, flagged in the UI.
+   */
+  rulebookCovered?: boolean;
+  /**
+   * Spine delivery target. For out-of-rulebook orders this carries the eShipz
+   * EDD instead of a rulebook-derived date. Used as the FALLBACK behind
+   * idealDeliveryDate so covered orders keep their existing displayed target.
+   */
+  deliveryTargetEdd?: string; // ISO UTC
+  /** Inward quantities from the spine — DATA ONLY this arc, no UI reads them.
+   *  (inwardedDate above is reused; it already existed for Phase C.) */
+  stiQty?: number;
+  exShort?: number;
 
   // Deadlines/TAT — Snowflake sole authority; only manual overrides
   targetOrderDay?: string;
@@ -218,6 +253,9 @@ export interface OrderShipment {
   id: string;
   soNumber: string;
   awb: string;
+  /** Spine SHIPMENT_BILL. Carried for provenance only — identity stays
+   *  (soNumber, awb), which the live data confirms is already unique. */
+  shipmentBill?: string;
   courier?: string;
   /** FALSE for self-delivery/porter pseudo-AWBs — the eShipz poller skips these. */
   isPollable: boolean;

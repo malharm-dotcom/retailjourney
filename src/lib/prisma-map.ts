@@ -43,6 +43,7 @@ export const ORDER_TS_FIELDS = [
   "handoverDeadlineTs",
   "pickupTat",
   "deliveryTat",
+  "deliveryTargetEdd",
   "createdAt",
   "updatedAt",
 ] as const;

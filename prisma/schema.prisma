@@ -177,6 +177,16 @@ model Order {
   sales30d           Float?
   storeRank          Int?
   bestTat            Int?
+  /// RETAIL_JOURNEY_SPINE: OWN / FRANCHISE
+  storeChannel       String?
+  /// TRUE only when a real rulebook target exists. NULL = unknown (pre-spine
+  /// rows); only an explicit FALSE means out-of-rulebook.
+  rulebookCovered    Boolean?
+  /// Spine delivery target; carries the eShipz EDD when out-of-rulebook.
+  deliveryTargetEdd  DateTime?
+  /// Inward quantities from the spine — data only, no UI reads these yet.
+  stiQty             Int?
+  exShort            Int?
 
   // Deadlines/TAT — Snowflake is the SOLE authority (rulebook values baked into
   // each row); only manual can override, the app never recomputes these.
@@ -226,6 +236,9 @@ model OrderShipment {
   soNumber String
   order    Order  @relation(fields: [soNumber], references: [soNumber], onDelete: Cascade)
   awb      String
+  /// Spine SHIPMENT_BILL — provenance only. Identity stays (soNumber, awb):
+  /// live data confirms that pair is already unique across the spine.
+  shipmentBill String?
   courier  String?
   /// FALSE for self-delivery/porter pseudo-AWBs ("SN417") — the eShipz poller
   /// skips these; Snowflake stays the transit authority for them.

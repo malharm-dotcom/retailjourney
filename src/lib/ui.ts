@@ -42,6 +42,14 @@ export const OVERALL_VISUAL: Record<OverallStatus, StatusVisual> = {
     pill: "bg-deliv-bg text-deliv",
     rail: "#3E7A5C",
   },
+  // Beyond delivered: the store has booked the stock in. Shares the delivered
+  // palette because it is the same "good, finished" family, one step further.
+  INWARDED: {
+    icon: "clipboard-check-bold-duotone",
+    label: "Inwarded",
+    pill: "bg-deliv-bg text-deliv",
+    rail: "#3E7A5C",
+  },
 };
 
 export const SHIPMENT_VISUAL: Record<ShipmentStatus, StatusVisual> = {

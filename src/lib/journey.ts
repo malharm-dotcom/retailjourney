@@ -157,6 +157,7 @@ export const OVERALL_LABEL: Record<OverallStatus, string> = {
   PICKUP_PENDING: "Pickup Pending",
   IN_TRANSIT: "In Transit",
   DELIVERED: "Delivered",
+  INWARDED: "Inwarded",
 };
 
 export const SHIPMENT_LABEL: Record<ShipmentStatus, string> = {

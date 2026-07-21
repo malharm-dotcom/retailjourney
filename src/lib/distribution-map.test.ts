@@ -30,6 +30,9 @@ function row(over: Partial<DistributionRow> & { ORDER_NAME: string }): Distribut
     "TRACKING_LATEST_MESSAGE", "LAST_CHECKPOINT_CITY", "LAST_CHECKPOINT_STATE",
     "LAST_CHECKPOINT_REMARK", "LAST_CHECKPOINT_SUBTAG", "LAST_CHECKPOINT_TAG", "POD_LINK",
     "PACKAGE_COUNT", "PICKUP_SLA", "DELIVERY_SLA", "LOGISTICS_DELIVERY_SLA", "PERFECT_ORDER_SLA",
+    // spine additions
+    "SHIPMENT_BILL", "STORE_CHANNEL", "RULEBOOK_COVERED", "DELIVERY_TARGET_EDD",
+    "INWARDED_DATE", "STI_QTY", "EX_SHORT",
   ] as const;
   const base = Object.fromEntries(keys.map((k) => [k, null])) as unknown as DistributionRow;
   return { ...base, ...over };
@@ -111,6 +114,45 @@ describe("mapDistributionRows — grain", () => {
     expect(rollupOverall({ status: "DISPATCHED_TO_STORE", shipmentStatus: rolled })).toBe(
       "DELIVERED",
     );
+  });
+
+  it("a split-BILL order keeps every AWB child (live QC-DAHISAQ30826 shape)", () => {
+    // Real spine rows: one bill still in the warehouse with NO AWB, plus a
+    // second bill that shipped as two separate AWBs. The AWB-less row must not
+    // suppress or stand in for either tracked child, and neither sibling may be
+    // dropped by the awb dedup.
+    const rows = [
+      row({
+        ORDER_NAME: "QC-DAHISAQ30826",
+        SHIPMENT_BILL: "2627/2/QWS-5",
+        TRACKING_NUMBER: null,
+        OVERALL_STATUS: "DISPATCHED",
+        RULEBOOK_COVERED: false,
+      }),
+      row({
+        ORDER_NAME: "QC-DAHISAQ30826",
+        SHIPMENT_BILL: "2627/2/QST-255",
+        TRACKING_NUMBER: "53665015950",
+        COURIER_PARTNER: "BLUEDART",
+        STATUS: "DELIVERED",
+        OVERALL_STATUS: "INWARDED",
+        RULEBOOK_COVERED: false,
+      }),
+      row({
+        ORDER_NAME: "QC-DAHISAQ30826",
+        SHIPMENT_BILL: "2627/2/QST-255",
+        TRACKING_NUMBER: "90641068",
+        COURIER_PARTNER: "BLUEDART",
+        STATUS: "EXCEPTION",
+        OVERALL_STATUS: "INWARDED",
+        RULEBOOK_COVERED: false,
+      }),
+    ];
+    const mapped = mapDistributionRows(rows);
+    expect(mapped).toHaveLength(1);
+    const awbs = mapped[0].shipments.map((s) => s.awb).sort();
+    expect(awbs).toEqual(["53665015950", "90641068"]);
+    expect(mapped[0].shipments).toHaveLength(2); // the null-AWB bill adds no child
   });
 
   it("self-delivery maps isPollable=false; a WH-stage row maps zero shipments", () => {

@@ -334,11 +334,16 @@ model User {
   name        String
   email       String   @unique
   role        Role
+  /// bcrypt hash. Null = no password credential (Google-SSO-only account);
+  /// the credentials provider refuses such users rather than treating a
+  /// missing hash as a match. Never leaves the server — userToDomain drops it.
+  passwordHash String?
   /// Facilities this user may scope to; empty = all (per role policy)
   facilities  String[] @default([])
   allView     Boolean  @default(false)
   areaManager String?
   active      Boolean  @default(false)
+  createdAt   DateTime @default(now())
 }
 
 /// One row per sync execution — powers the Admin sync-health cards.

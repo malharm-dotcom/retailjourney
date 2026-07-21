@@ -18,3 +18,16 @@ export async function findUserByEmail(email: string): Promise<User | undefined> 
   const row = await prisma().user.findUnique({ where: { email: email.toLowerCase() } });
   return row ? userToDomain(row) : undefined;
 }
+
+/**
+ * The bcrypt hash, fetched separately and deliberately NOT part of the domain
+ * `User` type — User objects are passed into server components and props, and
+ * a hash that never enters that shape can never be serialised to a client.
+ * Only the credentials provider calls this. The seed repo has no passwords, so
+ * in-memory mode cannot authenticate anyone.
+ */
+export async function findPasswordHash(userId: string): Promise<string | undefined> {
+  if (!databaseConfigured()) return undefined;
+  const row = await prisma().user.findUnique({ where: { id: userId }, select: { passwordHash: true } });
+  return row?.passwordHash ?? undefined;
+}

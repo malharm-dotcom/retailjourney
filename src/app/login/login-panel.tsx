@@ -1,86 +1,100 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { signIn } from "next-auth/react";
-import { toast } from "sonner";
-import { ROLE_POLICY } from "@/lib/rbac";
 import { cn } from "@/lib/ui";
-import type { Role } from "@/lib/types";
 
-interface Persona {
-  id: string;
-  name: string;
-  role: Role;
-  email: string;
-}
-
-export function LoginPanel({ google, personas }: { google: boolean; personas: Persona[] }) {
+export function LoginPanel({ google }: { google: boolean }) {
   const router = useRouter();
-  const [busy, setBusy] = useState<string | null>(null);
+  const params = useSearchParams();
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const enter = async (p: Persona) => {
-    setBusy(p.id);
-    const res = await signIn("persona", { userId: p.id, redirect: false });
-    setBusy(null);
-    if (res?.error) {
-      toast.error("Sign-in failed — persona not active");
+  // Never bounce to an absolute URL an attacker put in the query string.
+  const raw = params.get("callbackUrl") ?? "/";
+  const callbackUrl = raw.startsWith("/") && !raw.startsWith("//") ? raw : "/";
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const res = await signIn("credentials", { email, password, redirect: false });
+    setBusy(false);
+    if (res?.error || !res?.ok) {
+      // One message for every failure mode: a wrong password and an unknown
+      // or deactivated account must not be distinguishable.
+      setError("Incorrect email or password, or the account is not active.");
+      setPassword("");
       return;
     }
-    router.push("/");
+    router.push(callbackUrl);
     router.refresh();
   };
 
   return (
     <div className="rounded-2xl bg-card p-6 shadow-card">
       {google ? (
-        <button
-          onClick={() => signIn("google", { callbackUrl: "/" })}
-          className="mb-5 flex w-full items-center justify-center gap-2 rounded-[10px] bg-ink py-3 text-[13.5px] font-semibold text-paper transition-colors hover:bg-ink/85"
-        >
-          Continue with Google — @snitch.com
-        </button>
-      ) : null}
-
-      {personas.length ? (
         <>
-          <div className="mb-3 text-[11.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-            {google ? "Or enter as a demo persona" : "Enter as a demo persona"}
-          </div>
-          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
-            {personas.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => enter(p)}
-                disabled={busy !== null}
-                className={cn(
-                  "flex items-center gap-3 rounded-xl border border-line bg-paper px-3.5 py-2.5 text-left transition-all hover:border-sage hover:bg-sage-soft",
-                  busy === p.id && "opacity-60",
-                )}
-              >
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sage font-display text-[11px] font-bold text-white">
-                  {p.name
-                    .split(/[\s(]+/)
-                    .filter(Boolean)
-                    .slice(0, 2)
-                    .map((w) => w[0]!.toUpperCase())
-                    .join("")}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-semibold text-ink">
-                    {p.name.split(" (")[0]}
-                  </span>
-                  <span className="block text-[11px] text-mute">{ROLE_POLICY[p.role].label}</span>
-                </span>
-              </button>
-            ))}
+          <button
+            onClick={() => signIn("google", { callbackUrl })}
+            className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-ink py-3 text-[13.5px] font-semibold text-paper transition-colors hover:bg-ink/85"
+          >
+            Continue with Google — @snitch.com
+          </button>
+          <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.06em] text-mute">
+            <span className="h-px flex-1 bg-line" />
+            or
+            <span className="h-px flex-1 bg-line" />
           </div>
         </>
-      ) : !google ? (
-        <p className="text-center text-sm text-mute">
-          Sign-in is not configured yet. Set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET.
-        </p>
       ) : null}
+
+      <form onSubmit={submit} className="grid gap-3.5">
+        <label className="grid gap-1.5">
+          <span className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-mute">Email</span>
+          <input
+            type="email"
+            required
+            autoComplete="username"
+            autoFocus
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-[13.5px] text-ink outline-none transition-colors focus:border-sage"
+            placeholder="you@snitch.com"
+          />
+        </label>
+        <label className="grid gap-1.5">
+          <span className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-mute">Password</span>
+          <input
+            type="password"
+            required
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-[13.5px] text-ink outline-none transition-colors focus:border-sage"
+          />
+        </label>
+
+        {error ? (
+          <p role="alert" className="rounded-[10px] bg-breach-bg px-3.5 py-2.5 text-[12.5px] font-semibold text-breach">
+            {error}
+          </p>
+        ) : null}
+
+        <button
+          type="submit"
+          disabled={busy}
+          className={cn(
+            "mt-1 rounded-[10px] bg-sage py-3 text-[13.5px] font-semibold text-white transition-colors hover:bg-sage/90",
+            busy && "opacity-60",
+          )}
+        >
+          {busy ? "Signing in…" : "Sign in"}
+        </button>
+      </form>
     </div>
   );
 }

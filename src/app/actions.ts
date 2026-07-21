@@ -164,6 +164,10 @@ export async function overrideOrderFields(
   try {
     const user = await currentUser();
     const policy = policyOf(user.role);
+    // Read-only roles are refused up front rather than relying on every field
+    // happening to have a FIELD_RIGHTS entry — a new editable field must never
+    // become writable by a viewer just because its mapping was forgotten.
+    if (policy.readOnly) throw new Error("Forbidden: your role is read-only and cannot override order fields");
     if (!policy.isAdmin) {
       for (const field of Object.keys(patch)) {
         const right = FIELD_RIGHTS[field];

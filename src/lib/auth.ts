@@ -1,12 +1,18 @@
-// NextAuth scaffold (PRD §8c) — Google SSO restricted to @snitch.com plus a
-// credentials fallback. In M1 (no DB) the credentials provider doubles as the
-// dev persona switcher: it signs in as any active seed user so every role's
-// view is demoable. Env is read lazily inside function bodies (PRD §11 gotcha).
+// The ONE auth module (PRD §8c). Every provider, callback and session shape
+// lives here so swapping the credentials login for Google SSO later is a
+// single-file change. Env is read lazily inside function bodies (PRD §11).
+//
+// Sign-in is email + password against User.passwordHash (bcrypt). There is no
+// public signup: accounts are created by scripts/seed-admin.mts and must be
+// `active`. The old passwordless "persona" provider is GONE — it authenticated
+// on a user id alone, which is an authentication bypass wherever its env flag
+// was set.
 
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
-import { findUserByEmail, findUserById } from "./users";
+import { compare } from "bcryptjs";
+import { findUserByEmail, findUserById, findPasswordHash } from "./users";
 import type { Facility, Role } from "./types";
 
 declare module "next-auth" {
@@ -33,10 +39,20 @@ declare module "next-auth/jwt" {
   }
 }
 
-function devPersonaEnabled(): boolean {
-  // Gated ONLY on the env flag (any NODE_ENV) — the deployed app relies on the
-  // persona switcher until Google SSO credentials are configured.
-  return process.env.RETAILJOURNEY_DEV_PERSONA === "1";
+/** A real bcrypt hash of a value nobody holds — the constant-time decoy for
+ *  unknown emails. Never matches: it hashes a random-at-module-load string. */
+const DUMMY_HASH = "$2b$12$K8pQZ1vJ0oR9sB2xY4uWmugC7hJ3nD5tE1fA6cV8bN0lM2kP4qS9y";
+
+/** Session signing key. A shared fallback was tolerable when the only login
+ *  was a demo persona switcher; with real accounts behind it, an unset secret
+ *  in a deployed environment means forgeable sessions — so refuse to run. */
+function sessionSecret(): string {
+  const s = process.env.NEXTAUTH_SECRET ?? process.env.SESSION_SECRET;
+  if (s) return s;
+  if (process.env.RETAILJOURNEY_DEPLOY_ENV === "production") {
+    throw new Error("NEXTAUTH_SECRET is not set — refusing to sign sessions with a shared development key.");
+  }
+  return "retailjourney-dev-secret-not-for-prod";
 }
 
 export function buildAuthOptions(): NextAuthOptions {
@@ -56,14 +72,35 @@ export function buildAuthOptions(): NextAuthOptions {
 
   providers.push(
     CredentialsProvider({
-      id: "persona",
-      name: "Persona",
-      credentials: { userId: { label: "Persona", type: "text" } },
+      id: "credentials",
+      name: "Email and password",
+      credentials: {
+        email: { label: "Email", type: "email" },
+        password: { label: "Password", type: "password" },
+      },
       async authorize(credentials) {
-        if (!devPersonaEnabled()) return null;
-        const u = credentials?.userId ? await findUserById(credentials.userId) : undefined;
-        if (!u || !u.active) return null;
-        return { id: u.id, name: u.name, email: u.email };
+        const email = credentials?.email?.trim().toLowerCase();
+        const password = credentials?.password;
+        if (!email || !password) return null;
+
+        try {
+          const u = await findUserByEmail(email);
+          const hash = u ? await findPasswordHash(u.id) : undefined;
+          // Always run a compare, even for an unknown email or an account with
+          // no password set, so a wrong address and a wrong password cost the
+          // same time and cannot be told apart by timing.
+          const ok = await compare(password, hash ?? DUMMY_HASH);
+          if (!u || !u.active || !hash || !ok) return null;
+
+          return { id: u.id, name: u.name, email: u.email };
+        } catch (e) {
+          // NextAuth puts a thrown message straight into the ?error= query
+          // string on the redirect. Internal failures (a refused database
+          // connection, a driver error) must never be shown to whoever is
+          // standing at the login form — log them, deny the attempt.
+          console.error("[auth] credentials check failed:", e instanceof Error ? e.message : e);
+          return null;
+        }
       },
     }),
   );
@@ -71,7 +108,7 @@ export function buildAuthOptions(): NextAuthOptions {
   return {
     providers,
     session: { strategy: "jwt" },
-    secret: process.env.NEXTAUTH_SECRET ?? process.env.SESSION_SECRET ?? "retailjourney-dev-secret-not-for-prod",
+    secret: sessionSecret(),
     pages: { signIn: "/login" },
     callbacks: {
       async signIn({ user, account }) {
@@ -122,4 +159,3 @@ export function googleConfigured(): boolean {
   return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
 }
 
-export { devPersonaEnabled };

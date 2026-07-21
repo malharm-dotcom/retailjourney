@@ -1,9 +1,11 @@
 "use client";
 
+// The signed-in user's menu. This used to double as a persona switcher that
+// could re-authenticate as any other user without a password; that provider is
+// gone, so this now only ever shows the real session user.
+
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { signIn, signOut } from "next-auth/react";
-import { toast } from "sonner";
+import { signOut } from "next-auth/react";
 import {
   Dropdown,
   DropdownContent,
@@ -13,7 +15,7 @@ import {
   DropdownTrigger,
 } from "@/components/ui/dropdown";
 import { ROLE_POLICY } from "@/lib/rbac";
-import type { Role, User } from "@/lib/types";
+import type { User } from "@/lib/types";
 
 function initials(name: string): string {
   return name
@@ -24,34 +26,13 @@ function initials(name: string): string {
     .join("");
 }
 
-export function PersonaMenu({
+export function UserMenu({
   user,
-  personas,
   isAdmin,
 }: {
-  user: Pick<User, "id" | "name" | "role">;
-  personas: Pick<User, "id" | "name" | "role">[]; // empty = persona switching disabled
+  user: Pick<User, "id" | "name" | "email" | "role">;
   isAdmin: boolean;
 }) {
-  const router = useRouter();
-
-  const switchTo = async (p: Pick<User, "id" | "name">) => {
-    const res = await signIn("persona", { userId: p.id, redirect: false });
-    if (res?.error) {
-      toast.error("Could not switch persona");
-      return;
-    }
-    toast.success(`Now viewing as ${p.name}`);
-    router.refresh();
-  };
-
-  const byRole = personas.reduce<Map<Role, typeof personas>>((m, p) => {
-    const arr = m.get(p.role) ?? [];
-    arr.push(p);
-    m.set(p.role, arr);
-    return m;
-  }, new Map());
-
   return (
     <Dropdown>
       <DropdownTrigger asChild>
@@ -66,32 +47,17 @@ export function PersonaMenu({
         </button>
       </DropdownTrigger>
       <DropdownContent align="end" className="max-h-[70vh] overflow-y-auto">
+        <DropdownLabel className="px-3 py-1.5">
+          <span className="block text-[12.5px] font-semibold text-ink">{user.name.split(" (")[0]}</span>
+          <span className="mono block text-[10.5px] text-mute">{user.email}</span>
+          <span className="block text-[10.5px] text-mute">{ROLE_POLICY[user.role].label}</span>
+        </DropdownLabel>
+        <DropdownSeparator />
         {isAdmin ? (
           <>
             <DropdownItem asChild>
               <Link href="/admin">Admin console</Link>
             </DropdownItem>
-            <DropdownSeparator />
-          </>
-        ) : null}
-        {personas.length ? (
-          <>
-            <DropdownLabel className="px-3 py-1.5 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
-              View as persona
-            </DropdownLabel>
-            {[...byRole.entries()].map(([role, list]) => (
-              <div key={role}>
-                {list.map((p) => (
-                  <DropdownItem key={p.id} onSelect={() => switchTo(p)}>
-                    <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-line text-[10px] font-bold text-ink-soft">
-                      {initials(p.name)}
-                    </span>
-                    <span className="flex-1">{p.name.split(" (")[0]}</span>
-                    <span className="text-[10.5px] text-mute">{ROLE_POLICY[role].label}</span>
-                  </DropdownItem>
-                ))}
-              </div>
-            ))}
             <DropdownSeparator />
           </>
         ) : null}

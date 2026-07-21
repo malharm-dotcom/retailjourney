@@ -1,17 +1,14 @@
-import { devPersonaEnabled, googleConfigured } from "@/lib/auth";
-import { repo } from "@/lib/repo";
+import { Suspense } from "react";
+import { googleConfigured } from "@/lib/auth";
 import { LoginPanel } from "./login-panel";
 
 export const metadata = { title: "Sign in" };
 export const dynamic = "force-dynamic";
 
-export default async function LoginPage() {
-  const personas = devPersonaEnabled()
-    ? (await repo.listUsers()).filter((u) => u.active).map(({ id, name, role, email }) => ({ id, name, role, email }))
-    : [];
+export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center px-5 py-10">
-      <div className="w-full max-w-[520px]">
+      <div className="w-full max-w-[420px]">
         <div className="mb-8 flex flex-col items-center text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/snitch-wordmark.png" alt="Snitch" className="h-9 w-auto" />
@@ -19,9 +16,11 @@ export default async function LoginPage() {
             The baton passing cleanly between Merchandising, Warehouse, Logistics and Store.
           </p>
         </div>
-        <LoginPanel google={googleConfigured()} personas={personas} />
+        <Suspense>
+          <LoginPanel google={googleConfigured()} />
+        </Suspense>
         <p className="mt-6 text-center text-xs text-mute">
-          Access is limited to activated @snitch.com accounts. Ask an admin if you need in.
+          Accounts are created by an admin — there is no self-signup. Ask an admin if you need access.
         </p>
       </div>
     </div>

@@ -11,7 +11,7 @@ import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
 import { flattenRulebook, rulebookTemplateFor, type RulebookOrderType, type RulebookViewRow } from "../rulebook-map";
 import { slaState } from "../sla";
-import { queryDistributionAnalytics, snowflakeConfigured } from "../snowflake";
+import { queryRetailJourneySpine, snowflakeConfigured } from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
@@ -791,7 +791,7 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
   const db = prisma();
 
   try {
-    const rows = await queryDistributionAnalytics();
+    const rows = await queryRetailJourneySpine();
     summary.fetched = rows.length;
     const mapped = mapDistributionRows(rows);
 

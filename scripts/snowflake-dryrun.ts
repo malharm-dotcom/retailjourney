@@ -1,4 +1,4 @@
-// Dry-run diagnostic for the Snowflake distribution_analytics reader.
+// Dry-run diagnostic for the Snowflake RETAIL_JOURNEY_SPINE reader.
 //   npx tsx scripts/snowflake-dryrun.ts [SO_NUMBER ...]
 // Prints shape/vocabulary summaries (no bulk data dump) so the mapper and
 // schema types can be validated against real rows before a deploy.
@@ -7,7 +7,7 @@ import { config as loadEnv } from "dotenv";
 loadEnv({ path: [".env.local", ".env"] });
 
 import { mapDistributionRows } from "../src/lib/distribution-map";
-import { queryDistributionAnalytics, type DistributionRow } from "../src/lib/snowflake";
+import { queryRetailJourneySpine, type DistributionRow } from "../src/lib/snowflake";
 
 function distinct(rows: DistributionRow[], key: keyof DistributionRow): string[] {
   return [...new Set(rows.map((r) => String(r[key] ?? "∅")))].sort();
@@ -15,7 +15,7 @@ function distinct(rows: DistributionRow[], key: keyof DistributionRow): string[]
 
 async function main() {
   const t0 = Date.now();
-  const rows = await queryDistributionAnalytics();
+  const rows = await queryRetailJourneySpine();
   console.log(`fetched ${rows.length} rows in ${Date.now() - t0}ms`);
 
   const byOrder = new Map<string, DistributionRow[]>();

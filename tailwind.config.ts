@@ -85,6 +85,18 @@ const config: Config = {
           "70%": { boxShadow: "0 0 0 8px rgba(62,122,92,0)" },
           "100%": { boxShadow: "0 0 0 0 rgba(62,122,92,0)" },
         },
+        // A card arriving in its new lane after an optimistic advance: it
+        // settles in and a sage ring fades out, so the eye can follow where
+        // the work went instead of the board silently reshuffling.
+        cardLand: {
+          from: { opacity: "0", transform: "translateY(-8px)", boxShadow: "0 0 0 2px rgba(62,122,92,.55)" },
+          "60%": { opacity: "1", transform: "none", boxShadow: "0 0 0 2px rgba(62,122,92,.35)" },
+          to: { boxShadow: "0 0 0 0 rgba(62,122,92,0)" },
+        },
+        shimmer: {
+          from: { backgroundPosition: "200% 0" },
+          to: { backgroundPosition: "-200% 0" },
+        },
       },
       animation: {
         // Subtle + fast (150–250ms), nothing bouncy or decorative.
@@ -94,6 +106,8 @@ const config: Config = {
         overlayIn: "fade .16s ease-out",
         slideIn: "slideIn .2s cubic-bezier(.2,.7,.3,1)",
         pulse2: "pulse2 2.2s infinite",
+        cardLand: "cardLand .42s cubic-bezier(.2,.7,.3,1) both",
+        shimmer: "shimmer 1.4s linear infinite",
       },
       maxWidth: {
         wrap: "1220px",

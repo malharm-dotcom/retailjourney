@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { advanceOrderStatus } from "@/app/actions";
 import { Icon } from "@/components/icon";
@@ -64,15 +64,52 @@ export function Kanban({
   // Live volume is hundreds of cards per lane (RTS-Logic alone carries 150+);
   // rendering them all is a DOM/layout problem, so lanes page in increments.
   const [laneShown, setLaneShown] = useState<Record<string, number>>({});
+  // Optimistic lane placement: the server action has succeeded but the router
+  // refresh has not landed yet. The card moves the moment the write is
+  // confirmed rather than after a full re-render, so the board never feels
+  // like it stalled on a click.
+  const [optimistic, setOptimistic] = useState<Record<string, OrderStatus>>({});
+  // Cards that just arrived somewhere new, so they can play the landing cue.
+  const [landed, setLanded] = useState<Record<string, number>>({});
+  const landTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+
+  // Drop an optimistic placement once the server agrees (or the order has left
+  // this board entirely, e.g. cancelled). Anything else would pin a card to a
+  // stale lane forever.
+  useEffect(() => {
+    setOptimistic((prev) => {
+      const keys = Object.keys(prev);
+      if (keys.length === 0) return prev;
+      const actual = new Map(cards.map((c) => [c.so, c.status]));
+      const next: Record<string, OrderStatus> = {};
+      let changed = false;
+      for (const so of keys) {
+        const real = actual.get(so);
+        if (real === undefined || real === prev[so]) changed = true;
+        else next[so] = prev[so];
+      }
+      return changed ? next : prev;
+    });
+  }, [cards]);
+
+  useEffect(() => {
+    const timers = landTimers.current;
+    return () => {
+      for (const t of timers.values()) clearTimeout(t);
+      timers.clear();
+    };
+  }, []);
+
+  const laneOf = (c: KanbanCard): OrderStatus => optimistic[c.so] ?? c.status;
 
   const byLane = useMemo(() => {
     const m = new Map<OrderStatus, KanbanCard[]>();
     for (const lane of LANES) m.set(lane, []);
-    for (const c of cards) m.get(c.status)?.push(c);
+    for (const c of cards) m.get(optimistic[c.so] ?? c.status)?.push(c);
     for (const lane of LANES)
       m.get(lane)!.sort((a, b) => (a.due === "overdue" ? -1 : 0) - (b.due === "overdue" ? -1 : 0) || b.ageDays - a.ageDays);
     return m;
-  }, [cards]);
+  }, [cards, optimistic]);
 
   const requestMove = (card: KanbanCard, to: OrderStatus) => {
     const fields = REQUIRED_CAPTURES[to] ?? [];
@@ -107,6 +144,19 @@ export function Kanban({
       }
       toast.success(`${card.so} → ${STATUS_LABEL[to]}`);
       setMove(null);
+      // Move it now; the refresh below only reconciles. On failure we never
+      // get here, so the card never moves on an unsaved change.
+      setOptimistic((o) => ({ ...o, [card.so]: to }));
+      setLanded((l) => ({ ...l, [card.so]: Date.now() }));
+      const prevTimer = landTimers.current.get(card.so);
+      if (prevTimer) clearTimeout(prevTimer);
+      landTimers.current.set(
+        card.so,
+        setTimeout(() => {
+          setLanded(({ [card.so]: _drop, ...rest }) => rest);
+          landTimers.current.delete(card.so);
+        }, 600),
+      );
       router.refresh();
     });
 
@@ -169,9 +219,12 @@ export function Kanban({
               ) : (
                 <div className="flex flex-col gap-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:px-0.5">
                   {visible.map((c) => {
-                    const nexts = WH_TRANSITIONS[c.status].filter((s) => WH_FLOW.includes(s) && WH_FLOW.indexOf(s) > WH_FLOW.indexOf(c.status));
+                    // The effective status: an optimistically advanced card
+                    // must offer its NEW lane's transitions, not the stale ones.
+                    const status = laneOf(c);
+                    const nexts = WH_TRANSITIONS[status].filter((s) => WH_FLOW.includes(s) && WH_FLOW.indexOf(s) > WH_FLOW.indexOf(status));
                     const primaryNext = nexts[0];
-                    const others = WH_TRANSITIONS[c.status].filter((s) => s !== primaryNext);
+                    const others = WH_TRANSITIONS[status].filter((s) => s !== primaryNext);
                     return (
                       <article
                         key={c.so}
@@ -179,7 +232,8 @@ export function Kanban({
                           // A left accent bar carries the due state instead of a
                           // pill on the header row — a pill had to share width
                           // with the order number and clipped to "hando overdu".
-                          "group flex flex-col rounded-xl border-l-[3px] bg-card p-3 shadow-card transition-all hover:shadow-lift",
+                          "group flex flex-col rounded-xl border-l-[3px] bg-card p-3 shadow-card transition-all duration-150 ease-out hover:-translate-y-px hover:shadow-lift motion-reduce:hover:translate-y-0",
+                          landed[c.so] ? "animate-cardLand" : null,
                           c.due === "overdue"
                             ? "border-l-breach"
                             : c.due === "today"
@@ -216,7 +270,7 @@ export function Kanban({
                             {c.campaign}
                           </div>
                         ) : null}
-                        {c.status === "RTS_LOGIC" && c.invoice ? (
+                        {status === "RTS_LOGIC" && c.invoice ? (
                           <div className="mono mt-1.5 text-[10.5px] text-mute">Invoice {c.invoice}</div>
                         ) : null}
                         {canEdit && (primaryNext || others.length) ? (

@@ -41,12 +41,28 @@
   }
 }
 
+/* Reduced motion: everything collapses to opacity or nothing. No transforms
+ * survive here — a translate or scale is exactly what triggers discomfort for
+ * people who set this, so transitions are flattened rather than merely sped up. */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
   .animate-rise,
-  .animate-pulse2 {
+  .animate-pulse2,
+  .animate-slideIn,
+  .animate-cardLand {
     animation: none !important;
   }
-  * {
-    transition-duration: 0.01ms !important;
+  /* Opacity-only variants stay useful; transform-based motion is dropped. */
+  .animate-dialogIn,
+  .animate-fade,
+  .animate-overlayIn {
+    animation: fade 0.01ms both !important;
   }
 }

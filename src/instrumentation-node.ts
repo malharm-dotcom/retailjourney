@@ -39,21 +39,48 @@ export function bootNode(): void {
       console.error("[boot] baseline bootstrap failed:", e instanceof Error ? e.message : e);
     }
   })();
+  // Every gate this boot evaluated, on one line, BEFORE any of them can return.
+  // A disabled scheduler used to be indistinguishable from a healthy quiet one;
+  // the operator must be able to read the verdict straight out of the logs.
+  const nodeEnv = process.env.NODE_ENV ?? "(unset)";
+  const deployEnv = process.env.RETAILJOURNEY_DEPLOY_ENV ?? "(absent)";
+  console.log(
+    `[boot] scheduler gate — NODE_ENV=${nodeEnv} RETAILJOURNEY_DEPLOY_ENV=${deployEnv} DATABASE_URL=${process.env.DATABASE_URL ? "set" : "(absent)"}`,
+  );
+
   if (process.env.NODE_ENV !== "production") {
     // Scheduled syncs are a production concern only — a dev process firing
     // them is exactly the incident this guard exists to prevent.
-    console.log("[sync] schedulers disabled outside production");
+    console.log("[sync] SCHEDULERS DISABLED — NODE_ENV is not 'production'. No syncs will run in this process.");
     return;
   }
   if (process.env.RETAILJOURNEY_DEPLOY_ENV !== "production") {
     // NODE_ENV=production is satisfied by `next start` on a laptop; the
     // deploy marker is set only in Coolify. A local production build never
     // starts schedulers — no interval-env blanking to remember.
-    console.log("[sync] schedulers disabled — RETAILJOURNEY_DEPLOY_ENV is not 'production' (not a deployed environment)");
+    // NOTE: in a DEPLOYED container this branch is an OUTAGE, not a safeguard —
+    // it silently stopped both pollers for three days in Jul 2026. No DB write
+    // here on purpose: a local prod build must never touch the prod database.
+    console.log(
+      "[sync] SCHEDULERS DISABLED — RETAILJOURNEY_DEPLOY_ENV is not 'production' (not a deployed environment). " +
+        "If you are seeing this in Coolify, the app environment is MISSING RETAILJOURNEY_DEPLOY_ENV=production and no syncs will ever run.",
+    );
     return;
   }
+
+  console.log("[sync] schedulers ARMED (deployed environment confirmed)");
   startSyncScheduler();
   startSnowflakeScheduler();
+  void (async () => {
+    try {
+      const { recordSchedulerBoot } = await import("./lib/integrations/sync");
+      await recordSchedulerBoot(
+        `schedulers armed — eShipz ${process.env.SYNC_INTERVAL_MINUTES ?? 15}m, Snowflake ${process.env.SNOWFLAKE_SYNC_INTERVAL_MINUTES ?? 60}m`,
+      );
+    } catch (e) {
+      console.error("[boot] scheduler boot marker failed:", e instanceof Error ? e.message : e);
+    }
+  })();
 }
 
 /** Hourly Snowflake distribution_analytics reader — its own cadence, kept
@@ -71,17 +98,33 @@ export function startSnowflakeScheduler(): void {
   const tick = async () => {
     try {
       const { databaseConfigured } = await import("./lib/db");
-      if (!databaseConfigured()) return;
+      if (!databaseConfigured()) {
+        console.error("[sync] snowflake tick skipped — DATABASE_URL absent (cannot record this)");
+        return;
+      }
+      const { recordFailedRun, runSnowflakeSync } = await import("./lib/integrations/sync");
       const { snowflakeConfigured } = await import("./lib/snowflake");
-      if (!snowflakeConfigured()) return;
-      const { runSnowflakeSync } = await import("./lib/integrations/sync");
+      if (!snowflakeConfigured()) {
+        // A skipped tick used to leave no trace at all — indistinguishable
+        // from a healthy idle system. Record it as the failure it is.
+        await recordFailedRun("SNOWFLAKE", "tick skipped — Snowflake is not configured (missing SNOWFLAKE_* env)");
+        return;
+      }
       const s = await runSnowflakeSync();
       console.log(
         `[sync] ${s.source}: ${s.ok ? "ok" : "FAILED"} fetched=${s.fetched} upserted=${s.upserted} conflicts=${s.conflicts} errors=${s.errors.length}`,
       );
     } catch (e) {
-      // Never crash the scheduler — the failure lands in SyncRun/logs only.
-      console.error("[sync] snowflake run failed:", e instanceof Error ? e.message : e);
+      // Never crash the scheduler — but never fail silently either: a throw
+      // before startRun would otherwise leave no SyncRun row.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[sync] snowflake run failed:", msg);
+      try {
+        const { recordFailedRun } = await import("./lib/integrations/sync");
+        await recordFailedRun("SNOWFLAKE", msg);
+      } catch {
+        /* database unreachable — the log line above is all we have */
+      }
     }
   };
 
@@ -103,16 +146,32 @@ export function startSyncScheduler(): void {
   const tick = async () => {
     try {
       const { databaseConfigured } = await import("./lib/db");
-      if (!databaseConfigured()) return; // nothing to sync into
-      const { runAllSyncs } = await import("./lib/integrations/sync");
+      if (!databaseConfigured()) {
+        console.error("[sync] eShipz tick skipped — DATABASE_URL absent (cannot record this)");
+        return;
+      }
+      const { recordFailedRun, runAllSyncs } = await import("./lib/integrations/sync");
       const summaries = await runAllSyncs();
+      if (summaries.length === 0) {
+        // No source ran: eShipz is unconfigured. Leave a red row rather than
+        // letting the strip drift quietly stale.
+        await recordFailedRun("ESHIPZ", "tick skipped — eShipz is not configured (missing ESHIPZ_API_TOKEN)");
+        return;
+      }
       for (const s of summaries) {
         console.log(
           `[sync] ${s.source}: ${s.ok ? "ok" : "FAILED"} fetched=${s.fetched} upserted=${s.upserted} conflicts=${s.conflicts} errors=${s.errors.length}`,
         );
       }
     } catch (e) {
-      console.error("[sync] run failed:", e instanceof Error ? e.message : e);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[sync] run failed:", msg);
+      try {
+        const { recordFailedRun } = await import("./lib/integrations/sync");
+        await recordFailedRun("ESHIPZ", msg);
+      } catch {
+        /* database unreachable — the log line above is all we have */
+      }
     }
   };
 

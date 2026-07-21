@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
 import { buildAuthOptions } from "@/lib/auth";
-import { runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSummary } from "@/lib/integrations/sync";
+import { recordFailedRun, runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSummary } from "@/lib/integrations/sync";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +29,11 @@ export async function POST(req: Request) {
     else summaries = await runAllSyncs();
     return NextResponse.json({ summaries });
   } catch (e) {
-    return NextResponse.json({ error: e instanceof Error ? e.message : "sync failed" }, { status: 500 });
+    // A throw before startRun (unconfigured source, dead connection) would
+    // otherwise leave no SyncRun row at all — a failed manual trigger must
+    // still turn the freshness strip red.
+    const msg = e instanceof Error ? e.message : "sync failed";
+    await recordFailedRun(source === "SNOWFLAKE" ? "SNOWFLAKE" : "ESHIPZ", msg);
+    return NextResponse.json({ error: msg }, { status: 500 });
   }
 }

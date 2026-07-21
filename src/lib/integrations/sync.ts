@@ -191,6 +191,47 @@ async function finishRun(
   });
 }
 
+/** SyncRun.source for scheduler lifecycle markers. Deliberately outside the
+ *  SyncSource union — it is not a data source, it is proof-of-life for the
+ *  in-app scheduler, and it must never be picked up by the per-source
+ *  freshness strip or the admin health cards. */
+const SCHEDULER_SOURCE = "SCHEDULER";
+
+/**
+ * Boot marker: a durable record that this process started with the schedulers
+ * ARMED. Without it, "no SyncRun rows" is ambiguous between "the scheduler
+ * never started" (env gate / instrumentation) and "it started but every run
+ * died before writing a row" — the exact ambiguity that let both pollers sit
+ * silently stale for three days.
+ */
+export async function recordSchedulerBoot(note: string): Promise<void> {
+  if (!databaseConfigured()) return;
+  try {
+    await prisma().syncRun.create({
+      data: { source: SCHEDULER_SOURCE, finishedAt: new Date(), ok: true, note: note.slice(0, 500) },
+    });
+  } catch (e) {
+    console.error("[sync] could not write scheduler boot marker:", e instanceof Error ? e.message : e);
+  }
+}
+
+/**
+ * Persist a COMPLETED FAILED run for a tick that blew up before startRun ever
+ * created a row — a thrown dynamic import, an unconfigured credential, a dead
+ * connection. Silence must never render as health: with this, the freshness
+ * strip goes red (failed) instead of merely drifting stale.
+ */
+export async function recordFailedRun(source: SyncSource, message: string): Promise<void> {
+  if (!databaseConfigured()) return;
+  try {
+    await prisma().syncRun.create({
+      data: { source, finishedAt: new Date(), ok: false, errors: [message.slice(0, 500)] },
+    });
+  } catch (e) {
+    console.error("[sync] could not persist failed run:", e instanceof Error ? e.message : e);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Shared sync helpers (status guard + unmatched-channel review queue)
 

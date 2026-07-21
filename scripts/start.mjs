@@ -5,6 +5,27 @@
 // working and the failure is loud in the logs.
 
 import { spawn, spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+
+// Boot preflight. Both of these failure modes are SILENT inside Next — a
+// missing deploy marker returns early out of bootNode(), and a missing
+// instrumentation bundle is swallowed as MODULE_NOT_FOUND by next-server —
+// so the schedulers simply never run and every source drifts stale together.
+// Surface both here, before Next starts, where an operator will actually see it.
+const deployEnv = process.env.RETAILJOURNEY_DEPLOY_ENV ?? "(absent)";
+console.log(`[start] RETAILJOURNEY_DEPLOY_ENV=${deployEnv} NODE_ENV=${process.env.NODE_ENV ?? "(unset)"}`);
+if (deployEnv !== "production") {
+  console.error(
+    "[start] WARNING: RETAILJOURNEY_DEPLOY_ENV is not 'production'. The in-app sync schedulers will NOT start " +
+      "(eShipz poller and Snowflake reader both stay silent). Set it in the Coolify app environment.",
+  );
+}
+if (!existsSync(".next/server/instrumentation.js")) {
+  console.error(
+    "[start] WARNING: .next/server/instrumentation.js is missing from the build — Next silently skips the " +
+      "instrumentation hook, so no scheduler can ever start. Rebuild with experimental.instrumentationHook enabled.",
+  );
+}
 
 if (process.env.DATABASE_URL) {
   console.log("[start] applying migrations (prisma migrate deploy) ...");

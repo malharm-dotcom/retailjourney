@@ -34,6 +34,9 @@ export interface KanbanCard {
   boxCount?: number;
   weightKg?: number;
   invoice?: string;
+  /** Spine RULEBOOK_COVERED = false: no real rulebook target, so the order runs
+   *  on a fallback (eShipz EDD). It is VISIBLE — the old source hid these. */
+  outOfRulebook?: boolean;
 }
 
 const LANES: OrderStatus[] = [...WH_FLOW, "ON_HOLD"];
@@ -247,15 +250,30 @@ export function Kanban({
                           variant="text"
                           className="mono block font-display text-[13px] font-bold text-ink"
                         />
-                        {c.due ? (
-                          <span
-                            className={cn(
-                              "mt-1 self-start rounded-md px-1.5 py-0.5 text-[10px] font-bold",
-                              c.due === "overdue" ? "bg-breach-bg text-breach" : "bg-sage-soft text-sage",
-                            )}
-                          >
-                            {c.due === "overdue" ? "handover overdue" : "due today"}
-                          </span>
+                        {c.due || c.outOfRulebook ? (
+                          <div className="mt-1 flex flex-wrap items-center gap-1">
+                            {c.due ? (
+                              <span
+                                className={cn(
+                                  "rounded-md px-1.5 py-0.5 text-[10px] font-bold",
+                                  c.due === "overdue" ? "bg-breach-bg text-breach" : "bg-sage-soft text-sage",
+                                )}
+                              >
+                                {c.due === "overdue" ? "handover overdue" : "due today"}
+                              </span>
+                            ) : null}
+                            {/* A FLAG, not a breach: this order simply has no
+                                rulebook target, so it runs on a fallback EDD.
+                                Neutral pending token — never the breach red. */}
+                            {c.outOfRulebook ? (
+                              <span
+                                className="rounded-md bg-pending-bg px-1.5 py-0.5 text-[10px] font-bold text-ink-soft"
+                                title="No rulebook target for this store/order type — delivery target falls back to the eShipz EDD"
+                              >
+                                out of rulebook
+                              </span>
+                            ) : null}
+                          </div>
                         ) : null}
                         {/* One clean truncation, full name on hover. */}
                         <div className="mt-1 truncate text-[13px] font-semibold text-ink" title={c.store}>

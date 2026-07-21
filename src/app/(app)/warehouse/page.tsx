@@ -42,6 +42,9 @@ export default async function WarehousePage() {
         boxCount: r.order.boxCount,
         weightKg: r.order.weightKg,
         invoice: r.order.saleInvoiceNumber,
+        // Only an explicit false flags the card. Orders synced before the
+        // spine have this undefined and must render exactly as before.
+        outOfRulebook: r.order.rulebookCovered === false,
       };
     });
 

@@ -40,6 +40,11 @@ enum OverallStatus {
   PICKUP_PENDING
   IN_TRANSIT
   DELIVERED
+  // Beyond delivered: the store has booked the stock in. Arrives ONLY from the
+  // spine's raw OVERALL_STATUS via the childless-order seed path — rollupOverall
+  // never emits it, so no delivered order is reclassified. Last = most
+  // progressed, matching this enum's ascending convention.
+  INWARDED
 }
 
 enum ShipmentStatus {

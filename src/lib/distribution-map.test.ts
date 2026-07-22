@@ -12,6 +12,10 @@ import {
 import { isoFromIstNtz, istDateFromNtz } from "./ist";
 import { rollupOverall, rollupShipments } from "./journey";
 import type { DistributionRow } from "./snowflake";
+// The GENERATED Prisma enum — this is the exact object order.update() validates
+// the write value against. The sync failure was that this object had no
+// INWARDED member, so forwarding the spine seed threw PrismaClientValidationError.
+import { OverallStatus as PrismaOverallStatus } from "../generated/prisma/enums";
 
 /** All-null row skeleton — tests override only what they assert on. */
 function row(over: Partial<DistributionRow> & { ORDER_NAME: string }): DistributionRow {
@@ -243,6 +247,28 @@ describe("normalizers", () => {
     // Out-of-rulebook: same field, same UI, fed by the eShipz EDD.
     expect(out.patch.idealDeliveryDate).toBe("2026-07-14");
     expect(out.patch.deliveryTargetEdd).toBe("2026-07-14T13:00:00.000Z");
+  });
+
+  it("a spine INWARDED order maps to a value the Prisma enum accepts (write-back regression)", () => {
+    // Childless order (no TRACKING_NUMBER) → the seed is used verbatim as the
+    // order's overallStatus. Reproduces the exact write value that threw.
+    const [m] = mapDistributionRows([row({ ORDER_NAME: "INW1", OVERALL_STATUS: "INWARDED" })]);
+    expect(m.shipments).toHaveLength(0);
+    expect(m.overallStatusSeed).toBe("INWARDED");
+    // The generated Prisma OverallStatus MUST carry this member, or
+    // order.update({ overallStatus }) throws PrismaClientValidationError.
+    expect(PrismaOverallStatus.INWARDED).toBe("INWARDED");
+    expect(Object.values(PrismaOverallStatus)).toContain(m.overallStatusSeed);
+  });
+
+  it("rollupOverall never emits INWARDED — no delivered order is reclassified", () => {
+    // INWARDED only ever arrives from the spine seed. The computed rollup must
+    // still bottom out at DELIVERED, so an order with a delivered shipment is
+    // never silently promoted past it.
+    expect(rollupOverall({ status: "DISPATCHED_TO_STORE", shipmentStatus: "DELIVERED" })).toBe("DELIVERED");
+    expect(rollupOverall({ status: "DISPATCHED_TO_STORE", shipmentStatus: "IN_TRANSIT" })).toBe("IN_TRANSIT");
+    expect(rollupOverall({ status: "DISPATCHED_TO_STORE", shipmentStatus: undefined })).toBe("PICKUP_PENDING");
+    expect(rollupOverall({ status: "PICKING", shipmentStatus: undefined })).toBe("WH_PROCESSING");
   });
 
   it("the parent takes the MOST-ADVANCED sibling row, not the first", () => {

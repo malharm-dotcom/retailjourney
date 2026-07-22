@@ -224,6 +224,12 @@ export default async function OrderPage({ params }: { params: { soNumber: string
                       <div className="mt-0.5 text-[11px] text-mute">
                         {(s.courier ?? "—").replace("_", " ")}
                         {s.isPollable ? "" : " · manual lane"}
+                        {/* Pickup date from the eShipz scan history (set-once);
+                            falls back to the spine pickup date for orders the
+                            poller never saw in transit. Blank when neither. */}
+                        {s.pickedUpTs ?? s.trackingPickTs
+                          ? ` · picked up ${fmtDate(s.pickedUpTs ?? s.trackingPickTs)}`
+                          : ""}
                         {s.deliveredTs ? ` · delivered ${fmtDate(s.deliveredTs)}` : s.expectedDeliveryDate ? ` · expected ${fmtDate(s.expectedDeliveryDate)}` : ""}
                       </div>
                     </div>

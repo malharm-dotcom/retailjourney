@@ -108,6 +108,7 @@ export function orderToDb(patch: Partial<Order>): Record<string, unknown> {
 export const SHIPMENT_TS_FIELDS = [
   "logisticsCreatedTs",
   "trackingPickTs",
+  "pickedUpTs",
   "deliveredTs",
   "firstOfdTs",
   "latestOfdTs",

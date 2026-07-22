@@ -283,6 +283,22 @@ async function flushUnmatched(map: UnmatchedMap, resolves: (channel: string) => 
 // ---------------------------------------------------------------------------
 // eShipz
 
+/**
+ * Persist the AWB's pickup timestamp on its shipment child, SET-ONCE: written
+ * the first time a pickup scan is seen and NEVER overwritten or nulled by a
+ * later poll (a Delivered poll must not erase it — the `pickedUpTs: null` guard
+ * makes the write a no-op once set). Also a no-op when there is no pickup time
+ * or no child row for this AWB yet. Parallel to the order-level status write:
+ * it touches no Order field and changes no status output.
+ */
+async function persistPickedUp(soNumber: string, awb: string, pickedUpTs?: string): Promise<void> {
+  if (!pickedUpTs) return;
+  await prisma().orderShipment.updateMany({
+    where: { soNumber, awb, pickedUpTs: null },
+    data: { pickedUpTs: new Date(pickedUpTs) },
+  });
+}
+
 function buildShipmentPatch(o: Order, u: TrackingUpdate): { patch: Partial<Order>; events: PendingEvent[] } {
   const patch: Partial<Order> = {
     eshipStatus: u.tag,
@@ -433,6 +449,7 @@ export async function runEshipzSync(): Promise<SyncSummary> {
           const res = await applySyncPatch(o, patch, events);
           if (res.changed) summary.upserted += 1;
           summary.conflicts += res.conflicts + conflictEvents;
+          await persistPickedUp(o.soNumber, u.trackingNumber, u.pickedUpTs);
         } catch (e) {
           summary.errors.push(`${u.trackingNumber}: ${e instanceof Error ? e.message : String(e)}`);
         }
@@ -918,6 +935,7 @@ export async function runEshipzWebhook(shipments: EshipzShipment[]): Promise<Syn
       const res = await applySyncPatch(o, patch, events);
       if (res.changed) summary.upserted += 1;
       summary.conflicts += res.conflicts + conflictEvents;
+      await persistPickedUp(o.soNumber, u.trackingNumber, u.pickedUpTs);
     } catch (e) {
       summary.errors.push(e instanceof Error ? e.message : String(e));
     }

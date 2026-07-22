@@ -13,6 +13,9 @@ export interface TrackingUpdate {
   subtag?: string;
   checkpoints: TrackingCheckpoint[];
   expectedDate?: string; // YYYY-MM-DD IST
+  /** Earliest in-transit scan = the pickup moment (ISO UTC). Extracted from the
+   *  full checkpoint array so a delivered AWB still carries it. */
+  pickedUpTs?: string;
   deliveredTs?: string; // ISO UTC
   podLink?: string;
   /** From v1 get-shipments enrichment (v2 tracking doesn't carry it). */

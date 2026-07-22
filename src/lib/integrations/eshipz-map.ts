@@ -8,7 +8,7 @@
 //   ndr               — DELIVERY_FAILED + attempts++
 //   transit_exception — stays IN_TRANSIT, exception checkpoint logged as OrderEvent
 
-import type { ShipmentStatus } from "../types";
+import type { ShipmentStatus, TrackingCheckpoint } from "../types";
 
 export type EshipzBehaviour =
   | "pickup_pending"
@@ -105,4 +105,23 @@ export function statusForTag(tag?: string, subtag?: string): ShipmentStatus | un
     default:
       return undefined;
   }
+}
+
+/**
+ * The pickup moment = the EARLIEST checkpoint that put the shipment in transit
+ * (tag PickedUp / InTransit → behaviour "in_transit"). This scans the FULL scan
+ * history, not just the latest scan, so a DELIVERED AWB still yields its pickup
+ * timestamp (the pickup scan survives at a non-zero index; only the top-level
+ * tag reads "Delivered"). Checkpoints arrive newest-first, so the LAST in-transit
+ * one we walk past is the oldest = the pickup. Pickup/transit exceptions are
+ * deliberately NOT counted (behaviourFor returns pickup_pending/transit_exception
+ * for those), so an exception can never become the pickup anchor. undefined when
+ * no in-transit scan is present yet (still pickup-pending).
+ */
+export function pickupTsFromCheckpoints(checkpoints: TrackingCheckpoint[]): string | undefined {
+  let pickupTs: string | undefined;
+  for (const c of checkpoints) {
+    if (c.date && behaviourFor(c.tag, c.subtag) === "in_transit") pickupTs = c.date;
+  }
+  return pickupTs;
 }

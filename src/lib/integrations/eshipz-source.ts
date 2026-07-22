@@ -5,7 +5,7 @@
 
 import { isoFromRfc1123, istDateOf } from "../ist";
 import type { TrackingCheckpoint } from "../types";
-import { behaviourFor, statusForTag } from "./eshipz-map";
+import { behaviourFor, pickupTsFromCheckpoints, statusForTag } from "./eshipz-map";
 import type { TrackingSource, TrackingUpdate } from "./types";
 
 const CHUNK_SIZE = 50;
@@ -85,6 +85,9 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
     subtag,
     checkpoints,
     expectedDate: expectedIso ? istDateOf(expectedIso) : undefined,
+    // Pickup timestamp from the FULL scan history (survives past DELIVERED) —
+    // a parallel extraction that never affects the status derived above.
+    pickedUpTs: pickupTsFromCheckpoints(checkpoints),
     deliveredTs: deliveredIso,
     podLink: s.pod_link ?? undefined,
     carrier: s.slug,

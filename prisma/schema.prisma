@@ -254,6 +254,9 @@ model OrderShipment {
   eshipStatus            String?
   logisticsCreatedTs     DateTime?
   trackingPickTs         DateTime?
+  /// Pickup timestamp from the eShipz scan history (earliest in-transit scan).
+  /// Set-once by the poller/webhook; a later Delivered poll never erases it.
+  pickedUpTs             DateTime?
   deliveredTs            DateTime?
   expectedDeliveryDate   DateTime? @db.Date
   firstOfdTs             DateTime?

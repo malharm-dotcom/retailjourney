@@ -263,6 +263,9 @@ export interface OrderShipment {
   eshipStatus?: string;
   logisticsCreatedTs?: string; // ISO UTC
   trackingPickTs?: string;
+  /** Pickup timestamp from the eShipz scan history (earliest in-transit scan);
+   *  set-once by the poller/webhook, never erased by a later Delivered poll. */
+  pickedUpTs?: string;
   deliveredTs?: string;
   expectedDeliveryDate?: string; // YYYY-MM-DD
   firstOfdTs?: string;

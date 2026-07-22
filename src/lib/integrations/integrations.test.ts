@@ -2,7 +2,7 @@
 // before real eShipz payloads flow (no live calls here).
 
 import { describe, expect, it } from "vitest";
-import { behaviourFor } from "./eshipz-map";
+import { behaviourFor, pickupTsFromCheckpoints } from "./eshipz-map";
 import { mapShipment } from "./eshipz-source";
 
 describe("eshipz-map behaviourFor", () => {
@@ -74,5 +74,46 @@ describe("eshipz-source mapShipment", () => {
     expect(u?.status).toBe("IN_TRANSIT");
     expect(u?.checkpoints).toEqual([]);
     expect(mapShipment({ tag: "InTransit" })).toBeUndefined();
+  });
+
+  it("still yields the pickup timestamp when the latest scan is DELIVERED", () => {
+    // Latest scan says Delivered; the PickedUp scan survives deeper in the array.
+    const u = mapShipment({
+      tag: "Delivered",
+      tracking_number: "53667523140",
+      delivery_date: "Sat, 05 Jul 2026 09:30:00 GMT",
+      checkpoints: [
+        { date: "Sat, 05 Jul 2026 09:30:00 GMT", remark: "DELIVERED", tag: "Delivered" },
+        { date: "Sat, 05 Jul 2026 07:10:00 GMT", remark: "OUT FOR DELIVERY", tag: "OutForDelivery" },
+        { date: "Fri, 04 Jul 2026 22:04:00 GMT", remark: "IN TRANSIT", tag: "InTransit" },
+        { date: "Thu, 02 Jul 2026 18:20:00 GMT", remark: "SHIPMENT PICKED UP", tag: "PickedUp" },
+        { date: "Wed, 01 Jul 2026 17:54:00 GMT", remark: "REGISTERED", tag: "InfoReceived", subtag: "PickupRegistered" },
+      ],
+    });
+    expect(u?.status).toBe("DELIVERED");
+    // Earliest in-transit scan (PickedUp), not the latest (Delivered) or the
+    // oldest overall (InfoReceived/pickup_pending).
+    expect(u?.pickedUpTs).toBe("2026-07-02T18:20:00.000Z");
+  });
+});
+
+describe("pickupTsFromCheckpoints", () => {
+  it("returns the earliest in-transit scan and ignores pickup/exception scans", () => {
+    // newest-first; InTransit later, PickedUp is the true pickup moment.
+    expect(
+      pickupTsFromCheckpoints([
+        { date: "2026-07-04T22:04:00.000Z", tag: "InTransit" },
+        { date: "2026-07-02T18:20:00.000Z", tag: "PickedUp" },
+        { date: "2026-07-01T12:00:00.000Z", tag: "Exception", subtag: "PickupException" },
+        { date: "2026-07-01T09:00:00.000Z", tag: "InfoReceived", subtag: "PickupRegistered" },
+      ]),
+    ).toBe("2026-07-02T18:20:00.000Z");
+  });
+
+  it("is undefined while still pickup-pending", () => {
+    expect(
+      pickupTsFromCheckpoints([{ date: "2026-07-01T09:00:00.000Z", tag: "InfoReceived", subtag: "PickupRegistered" }]),
+    ).toBeUndefined();
+    expect(pickupTsFromCheckpoints([])).toBeUndefined();
   });
 });

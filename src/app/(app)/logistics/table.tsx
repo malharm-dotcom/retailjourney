@@ -11,6 +11,7 @@ import { ShipmentDialog } from "@/components/shipment-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Field, Input, Select } from "@/components/ui/primitives";
+import type { AnchorSource } from "@/lib/transit-anchor";
 import { LOGISTICS_PARTNERS, type ShipmentStatus, type Source } from "@/lib/types";
 import { OVERALL_VISUAL, SHIPMENT_VISUAL, cn } from "@/lib/ui";
 import { fmtDate } from "@/lib/ist";
@@ -36,7 +37,18 @@ export interface LogisticsRow {
   msg?: string;
   breaching: boolean;
   ageing: number;
+  /** Which anchor `ageing` was measured from — undefined when none exists. */
+  ageFrom?: AnchorSource;
 }
+
+/** The age sub-line names its anchor, so a manifest- or pickup-based age is
+ *  never silently passed off as time since dispatch. */
+const AGE_LABEL: Record<AnchorSource, string> = {
+  DISPATCHED: "in transit",
+  MANIFESTED: "since manifest",
+  PICKED_UP: "since pickup",
+  TRACKING_PICK: "since pickup",
+};
 
 type Filter = "open" | "pending" | "transit" | "failed" | "self" | "delivered";
 
@@ -182,7 +194,11 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                       </td>
                       <td className="mono px-3 py-3.5 text-[12.5px] text-ink-soft">
                         {fmtDate(r.dispatched)}
-                        <span className="block text-[11px] text-mute">{r.ageing}d in transit</span>
+                        {r.ageFrom ? (
+                          <span className="block text-[11px] text-mute">
+                            {r.ageing}d {AGE_LABEL[r.ageFrom]}
+                          </span>
+                        ) : null}
                       </td>
                       <td className={cn("mono px-3 py-3.5 text-[12.5px]", r.breaching && !r.delivered ? "font-semibold text-breach" : "text-ink-soft")}>
                         {r.delivered ? `del. ${fmtDate(r.delivered)}` : fmtDate(r.expected)}

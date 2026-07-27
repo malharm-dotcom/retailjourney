@@ -44,8 +44,12 @@ export default async function InTransitPage() {
     )
     .map((r) => {
       const o = r.order;
-      const transitAge = o.dispatchedDate
-        ? daysBetween(o.dispatchedDate, o.deliveredDate ?? today)
+      // Anchor on dispatch when it exists, else the WH manifest / earliest
+      // child pickup — spine orders carry no dispatch date, and falling
+      // straight through to order ageing overstated the road time. Only an
+      // order with no anchor at all keeps the old order-age behaviour.
+      const transitAge = r.anchor.date
+        ? Math.max(0, daysBetween(r.anchor.date, o.deliveredDate ?? today))
         : r.sla.ageing;
       return {
         so: o.soNumber,

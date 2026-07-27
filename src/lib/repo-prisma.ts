@@ -24,6 +24,7 @@ import {
   userToDomain,
 } from "./prisma-map";
 import type { Actor, OrderRepo, ShipmentUpsert } from "./repo";
+import type { AnchorShipment } from "./transit-anchor";
 import type {
   FacilityScope,
   Order,
@@ -248,6 +249,27 @@ export class PrismaRepo implements OrderRepo {
       orderBy: { createdAt: "asc" },
     });
     return rows.map(shipmentToDomain);
+  }
+
+  async listAnchorShipments(soNumbers: string[]): Promise<Map<string, AnchorShipment[]>> {
+    const out = new Map<string, AnchorShipment[]>();
+    if (!soNumbers.length) return out;
+    // Two columns only — the boards fetch this for every row on the page, so
+    // it must stay far cheaper than hydrating whole shipments.
+    const rows = await prisma().orderShipment.findMany({
+      where: { soNumber: { in: soNumbers } },
+      select: { soNumber: true, pickedUpTs: true, trackingPickTs: true },
+    });
+    for (const r of rows) {
+      const entry: AnchorShipment = {
+        pickedUpTs: r.pickedUpTs?.toISOString(),
+        trackingPickTs: r.trackingPickTs?.toISOString(),
+      };
+      const list = out.get(r.soNumber);
+      if (list) list.push(entry);
+      else out.set(r.soNumber, [entry]);
+    }
+    return out;
   }
 
   async upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment> {

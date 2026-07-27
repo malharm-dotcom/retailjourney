@@ -25,6 +25,7 @@ import type {
   Store,
   User,
 } from "./types";
+import type { AnchorShipment } from "./transit-anchor";
 import { seedData } from "./seed/orders";
 import { STORES } from "./seed/stores";
 import { USERS } from "./seed/users";
@@ -48,6 +49,10 @@ export interface OrderRepo {
   updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Promise<Order>;
   /** Child shipments (AWBs) of an order, oldest first. */
   listShipments(soNumber: string): Promise<OrderShipment[]>;
+  /** Only the pickup timestamps, for many orders at once — the transit-age
+   *  anchor needs the earliest child of each order and must not fan out into
+   *  one listShipments call per board row. */
+  listAnchorShipments(soNumbers: string[]): Promise<Map<string, AnchorShipment[]>>;
   /** Upsert one shipment by its natural key (soNumber, awb). */
   upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment>;
 }
@@ -253,6 +258,19 @@ class InMemoryRepo implements OrderRepo {
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 
+  async listAnchorShipments(soNumbers: string[]): Promise<Map<string, AnchorShipment[]>> {
+    const want = new Set(soNumbers);
+    const out = new Map<string, AnchorShipment[]>();
+    for (const s of db().shipments.values()) {
+      if (!want.has(s.soNumber)) continue;
+      const list = out.get(s.soNumber);
+      const entry = { pickedUpTs: s.pickedUpTs, trackingPickTs: s.trackingPickTs };
+      if (list) list.push(entry);
+      else out.set(s.soNumber, [entry]);
+    }
+    return out;
+  }
+
   async upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment> {
     const d = db();
     mustGet(d, shipment.soNumber); // parent must exist
@@ -309,5 +327,6 @@ export const repo: OrderRepo = {
   recordNdrAttempt: (soNumber, actor, note) => impl().recordNdrAttempt(soNumber, actor, note),
   updateFields: (soNumber, patch, actor, source, note) => impl().updateFields(soNumber, patch, actor, source, note),
   listShipments: (soNumber) => impl().listShipments(soNumber),
+  listAnchorShipments: (soNumbers) => impl().listAnchorShipments(soNumbers),
   upsertShipment: (shipment) => impl().upsertShipment(shipment),
 };

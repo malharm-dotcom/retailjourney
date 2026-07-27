@@ -47,7 +47,12 @@ export default async function LogisticsPage() {
         pod: o.podLink,
         msg: o.trackingLatestMessage,
         breaching: r.breaching,
-        ageing: o.dispatchedDate ? daysBetween(o.dispatchedDate, o.deliveredDate ?? today) : 0,
+        // Dispatched stays honest above — "—" when the spine genuinely has no
+        // dispatch date. Age still measures from the best anchor we have
+        // (manifest / earliest child pickup), so a delivered order never reads
+        // "0d in transit" just because dispatchedDate is missing.
+        ageing: r.anchor.date ? Math.max(0, daysBetween(r.anchor.date, o.deliveredDate ?? today)) : 0,
+        ageFrom: r.anchor.source,
       };
     })
     .sort((a, b) => Number(!!a.delivered) - Number(!!b.delivered) || b.ageing - a.ageing);

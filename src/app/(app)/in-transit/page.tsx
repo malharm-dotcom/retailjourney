@@ -2,15 +2,34 @@
 // the road right now: one glance, no follow-ups.
 
 import { PageHead } from "@/components/shell/page-head";
-import { KpiCard } from "@/components/ui/kpi";
 import { scopedOrders } from "@/lib/data";
 import { istToday, daysBetween } from "@/lib/ist";
 import { policyOf } from "@/lib/rbac";
 import { requireSession } from "@/lib/session";
+import { TONE, type Tone } from "@/lib/ui";
 import { TransitBoard, type TransitRow } from "./board";
 
 export const metadata = { title: "In-Transit" };
 export const dynamic = "force-dynamic";
+
+/**
+ * One figure in the board's summary strip. A 3px tone bar rather than a tinted
+ * icon tile: the tile idiom belongs to the Control Tower's cards, and repeating
+ * it here is what made the two screens read as the same screen. The bar ties the
+ * figure to the rows it counts, which share that colour.
+ */
+function BoardStat({ tone, label, value, sub }: { tone: Tone; label: string; value: number; sub: string }) {
+  return (
+    <div className="sm:px-5 sm:first:pl-0 sm:last:pr-0">
+      <dt className="flex items-center gap-2 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+        <span aria-hidden className="h-3 w-[3px] shrink-0 rounded-full" style={{ background: TONE[tone].hex }} />
+        {label}
+      </dt>
+      <dd className="mono mt-1 font-display text-[26px] font-bold leading-none">{value}</dd>
+      <dd className="mt-1 text-cap text-mute">{sub}</dd>
+    </div>
+  );
+}
 
 export default async function InTransitPage() {
   const { user, scope } = await requireSession();
@@ -77,47 +96,27 @@ export default async function InTransitPage() {
 
   return (
     <>
+      {/* No status badge here. This screen carried a hardcoded "Seed data ·
+          eShipz sync lands in M5" pill — with the app's only infinite animation
+          on it — long after the poller went live. Freshness now comes from the
+          board's own refresh stamp and the per-source strip in the chrome, both
+          of which are real. */}
       <PageHead
         title="In-transit board"
         sub="Every shipment on the road right now — one glance, no follow-ups."
-        right={
-          <div className="flex items-center gap-2 rounded-[11px] bg-card px-3.5 py-2 text-[12.5px] font-semibold text-ink-soft shadow-card">
-            <span className="h-2 w-2 animate-pulse2 rounded-full bg-deliv" />
-            Seed data · eShipz sync lands in M5
-          </div>
-        }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3.5 lg:grid-cols-4">
-        <KpiCard
-          icon="box-bold-duotone"
-          iconClass="bg-pending-bg text-ink-soft"
-          label="WH Processing"
-          value={wh.length}
-          sub={whBreaching ? `${whBreaching} breaching today` : "all within SLA"}
-        />
-        <KpiCard
-          icon="hand-money-bold-duotone"
-          iconClass="bg-sage-soft text-sage"
-          label="Pickup Pending"
-          value={pickup.length}
-          sub="awaiting courier scan"
-        />
-        <KpiCard
-          icon="delivery-bold-duotone"
-          iconClass="bg-transit-bg text-transit"
-          label="In Transit"
-          value={transit.length}
-          sub={ofd ? `${ofd} out for delivery` : "none out for delivery"}
-        />
-        <KpiCard
-          icon="check-circle-bold-duotone"
-          iconClass="bg-deliv-bg text-deliv"
-          label="Delivered Today"
-          value={deliveredToday.length}
-          sub={withinPct != null ? `${withinPct}% within SLA` : "none yet today"}
-        />
-      </div>
+      {/* A summary STRIP, not four cards. This route used to open with the same
+          four KPI cards as the Control Tower — identical icons and labels — which
+          restated the screen you had just left and pushed the board itself past
+          400px of chrome on a phone. The figures are worth keeping; a second
+          card grid competing with the board is not. */}
+      <dl className="mb-5 grid grid-cols-2 gap-x-5 gap-y-4 rounded-card bg-card px-5 py-4 shadow-card sm:grid-cols-4 sm:gap-x-0 sm:divide-x sm:divide-line">
+        <BoardStat tone="pending" label="WH Processing" value={wh.length} sub={whBreaching ? `${whBreaching} breaching today` : "all within SLA"} />
+        <BoardStat tone="pending" label="Pickup Pending" value={pickup.length} sub="awaiting courier scan" />
+        <BoardStat tone="motion" label="In Transit" value={transit.length} sub={ofd ? `${ofd} out for delivery` : "none out for delivery"} />
+        <BoardStat tone="done" label="Delivered Today" value={deliveredToday.length} sub={withinPct != null ? `${withinPct}% within SLA` : "none yet today"} />
+      </dl>
 
       <TransitBoard rows={board} canEdit={canEdit} scopeLabel={scope === "ALL" ? "All" : scope} />
     </>

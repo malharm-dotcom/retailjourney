@@ -7,11 +7,11 @@ export default function NotFound() {
         404
       </div>
       <p className="max-w-sm text-sm text-mute">
-        That record isn&rsquo;t on the track. Check the SO number, or head back to the board.
+        That page isn&rsquo;t on the track. Head back to the Control Tower.
       </p>
       <Link
         href="/"
-        className="rounded-[10px] bg-ink px-4 py-2.5 text-[13px] font-semibold text-paper transition-colors hover:bg-ink/85"
+        className="flex min-h-[38px] items-center rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper transition-colors hover:bg-ink/85"
       >
         Back to Control Tower
       </Link>

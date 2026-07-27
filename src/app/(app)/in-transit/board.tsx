@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { ShipmentDialog } from "@/components/shipment-dialog";
-import { StatusPill, SourceBadge } from "@/components/ui/pill";
+import { StatusPill } from "@/components/ui/pill";
 import { Chip, Input } from "@/components/ui/primitives";
-import { OVERALL_VISUAL, SHIPMENT_VISUAL, cn, type StatusVisual } from "@/lib/ui";
+import { ageingBucket } from "@/lib/sla";
+import { AGE_EMPHASIS, OVERALL_VISUAL, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
 import type { OverallStatus, ShipmentStatus, Source } from "@/lib/types";
 
 export interface TransitRow {
@@ -40,6 +42,21 @@ function visualOf(r: TransitRow): StatusVisual {
   return OVERALL_VISUAL[r.overall];
 }
 
+/** How often the board pulls fresh server data while the tab is visible. */
+const REFRESH_MS = 75_000;
+
+/** A shipment's identity for change detection: what would visibly move. */
+const signatureOf = (r: TransitRow) => `${r.shipment ?? r.overall}|${r.msg ?? ""}|${r.city ?? ""}|${r.attempts}`;
+
+/** Shared cell padding, so every column keeps one vertical rhythm. */
+const CELL = "px-2 py-3 md:py-4";
+
+/** Mobile-only field label. The md+ grid has a header row; the stacked layout
+ *  had none, so a phone user saw bare values with no idea what they were. */
+function MobileLabel({ children }: { children: React.ReactNode }) {
+  return <span className="mr-1.5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:hidden">{children}</span>;
+}
+
 export function TransitBoard({
   rows,
   canEdit,
@@ -49,8 +66,60 @@ export function TransitBoard({
   canEdit: boolean;
   scopeLabel: string;
 }) {
+  const router = useRouter();
   const [filter, setFilter] = useState<FilterKey>("all");
   const [q, setQ] = useState("");
+  const searchId = useId();
+
+  // Rows whose checkpoint changed on the last server refresh. The 15-minute
+  // eShipz poller used to swap a row's text silently — the board is often left
+  // open on a wall screen, so a change nobody saw arrive is a change nobody
+  // acted on. These get a one-off wash, not an entrance.
+  const [arrived, setArrived] = useState<Set<string>>(new Set());
+  const seen = useRef<Map<string, string> | null>(null);
+  const arriveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const next = new Map(rows.map((r) => [r.so, signatureOf(r)]));
+    const prev = seen.current;
+    seen.current = next;
+    // First render establishes the baseline: everything is "new" on arrival and
+    // flashing the whole board would be noise, not signal.
+    if (!prev) return;
+    const changed = new Set<string>();
+    for (const [so, sig] of next) {
+      const before = prev.get(so);
+      if (before !== undefined && before !== sig) changed.add(so);
+    }
+    if (changed.size === 0) return;
+    setArrived(changed);
+    if (arriveTimer.current) clearTimeout(arriveTimer.current);
+    arriveTimer.current = setTimeout(() => setArrived(new Set()), 2000);
+  }, [rows]);
+
+  useEffect(() => () => void (arriveTimer.current && clearTimeout(arriveTimer.current)), []);
+
+  // Keep the board live. A Retail Head leaves this open and walks away; without
+  // this the data froze at page load with no cue that it had. Paused while the
+  // tab is hidden so a backgrounded board is not polling all afternoon, and
+  // refreshed immediately on return so the first glance back is current.
+  const [refreshedAt, setRefreshedAt] = useState<Date | null>(null);
+  useEffect(() => {
+    const tick = () => {
+      if (document.hidden) return;
+      router.refresh();
+      setRefreshedAt(new Date());
+    };
+    const id = setInterval(tick, REFRESH_MS);
+    const onVisible = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [router]);
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -76,36 +145,45 @@ export function TransitBoard({
         <Chip active={filter === "all"} onClick={() => setFilter("all")}>
           All open
         </Chip>
-        <Chip active={filter === "PICKUP_PENDING"} dot="#9A9080" onClick={() => setFilter("PICKUP_PENDING")}>
+        <Chip active={filter === "PICKUP_PENDING"} tone="pending" onClick={() => setFilter("PICKUP_PENDING")}>
           Pickup Pending
         </Chip>
-        <Chip active={filter === "IN_TRANSIT"} dot="#4C7A99" onClick={() => setFilter("IN_TRANSIT")}>
+        <Chip active={filter === "IN_TRANSIT"} tone="motion" onClick={() => setFilter("IN_TRANSIT")}>
           In Transit
         </Chip>
-        <Chip active={filter === "DELIVERED"} dot="#3E7A5C" onClick={() => setFilter("DELIVERED")}>
+        <Chip active={filter === "DELIVERED"} tone="done" onClick={() => setFilter("DELIVERED")}>
           Delivered
         </Chip>
-        <Chip active={filter === "breach"} dot="#BE5340" onClick={() => setFilter("breach")}>
+        <Chip active={filter === "breach"} tone="failed" onClick={() => setFilter("breach")}>
           Breaching
         </Chip>
-        <div className="ml-auto flex min-w-[250px] items-center gap-2 rounded-xl border border-line-strong bg-paper px-3 py-1 text-mute">
+        <div className="ml-auto flex min-w-[250px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:flex-none">
           <Icon name="magnifer-linear" size={15} />
+          {/* The placeholder was doing the label's job, which leaves nothing to
+              announce and nothing to read once you have typed. */}
+          <label htmlFor={searchId} className="sr-only">
+            Search shipments by SO, LR, store or area manager
+          </label>
           <Input
+            id={searchId}
+            type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search SO · LR · store · area manager"
-            className="border-0 bg-transparent px-0 py-1.5 focus:border-0"
+            className="border-0 bg-transparent px-0 py-2 focus:border-0"
           />
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl bg-card shadow-card">
-        <div className="hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_.95fr] border-b border-line bg-paper px-5 text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute md:grid">
-          <div className="px-2 py-3.5">Store</div>
-          <div className="px-2 py-3.5">LR · Courier</div>
-          <div className="px-2 py-3.5">Status</div>
-          <div className="px-2 py-3.5">Latest checkpoint</div>
-          <div className="px-2 py-3.5">Transit age</div>
+      <div className="overflow-hidden rounded-card bg-card shadow-card">
+        {/* Sticky so the column meaning survives a long scroll. `top` clears the
+            60px bar plus the sync strip that sit above it. */}
+        <div className="sticky top-[var(--bar-h)] z-10 hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid">
+          <div className={CELL}>Store</div>
+          <div className={CELL}>LR · Courier</div>
+          <div className={CELL}>Status</div>
+          <div className={CELL}>Latest checkpoint</div>
+          <div className={CELL}>Transit age</div>
           <div />
         </div>
 
@@ -114,65 +192,84 @@ export function TransitBoard({
             No shipments match — clear the filters or switch facility.
           </div>
         ) : (
-          shown.map((r, i) => {
+          shown.map((r) => {
             const v = visualOf(r);
-            const hot = r.breaching || r.ageing >= 5;
+            const age = AGE_EMPHASIS[ageingBucket(r.ageing)];
             return (
               <div
                 key={r.so}
-                className="rail grid animate-rise grid-cols-1 gap-0 border-b border-line px-5 last:border-b-0 hover:bg-[#FCFBF7] md:grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_.95fr] md:items-center"
-                style={{ "--rail": r.breaching ? "#BE5340" : v.rail, animationDelay: `${Math.min(i, 12) * 45}ms` } as React.CSSProperties}
+                className={cn(
+                  "rail grid grid-cols-1 gap-0 border-b border-line px-5 last:border-b-0 hover:bg-paper md:grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] md:items-center",
+                  // No entrance animation. The rows are the content; staggering
+                  // them made every filter tap cost half a second of choreography
+                  // on top of a server round-trip.
+                  arrived.has(r.so) && "animate-arrive",
+                )}
+                style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
               >
-                <div className="px-2 pb-1 pt-4 md:py-4">
-                  <Link href={`/orders/${r.so}`} className="text-sm font-semibold hover:text-sage">
+                <div className={cn(CELL, "pb-1 pt-4 md:py-4")}>
+                  <Link href={`/orders/${r.so}`} className="text-row font-semibold hover:text-sage">
                     {r.store}
                   </Link>
-                  <div className="mt-1 text-xs text-mute">
+                  <div className="mt-1 text-cap text-mute">
                     {r.zone} · {r.lane ?? "—"} · {r.type} · {r.qty} pcs
                   </div>
                 </div>
-                <div className="mono px-2 py-1 md:py-4">
-                  <span className="font-display text-[13.5px] font-semibold">{r.lr ?? "—"}</span>
-                  <span className="block text-xs text-mute">
+                <div className={cn(CELL, "mono py-1 md:py-4")}>
+                  <MobileLabel>LR</MobileLabel>
+                  <span className="font-display text-ui font-semibold">{r.lr ?? "—"}</span>
+                  <span className="block text-cap text-mute">
                     {(r.courier ?? "—").replace("_", " ")}
                     {r.self ? " · manual lane" : ""}
                   </span>
                 </div>
-                <div className="px-2 py-1 md:py-4">
+                <div className={cn(CELL, "py-1 md:py-4")}>
                   <StatusPill visual={v} source={r.source} />
                 </div>
-                <div className="px-2 py-1 text-[13px] leading-snug text-ink-soft md:py-4">
+                <div className={cn(CELL, "py-1 text-ui leading-snug text-ink-soft md:py-4")}>
+                  <MobileLabel>Checkpoint</MobileLabel>
                   {r.msg ?? "Awaiting first scan"}
-                  <span className="mt-1 flex items-center gap-1 text-[11.5px] text-mute">
+                  <span className="mt-1 flex items-center gap-1 text-cap text-mute">
                     <Icon name="map-point-linear" size={13} />
                     {r.city ?? "—"}
                     {r.attempts > 1 ? ` · ${r.attempts} attempts` : ""}
                   </span>
                 </div>
-                <div className="hidden px-2 py-4 md:block">
-                  <span className={cn("mono font-display text-[19px] font-bold", hot && "text-breach")}>
-                    {r.ageing}
-                    <span className="block font-sans text-[11px] font-normal text-mute">days</span>
+                {/* Was `hidden md:block`. This is the number that decides whether
+                    an Area Manager escalates, and she is on a phone. */}
+                <div className={cn(CELL, "flex items-baseline gap-1.5 py-1 md:block md:py-4")}>
+                  <MobileLabel>Transit age</MobileLabel>
+                  <span className={cn("mono font-display text-num font-bold", age.className)}>{r.ageing}</span>
+                  <span className="font-sans text-cap font-normal text-mute md:block">
+                    days<span className="md:hidden"> · {age.note}</span>
                   </span>
                 </div>
-                <div className="flex gap-1.5 px-2 pb-4 pt-1 md:py-4">
+                <div className={cn(CELL, "flex gap-2 pb-4 pt-2 md:justify-end md:py-4")}>
                   {r.trackingLink ? (
                     <a
                       href={r.trackingLink}
                       target="_blank"
                       rel="noreferrer"
-                      title="Courier tracking"
-                      className="grid h-[34px] w-[34px] place-items-center rounded-[10px] border border-line-strong bg-paper text-ink-soft transition-all hover:-translate-y-px hover:border-sage hover:bg-sage-soft hover:text-sage"
+                      aria-label={`Open courier tracking for ${r.so} in a new tab`}
+                      className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
                     >
                       <Icon name="routing-2-linear" size={17} />
                     </a>
                   ) : null}
                   <JourneyLink so={r.so} />
                   {canEdit && r.overall !== "DELIVERED" ? (
-                    <ShipmentDialog soNumber={r.so} current={r.shipment} self={r.self}>
+                    <ShipmentDialog
+                      soNumber={r.so}
+                      current={r.shipment}
+                      self={r.self}
+                      store={r.store}
+                      lr={r.lr}
+                      courier={r.courier}
+                    >
                       <button
-                        title="Update status"
-                        className="grid h-[34px] w-[34px] place-items-center rounded-[10px] border border-line-strong bg-paper text-ink-soft transition-all hover:-translate-y-px hover:border-sage hover:bg-sage-soft hover:text-sage"
+                        type="button"
+                        aria-label={`Update shipment status for ${r.so}`}
+                        className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
                       >
                         <Icon name="pen-new-square-linear" size={17} />
                       </button>
@@ -185,13 +282,20 @@ export function TransitBoard({
         )}
       </div>
 
-      <div className="flex items-center justify-between px-1 pb-8 pt-4 text-[12.5px] text-mute">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 px-1 pb-8 pt-4 text-dense text-mute">
+        {/* Announced, because filtering is the one action here whose entire
+            result is a number that changes somewhere else on the screen. */}
+        <p aria-live="polite">
           Showing <b className="font-semibold text-ink-soft">{shown.length}</b> of{" "}
           <b className="font-semibold text-ink-soft">{rows.length}</b> shipments · facility{" "}
           <b className="font-semibold text-ink-soft">{scopeLabel}</b>
-        </div>
-        <div>Sorted by ageing · breaches first</div>
+        </p>
+        <p>
+          Sorted by ageing · breaches first
+          {refreshedAt ? (
+            <span className="mono"> · refreshed {refreshedAt.toLocaleTimeString("en-IN", { hour12: false })} IST</span>
+          ) : null}
+        </p>
       </div>
     </>
   );

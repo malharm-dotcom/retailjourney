@@ -75,19 +75,19 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
                   ? { dot: "bg-ofd", label: "Run in progress…" }
                   : { dot: "bg-deliv", label: `OK · ${fmtDateTime(r.finishedAt)}` };
         return (
-          <section key={c.source} className="rounded-2xl bg-card p-5 shadow-card">
+          <section key={c.source} className="rounded-card bg-card p-5 shadow-card">
             <div className="flex items-center gap-2.5">
-              <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-pending-bg text-ink-soft">
+              <span className="grid h-9 w-9 place-items-center rounded-control bg-pending-bg text-ink-soft">
                 <Icon name={c.icon} size={19} />
               </span>
               <div className="min-w-0">
-                <h3 className="text-[13.5px] font-bold">{c.name}</h3>
-                <p className="text-[11.5px] text-mute">{c.detail}</p>
+                <h3 className="text-ui font-bold">{c.name}</h3>
+                <p className="text-cap text-mute">{c.detail}</p>
               </div>
               {c.passive ? null : (
                 <Button
                   variant="outline"
-                  className="ml-auto px-3 py-1.5 text-[12px]"
+                  className="ml-auto px-3 py-1.5 text-dense"
                   disabled={pending || !c.configured || !dbReady}
                   onClick={() => trigger(c.source as "ESHIPZ" | "SNOWFLAKE")}
                 >
@@ -96,20 +96,20 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
                 </Button>
               )}
             </div>
-            <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-paper px-3 py-2 text-[12px] font-semibold text-mute">
+            <div className="mt-3.5 flex items-center gap-2 rounded-lg bg-paper px-3 py-2 text-dense font-semibold text-mute">
               <span className={cn("h-2 w-2 shrink-0 rounded-full", state.dot)} />
               <span className="truncate">{state.label}</span>
             </div>
             {r?.finishedAt ? (
-              <div className="mono mt-2 grid grid-cols-3 gap-2 text-center text-[11.5px] text-ink-soft">
+              <div className="mono mt-2 grid grid-cols-3 gap-2 text-center text-cap text-ink-soft">
                 <div className="rounded-lg bg-paper py-1.5">
-                  <span className="block text-[14px] font-bold text-ink">{r.rowsFetched}</span>fetched
+                  <span className="block text-row font-bold text-ink">{r.rowsFetched}</span>fetched
                 </div>
                 <div className="rounded-lg bg-paper py-1.5">
-                  <span className="block text-[14px] font-bold text-ink">{r.rowsUpserted}</span>upserted
+                  <span className="block text-row font-bold text-ink">{r.rowsUpserted}</span>upserted
                 </div>
                 <div className={cn("rounded-lg bg-paper py-1.5", r.conflicts > 0 && "bg-ofd-bg")}>
-                  <span className="block text-[14px] font-bold text-ink">{r.conflicts}</span>conflicts
+                  <span className="block text-row font-bold text-ink">{r.conflicts}</span>conflicts
                 </div>
               </div>
             ) : null}
@@ -146,11 +146,11 @@ export function UnmatchedChannels({
   };
 
   return (
-    <section className="mb-6 overflow-hidden rounded-2xl bg-card shadow-card">
+    <section className="mb-6 overflow-hidden rounded-card bg-card shadow-card">
       <header className="flex items-center gap-2.5 border-b border-line bg-ofd-bg px-5 py-3.5">
         <Icon name="danger-triangle-bold-duotone" size={17} className="text-ofd" />
-        <h2 className="text-[13px] font-bold">Unmatched channels — review queue</h2>
-        <span className="ml-auto text-[11.5px] text-mute">
+        <h2 className="text-ui font-bold">Unmatched channels — review queue</h2>
+        <span className="ml-auto text-cap text-mute">
           orders from these channels are held until mapped to a store
         </span>
       </header>
@@ -158,8 +158,8 @@ export function UnmatchedChannels({
         {unmatched.map((u) => (
           <div key={u.channel} className="flex flex-wrap items-center gap-3 px-5 py-3.5">
             <div className="min-w-0 flex-1">
-              <div className="mono text-[13px] font-bold">{u.channel}</div>
-              <div className="mt-0.5 text-[11.5px] text-mute">
+              <div className="mono text-ui font-bold">{u.channel}</div>
+              <div className="mt-0.5 text-cap text-mute">
                 {u.orderCount} order{u.orderCount === 1 ? "" : "s"} · last seen {fmtDateTime(u.lastSeenAt)}
                 {u.sampleSoNumbers.length ? ` · e.g. ${u.sampleSoNumbers.slice(0, 3).join(", ")}` : ""}
               </div>
@@ -176,7 +176,7 @@ export function UnmatchedChannels({
                 </option>
               ))}
             </Select>
-            <Button variant="primary" className="px-3 py-1.5 text-[12px]" disabled={pending} onClick={() => assign(u.channel)}>
+            <Button variant="primary" className="px-3 py-1.5 text-dense" disabled={pending} onClick={() => assign(u.channel)}>
               Assign
             </Button>
           </div>

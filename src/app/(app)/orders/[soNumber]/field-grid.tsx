@@ -117,10 +117,10 @@ export function FieldGrid({
     <>
       <div className="grid gap-3.5 md:grid-cols-2 xl:grid-cols-4">
         {GROUPS.map((g) => (
-          <section key={g.title} className="overflow-hidden rounded-2xl bg-card shadow-card">
+          <section key={g.title} className="overflow-hidden rounded-card bg-card shadow-card">
             <header className="flex items-center gap-2 border-b border-line bg-paper px-4 py-3">
               <Icon name={g.icon} size={15} className="text-sage" />
-              <h3 className="text-[12.5px] font-bold">{g.title}</h3>
+              <h3 className="text-dense font-bold">{g.title}</h3>
             </header>
             <div className="px-4 py-2">
               {g.fields.map((f) => {
@@ -129,7 +129,7 @@ export function FieldGrid({
                 const src = sources[f.key as string];
                 const editable = rights[f.right];
                 return (
-                  <div key={String(f.key)} className="group flex items-center gap-2 border-b border-line py-2 text-[12.5px] last:border-b-0">
+                  <div key={String(f.key)} className="group flex items-center gap-2 border-b border-line py-2 text-dense last:border-b-0">
                     <span className="w-[42%] shrink-0 text-mute">{f.label}</span>
                     <span className="mono min-w-0 flex-1 truncate font-medium" title={display}>
                       {display}
@@ -137,11 +137,20 @@ export function FieldGrid({
                     {src ? <SourceBadge source={src} /> : null}
                     {editable ? (
                       <button
+                        type="button"
                         onClick={() => open(f)}
-                        title={`Edit ${f.label}`}
-                        className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-mute opacity-0 transition-opacity hover:bg-sage-soft hover:text-sage group-hover:opacity-100"
+                        aria-label={`Override ${f.label}`}
+                        // Three fixes on one control. It was `opacity-0
+                        // group-hover:opacity-100` with no focus escape, so it took
+                        // keyboard focus while fully transparent — a focused control
+                        // with no visible focus indicator. `group-hover` never fires
+                        // on touch, so manual override (a PRD §2 non-negotiable, on
+                        // all 24 fields) was unreachable on any floor tablet. And it
+                        // was a 24px target. It is now always visible below lg,
+                        // appears on focus, and is 32px.
+                        className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-mute transition-opacity hover:bg-sage-soft hover:text-sage focus-visible:opacity-100 group-hover:opacity-100 lg:opacity-0 motion-reduce:transition-none"
                       >
-                        <Icon name="pen-2-linear" size={13} />
+                        <Icon name="pen-2-linear" size={14} />
                       </button>
                     ) : null}
                   </div>

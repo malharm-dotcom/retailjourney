@@ -2,8 +2,10 @@
 
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
+import { StatusPill } from "@/components/ui/pill";
 import { Input, Select } from "@/components/ui/primitives";
 import { LOGISTICS_PARTNERS } from "@/lib/types";
+import { visualByLabel } from "@/lib/ui";
 import type { ReportTableData } from "@/lib/reports";
 
 const TYPES = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "OTHER"];
@@ -38,22 +40,22 @@ export function ReportTable({
       <form method="get" className="mb-4 flex flex-wrap items-end gap-2.5">
         {showLookup ? (
           <label className="min-w-[240px] flex-1">
-            <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">
+            <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">
               SO · DC · LR · store
             </span>
             <Input name="q" defaultValue={initial.q} placeholder="Paste any identifier…" />
           </label>
         ) : null}
         <label>
-          <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">From</span>
+          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">From</span>
           <Input type="date" name="from" defaultValue={initial.from} className="w-[150px]" />
         </label>
         <label>
-          <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">To</span>
+          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">To</span>
           <Input type="date" name="to" defaultValue={initial.to} className="w-[150px]" />
         </label>
         <label>
-          <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">Type</span>
+          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">Type</span>
           <Select name="type" defaultValue={initial.type} className="w-[130px]">
             <option value="">All</option>
             {TYPES.map((t) => (
@@ -64,7 +66,7 @@ export function ReportTable({
           </Select>
         </label>
         <label>
-          <span className="mb-1 block text-[10.5px] font-semibold uppercase tracking-[0.06em] text-mute">Courier</span>
+          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">Courier</span>
           <Select name="courier" defaultValue={initial.courier} className="w-[150px]">
             <option value="">All</option>
             {LOGISTICS_PARTNERS.map((p) => (
@@ -76,27 +78,27 @@ export function ReportTable({
         </label>
         <button
           type="submit"
-          className="rounded-[10px] bg-ink px-4 py-2 text-[13px] font-semibold text-paper transition-colors hover:bg-ink/85"
+          className="rounded-control bg-ink px-4 py-2 text-ui font-semibold text-paper transition-colors hover:bg-ink/85"
         >
           Apply
         </button>
         <button
           type="button"
           onClick={exportCsv}
-          className="ml-auto flex items-center gap-1.5 rounded-[10px] border border-line-strong bg-paper px-3.5 py-2 text-[12.5px] font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+          className="ml-auto flex items-center gap-1.5 rounded-control border border-line-control bg-paper px-3.5 py-2 text-dense font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
         >
           <Icon name="download-minimalistic-bold" size={14} />
           Export CSV
         </button>
       </form>
 
-      <div className="overflow-hidden rounded-2xl bg-card shadow-card">
+      <div className="overflow-hidden rounded-card bg-card shadow-card">
         <div className="max-h-[65vh] overflow-auto">
           <table className="w-full min-w-[760px] border-collapse text-left">
             <thead className="sticky top-0 z-10">
-              <tr className="border-b border-line bg-paper text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute">
+              <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
                 {data.columns.map((c) => (
-                  <th key={c} className="bg-paper px-4 py-3.5 font-semibold first:px-5">
+                  <th key={c} className="bg-paper px-4 py-3 font-semibold first:px-5">
                     {c}
                   </th>
                 ))}
@@ -111,12 +113,25 @@ export function ReportTable({
                 </tr>
               ) : (
                 data.rows.map((row, i) => (
-                  <tr key={i} className="border-b border-line text-[12.5px] last:border-b-0 hover:bg-[#FCFBF7]">
-                    {row.map((cell, j) => (
-                      <td key={j} className="mono px-4 py-2.5 text-ink-soft first:px-5">
-                        {data.linkCol === j ? <JourneyLink so={String(cell)} variant="text" /> : cell}
-                      </td>
-                    ))}
+                  <tr key={i} className="border-b border-line text-dense last:border-b-0 hover:bg-paper">
+                    {row.map((cell, j) => {
+                      // Every SLA verdict on this surface used to render as grey
+                      // `text-ink-soft` — "BREACHED" and "Within SLA" indistinguishable
+                      // at a glance — because a report cell is a bare string. A cell
+                      // that IS a status now says so, in the same pill the boards use.
+                      const visual = data.linkCol === j ? null : visualByLabel(cell);
+                      return (
+                        <td key={j} className="mono px-4 py-2.5 text-ink-soft first:px-5">
+                          {data.linkCol === j ? (
+                            <JourneyLink so={String(cell)} variant="text" />
+                          ) : visual ? (
+                            <StatusPill visual={visual} size="sm" />
+                          ) : (
+                            cell
+                          )}
+                        </td>
+                      );
+                    })}
                   </tr>
                 ))
               )}
@@ -124,9 +139,9 @@ export function ReportTable({
           </table>
         </div>
       </div>
-      <div className="px-1 pb-8 pt-3 text-[12.5px] text-mute">
+      <p aria-live="polite" className="px-1 pb-8 pt-3 text-dense text-mute">
         {data.rows.length} rows · export includes exactly what you see
-      </div>
+      </p>
     </>
   );
 }

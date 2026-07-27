@@ -62,7 +62,11 @@ export default async function AdminPage() {
     {
       source: "SNOWFLAKE",
       name: "Snowflake",
-      detail: "distribution_analytics — orders, deadlines, split shipments (hourly)",
+      // The reader was repointed to RETAIL_JOURNEY_SPINE; `distribution_analytics`
+      // gated out any order the rulebook did not cover, which is exactly the
+      // behaviour that repoint fixed. Naming the old view here told an operator
+      // debugging a missing order to go and look in the wrong place.
+      detail: "RETAIL_JOURNEY_SPINE — orders, deadlines, split shipments (hourly)",
       icon: "database-bold-duotone",
       configured: snowflakeConfigured(),
       lastRun: toRunView(health.lastRuns.SNOWFLAKE),
@@ -97,18 +101,18 @@ export default async function AdminPage() {
         stores={stores.map((s) => ({ id: s.id, label: `${s.finalStore} (${s.facility})` }))}
       />
 
-      <div className="mb-6 rounded-2xl bg-card p-5 shadow-card">
+      <div className="mb-6 rounded-card bg-card p-5 shadow-card">
         <div className="flex items-center gap-2.5">
-          <span className="grid h-9 w-9 place-items-center rounded-[10px] bg-pending-bg text-ink-soft">
+          <span className="grid h-9 w-9 place-items-center rounded-control bg-pending-bg text-ink-soft">
             <Icon name="shield-check-bold-duotone" size={19} />
           </span>
           <div>
-            <h3 className="text-[13.5px] font-bold">Google SSO</h3>
-            <p className="text-[11.5px] text-mute">@snitch.com sign-in with admin activation</p>
+            <h3 className="text-ui font-bold">Google SSO</h3>
+            <p className="text-cap text-mute">@snitch.com sign-in with admin activation</p>
           </div>
           <span
             className={cn(
-              "ml-auto flex items-center gap-2 rounded-lg bg-paper px-3 py-2 text-[12px] font-semibold text-mute",
+              "ml-auto flex items-center gap-2 rounded-lg bg-paper px-3 py-2 text-dense font-semibold text-mute",
             )}
           >
             <span className={cn("h-2 w-2 rounded-full", googleConfigured() ? "bg-deliv" : "bg-pending")} />
@@ -117,18 +121,22 @@ export default async function AdminPage() {
         </div>
       </div>
 
-      <section className="mb-6 overflow-hidden rounded-2xl bg-card shadow-card">
+      <section className="mb-6 overflow-hidden rounded-card bg-card shadow-card">
         <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
           <Icon name="users-group-two-rounded-bold-duotone" size={17} className="text-sage" />
-          <h2 className="text-[13px] font-bold">Users & entitlements</h2>
-          <span className="ml-auto text-[11.5px] text-mute">
-            new @snitch.com sign-ins appear here pending activation
+          <h2 className="text-ui font-bold">Users & entitlements</h2>
+          {/* Was "new @snitch.com sign-ins appear here pending activation" above a
+              table with no activate control and no edit affordance on role,
+              facilities or AM scope — a promise the screen cannot keep. Accounts
+              are created by `scripts/seed-admin.mts`, so this says so. */}
+          <span className="ml-auto text-cap text-mute">
+            read-only · accounts are provisioned with <span className="mono">scripts/seed-admin.mts</span>
           </span>
         </header>
         <div className="overflow-x-auto">
           <table className="w-full min-w-[760px] border-collapse text-left">
             <thead>
-              <tr className="border-b border-line bg-paper text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute">
+              <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
                 <th className="px-5 py-3 font-semibold">User</th>
                 <th className="px-4 py-3 font-semibold">Role</th>
                 <th className="px-4 py-3 font-semibold">Facilities</th>
@@ -139,10 +147,10 @@ export default async function AdminPage() {
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-line text-[12.5px] last:border-b-0 hover:bg-[#FCFBF7]">
+                <tr key={u.id} className="border-b border-line text-dense last:border-b-0 hover:bg-paper">
                   <td className="px-5 py-3">
                     <span className="block font-semibold">{u.name}</span>
-                    <span className="mono block text-[11px] text-mute">{u.email}</span>
+                    <span className="mono block text-cap text-mute">{u.email}</span>
                   </td>
                   <td className="px-4 py-3 text-ink-soft">{ROLE_POLICY[u.role].label}</td>
                   <td className="px-4 py-3 text-ink-soft">
@@ -153,7 +161,7 @@ export default async function AdminPage() {
                   <td className="px-4 py-3">
                     <span
                       className={cn(
-                        "rounded-full px-2.5 py-1 text-[10.5px] font-bold",
+                        "rounded-full px-2.5 py-1 text-meta font-bold",
                         u.active ? "bg-deliv-bg text-deliv" : "bg-pending-bg text-ink-soft",
                       )}
                     >
@@ -167,11 +175,11 @@ export default async function AdminPage() {
         </div>
       </section>
 
-      <section className="overflow-hidden rounded-2xl bg-card shadow-card">
+      <section className="overflow-hidden rounded-card bg-card shadow-card">
         <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
           <Icon name="history-bold-duotone" size={17} className="text-sage" />
-          <h2 className="text-[13px] font-bold">Sync log</h2>
-          <span className="ml-auto text-[11.5px] text-mute">last {health.recentRuns.length} runs</span>
+          <h2 className="text-ui font-bold">Sync log</h2>
+          <span className="ml-auto text-cap text-mute">last {health.recentRuns.length} runs</span>
         </header>
         {health.recentRuns.length === 0 ? (
           <div className="px-6 py-12 text-center text-sm text-mute">
@@ -182,7 +190,7 @@ export default async function AdminPage() {
           <div className="overflow-x-auto">
             <table className="w-full min-w-[680px] border-collapse text-left">
               <thead>
-                <tr className="border-b border-line bg-paper text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute">
+                <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
                   <th className="px-5 py-3 font-semibold">Source</th>
                   <th className="px-4 py-3 font-semibold">Started</th>
                   <th className="px-4 py-3 font-semibold">Result</th>
@@ -196,13 +204,13 @@ export default async function AdminPage() {
                 {health.recentRuns.map((r) => {
                   const errors = Array.isArray(r.errors) ? (r.errors as string[]) : [];
                   return (
-                    <tr key={r.id} className="border-b border-line text-[12.5px] last:border-b-0">
+                    <tr key={r.id} className="border-b border-line text-dense last:border-b-0">
                       <td className="mono px-5 py-3 font-semibold">{r.source}</td>
                       <td className="mono px-4 py-3 text-ink-soft">{fmtDateTime(r.startedAt.toISOString())}</td>
                       <td className="px-4 py-3">
                         <span
                           className={cn(
-                            "rounded-full px-2.5 py-1 text-[10.5px] font-bold",
+                            "rounded-full px-2.5 py-1 text-meta font-bold",
                             r.ok === true && "bg-deliv-bg text-deliv",
                             r.ok === false && "bg-breach-bg text-breach",
                             r.ok == null && "bg-pending-bg text-ink-soft",
@@ -214,7 +222,7 @@ export default async function AdminPage() {
                       <td className="mono px-4 py-3">{r.rowsFetched}</td>
                       <td className="mono px-4 py-3">{r.rowsUpserted}</td>
                       <td className="mono px-4 py-3">{r.conflicts}</td>
-                      <td className="px-4 py-3 text-[11.5px] text-mute" title={errors.join("\n")}>
+                      <td className="px-4 py-3 text-cap text-mute" title={errors.join("\n")}>
                         {errors.length ? `${errors.length} — ${errors[0]?.slice(0, 60)}…` : "—"}
                       </td>
                     </tr>

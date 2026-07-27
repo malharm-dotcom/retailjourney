@@ -36,21 +36,31 @@ export function UserMenu({
   return (
     <Dropdown>
       <DropdownTrigger asChild>
-        <button className="flex items-center gap-2.5 rounded-[10px] px-1.5 py-1 text-[12.5px] text-ink-soft transition-colors hover:bg-line/60">
-          <span className="grid h-[30px] w-[30px] place-items-center rounded-full bg-sage font-display text-xs font-bold text-white">
+        {/* Below sm the name and role are hidden, so this becomes an avatar-only
+            control: it needs both a floor size and an accessible name, having had
+            neither. */}
+        <button
+          type="button"
+          aria-label={`Account menu — ${user.name.split(" (")[0]}`}
+          className="flex min-h-[40px] items-center gap-2.5 rounded-control px-1.5 py-1 text-dense text-ink-soft transition-colors hover:bg-line/60"
+        >
+          <span
+            aria-hidden
+            className="grid h-[30px] w-[30px] place-items-center rounded-full bg-sage font-display text-xs font-bold text-white"
+          >
             {initials(user.name)}
           </span>
           <span className="hidden sm:block">
             <span className="block font-semibold leading-tight text-ink">{user.name.split(" (")[0]}</span>
-            <span className="block text-[11px] leading-tight text-mute">{ROLE_POLICY[user.role].label}</span>
+            <span className="block text-cap leading-tight text-mute">{ROLE_POLICY[user.role].label}</span>
           </span>
         </button>
       </DropdownTrigger>
       <DropdownContent align="end" className="max-h-[70vh] overflow-y-auto">
         <DropdownLabel className="px-3 py-1.5">
-          <span className="block text-[12.5px] font-semibold text-ink">{user.name.split(" (")[0]}</span>
-          <span className="mono block text-[10.5px] text-mute">{user.email}</span>
-          <span className="block text-[10.5px] text-mute">{ROLE_POLICY[user.role].label}</span>
+          <span className="block text-dense font-semibold text-ink">{user.name.split(" (")[0]}</span>
+          <span className="mono block text-meta text-mute">{user.email}</span>
+          <span className="block text-meta text-mute">{ROLE_POLICY[user.role].label}</span>
         </DropdownLabel>
         <DropdownSeparator />
         {isAdmin ? (

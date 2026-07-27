@@ -79,10 +79,10 @@ export function SyncStatusClient({ statuses }: { statuses: SourceStatus[] }) {
                 state === "failed" && "bg-breach",
               )}
             />
-            <span className="text-[10.5px] font-semibold leading-none text-ink-soft">{s.label}</span>
+            <span className="text-meta font-semibold leading-none text-ink-soft">{s.label}</span>
             <span
               className={cn(
-                "mono text-[10.5px] leading-none",
+                "mono text-meta leading-none",
                 state === "fresh" && "text-mute",
                 state === "stale" && "font-semibold text-ofd",
                 state === "failed" && "font-semibold text-breach",

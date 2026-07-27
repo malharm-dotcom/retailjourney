@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useId, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { overrideOrderFields } from "@/app/actions";
 import { Icon } from "@/components/icon";
@@ -13,7 +13,7 @@ import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Field, Input, Select } from "@/components/ui/primitives";
 import type { AnchorSource } from "@/lib/transit-anchor";
 import { LOGISTICS_PARTNERS, type ShipmentStatus, type Source } from "@/lib/types";
-import { OVERALL_VISUAL, SHIPMENT_VISUAL, cn } from "@/lib/ui";
+import { OVERALL_VISUAL, SHIPMENT_VISUAL, TONE, cn, railOf } from "@/lib/ui";
 import { fmtDate } from "@/lib/ist";
 
 export interface LogisticsRow {
@@ -59,6 +59,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
   const [editing, setEditing] = useState<LogisticsRow | null>(null);
   const [form, setForm] = useState<Record<string, string>>({});
   const [pending, startTransition] = useTransition();
+  const searchId = useId();
 
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -112,46 +113,55 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         <Chip active={filter === "open"} onClick={() => setFilter("open")}>
           All open
         </Chip>
-        <Chip active={filter === "pending"} dot="#9A9080" onClick={() => setFilter("pending")}>
+        <Chip active={filter === "pending"} tone="pending" onClick={() => setFilter("pending")}>
           Awaiting pickup
         </Chip>
-        <Chip active={filter === "transit"} dot="#4C7A99" onClick={() => setFilter("transit")}>
+        <Chip active={filter === "transit"} tone="motion" onClick={() => setFilter("transit")}>
           Moving
         </Chip>
-        <Chip active={filter === "failed"} dot="#BE5340" onClick={() => setFilter("failed")}>
+        <Chip active={filter === "failed"} tone="failed" onClick={() => setFilter("failed")}>
           NDR / failed
         </Chip>
-        <Chip active={filter === "self"} dot="#B67F2E" onClick={() => setFilter("self")}>
+        <Chip active={filter === "self"} tone="handling" onClick={() => setFilter("self")}>
           Self-delivery (manual)
         </Chip>
-        <Chip active={filter === "delivered"} dot="#3E7A5C" onClick={() => setFilter("delivered")}>
+        <Chip active={filter === "delivered"} tone="done" onClick={() => setFilter("delivered")}>
           Delivered 7d
         </Chip>
-        <div className="ml-auto flex min-w-[230px] items-center gap-2 rounded-xl border border-line-strong bg-paper px-3 py-1 text-mute">
+        <div className="ml-auto flex min-w-[230px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:flex-none">
           <Icon name="magnifer-linear" size={15} />
+          <label htmlFor={searchId} className="sr-only">
+            Search dispatched orders by SO, LR, DC or store
+          </label>
           <Input
+            id={searchId}
+            type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search SO · LR · DC · store"
-            className="border-0 bg-transparent px-0 py-1.5 focus:border-0"
+            className="border-0 bg-transparent px-0 py-2 focus:border-0"
           />
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-2xl bg-card shadow-card">
+      <div className="overflow-hidden rounded-card bg-card shadow-card">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-line bg-paper text-[11.5px] font-semibold uppercase tracking-[0.04em] text-mute">
-                <th className="px-5 py-3.5 font-semibold">Store · SO</th>
-                <th className="px-3 py-3.5 font-semibold">DC · LR</th>
-                <th className="px-3 py-3.5 font-semibold">Courier</th>
-                <th className="px-3 py-3.5 font-semibold">Status</th>
-                <th className="px-3 py-3.5 font-semibold">Dispatched</th>
-                <th className="px-3 py-3.5 font-semibold">Expected</th>
-                <th className="px-3 py-3.5 font-semibold">Attempts</th>
-                <th className="px-3 py-3.5 font-semibold">POD</th>
-                <th className="px-3 py-3.5" />
+            {/* Sticky: this table runs to hundreds of rows and the column
+                meaning used to scroll away on every surface except Reports. */}
+            <thead className="sticky top-[var(--bar-h)] z-10">
+              <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+                <th className="px-5 py-3 font-semibold">Store · SO</th>
+                <th className="px-3 py-3 font-semibold">DC · LR</th>
+                <th className="px-3 py-3 font-semibold">Courier</th>
+                <th className="px-3 py-3 font-semibold">Status</th>
+                <th className="px-3 py-3 font-semibold">Dispatched</th>
+                <th className="px-3 py-3 font-semibold">Expected</th>
+                <th className="px-3 py-3 text-center font-semibold">Attempts</th>
+                <th className="px-3 py-3 font-semibold">POD</th>
+                <th className="px-3 py-3">
+                  <span className="sr-only">Row actions</span>
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -165,73 +175,88 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 shown.map((r) => {
                   const v = r.shipment ? SHIPMENT_VISUAL[r.shipment] : OVERALL_VISUAL.PICKUP_PENDING;
                   return (
-                    <tr key={r.so} className="border-b border-line last:border-b-0 hover:bg-[#FCFBF7]">
+                    <tr key={r.so} className="border-b border-line last:border-b-0 hover:bg-paper">
                       <td
-                        className="rail px-5 py-3.5"
-                        style={{ "--rail": r.breaching ? "#BE5340" : v.rail } as React.CSSProperties}
+                        className="rail px-5 py-3"
+                        style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
                       >
-                        <Link href={`/orders/${r.so}`} className="text-[13px] font-semibold hover:text-sage">
+                        <Link href={`/orders/${r.so}`} className="text-ui font-semibold hover:text-sage">
                           {r.store}
                         </Link>
-                        <span className="mono block text-[11.5px] text-mute">
+                        <span className="mono block text-cap text-mute">
                           {r.so} · {r.zone}
                         </span>
                       </td>
-                      <td className="mono px-3 py-3.5 text-[12.5px]">
+                      <td className="mono px-3 py-3 text-dense">
                         <span className="block font-display font-semibold">{r.lr ?? "—"}</span>
-                        <span className="block text-[11px] text-mute">{r.dc ?? "—"}</span>
+                        <span className="block text-cap text-mute">{r.dc ?? "—"}</span>
                       </td>
-                      <td className="px-3 py-3.5 text-[12.5px]">
+                      <td className="px-3 py-3 text-dense">
                         {(r.courier ?? "—").replace("_", " ")}
                         {r.self ? (
-                          <span className="mt-0.5 block w-fit rounded-full bg-ofd-bg px-2 py-0.5 text-[10px] font-bold text-ofd">
+                          <span className="mt-0.5 block w-fit rounded-full bg-ofd-bg px-2 py-0.5 text-meta font-bold text-ofd">
                             manual lane
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-3 py-3.5">
+                      <td className="px-3 py-3">
                         <StatusPill visual={v} source={r.source} size="sm" />
                       </td>
-                      <td className="mono px-3 py-3.5 text-[12.5px] text-ink-soft">
+                      <td className="mono px-3 py-3 text-dense text-ink-soft">
                         {fmtDate(r.dispatched)}
                         {r.ageFrom ? (
-                          <span className="block text-[11px] text-mute">
+                          <span className="block text-cap text-mute">
                             {r.ageing}d {AGE_LABEL[r.ageFrom]}
                           </span>
                         ) : null}
                       </td>
-                      <td className={cn("mono px-3 py-3.5 text-[12.5px]", r.breaching && !r.delivered ? "font-semibold text-breach" : "text-ink-soft")}>
+                      <td className={cn("mono px-3 py-3 text-dense", r.breaching && !r.delivered ? "font-semibold text-breach" : "text-ink-soft")}>
                         {r.delivered ? `del. ${fmtDate(r.delivered)}` : fmtDate(r.expected)}
                       </td>
-                      <td className="mono px-3 py-3.5 text-center text-[12.5px]">
+                      <td className="mono px-3 py-3 text-center text-dense">
                         <span className={cn(r.attempts > 1 && "font-bold text-breach")}>{r.attempts}</span>
                       </td>
-                      <td className="px-3 py-3.5">
+                      <td className="px-3 py-3">
                         {r.pod ? (
-                          <a href={r.pod} target="_blank" rel="noreferrer" className="text-[12px] font-semibold text-sage hover:underline">
+                          <a
+                            href={r.pod}
+                            target="_blank"
+                            rel="noreferrer"
+                            aria-label={`Open proof of delivery for ${r.so} in a new tab`}
+                            className="text-dense font-semibold text-sage hover:underline"
+                          >
                             POD ↗
                           </a>
                         ) : (
-                          <span className="text-[12px] text-mute">—</span>
+                          <span className="text-dense text-mute">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-3.5">
-                        <div className="flex justify-end gap-1.5">
-                          <JourneyLink so={r.so} size={32} />
+                      <td className="px-3 py-3">
+                        <div className="flex justify-end gap-2">
+                          <JourneyLink so={r.so} />
                           {canEdit ? (
                             <>
                               <button
-                                title="Edit courier / LR / DC"
+                                type="button"
+                                aria-label={`Edit courier, LR and DC for ${r.so}`}
                                 onClick={() => openEdit(r)}
-                                className="grid h-8 w-8 place-items-center rounded-[9px] border border-line-strong bg-paper text-ink-soft transition-all hover:border-sage hover:bg-sage-soft hover:text-sage"
+                                className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
                               >
                                 <Icon name="pen-2-linear" size={15} />
                               </button>
                               {!r.delivered ? (
-                                <ShipmentDialog soNumber={r.so} current={r.shipment} self={r.self}>
+                                <ShipmentDialog
+                                  soNumber={r.so}
+                                  current={r.shipment}
+                                  self={r.self}
+                                  store={r.store}
+                                  lr={r.lr}
+                                  courier={r.courier}
+                                >
                                   <button
-                                    title="Update shipment status"
-                                    className="grid h-8 w-8 place-items-center rounded-[9px] border border-line-strong bg-paper text-ink-soft transition-all hover:border-sage hover:bg-sage-soft hover:text-sage"
+                                    type="button"
+                                    aria-label={`Update shipment status for ${r.so}`}
+                                    className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
                                   >
                                     <Icon name="delivery-bold-duotone" size={15} />
                                   </button>
@@ -250,18 +275,28 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         </div>
       </div>
 
-      <div className="px-1 pb-8 pt-4 text-[12.5px] text-mute">
+      <p aria-live="polite" className="px-1 pb-8 pt-4 text-dense text-mute">
         Showing <b className="font-semibold text-ink-soft">{shown.length}</b> of{" "}
         <b className="font-semibold text-ink-soft">{rows.length}</b> dispatched orders
-      </div>
+      </p>
 
       <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
         {editing ? (
           <DialogContent
             title={`Dispatch details · ${editing.so}`}
-            description="Manual edits are logged with your name — synced values keep flowing underneath."
+            // Was "synced values keep flowing underneath", which states the
+            // opposite of the actual precedence rule (manual > poller > spine).
+            // A user who believed the old copy would expect their correction to
+            // be quietly overwritten on the next sync, and might not make it.
+            description="Manual edits are logged with your name and win over the sync — a synced value will not overwrite what you enter here."
           >
-            <div className="grid grid-cols-2 gap-3">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                saveEdit();
+              }}
+            >
+              <div className="grid grid-cols-2 gap-3">
               <Field label="DC number">
                 <Input value={form.dcNumber} onChange={(e) => setForm((f) => ({ ...f, dcNumber: e.target.value }))} />
               </Field>
@@ -290,20 +325,21 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
               <Field label="Expected date">
                 <Input type="date" value={form.expectedDate} onChange={(e) => setForm((f) => ({ ...f, expectedDate: e.target.value }))} />
               </Field>
-              <div className="col-span-2">
-                <Field label="POD link">
-                  <Input value={form.podLink} onChange={(e) => setForm((f) => ({ ...f, podLink: e.target.value }))} placeholder="https://…" />
-                </Field>
+                <div className="col-span-2">
+                  <Field label="POD link">
+                    <Input value={form.podLink} onChange={(e) => setForm((f) => ({ ...f, podLink: e.target.value }))} placeholder="https://…" />
+                  </Field>
+                </div>
               </div>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setEditing(null)}>
-                Cancel
-              </Button>
-              <Button onClick={saveEdit} disabled={pending}>
-                {pending ? "Saving…" : "Save changes"}
-              </Button>
-            </div>
+              <div className="mt-4 flex justify-end gap-2">
+                <Button variant="ghost" onClick={() => setEditing(null)}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={pending}>
+                  {pending ? "Saving…" : "Save changes"}
+                </Button>
+              </div>
+            </form>
           </DialogContent>
         ) : null}
       </Dialog>

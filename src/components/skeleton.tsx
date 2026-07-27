@@ -29,13 +29,34 @@ export function PageHeadSkeleton() {
   );
 }
 
+/** The In-Transit board's four-figure summary strip. Without this the skeleton
+ *  went straight from the heading to the table and the real content pushed the
+ *  board down as it landed — the exact shift these placeholders exist to avoid. */
+export function StatStripSkeleton({ items = 4 }: { items?: number }) {
+  return (
+    <div
+      role="status"
+      aria-label="Loading summary"
+      className="mb-5 grid grid-cols-2 gap-x-5 gap-y-4 rounded-card bg-card px-5 py-4 shadow-card sm:grid-cols-4 sm:gap-x-0 sm:divide-x sm:divide-line"
+    >
+      {Array.from({ length: items }).map((_, i) => (
+        <div key={i} className="sm:px-5 sm:first:pl-0 sm:last:pr-0">
+          <Skeleton className="h-3 w-[92px]" />
+          <Skeleton className="mt-2 h-6 w-[46px]" />
+          <Skeleton className="mt-2 h-3 w-[76px]" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** The warehouse board: fixed-width lanes with a few cards each. */
 export function BoardSkeleton({ lanes = 7, cards = 3 }: { lanes?: number; cards?: number }) {
   return (
     <div
       role="status"
       aria-label="Loading board"
-      className="mb-4 flex flex-col gap-2.5 overflow-hidden lg:h-[calc(100dvh-238px)] lg:flex-row lg:gap-3"
+      className="mb-4 flex flex-col gap-2.5 overflow-hidden lg:h-[calc(100dvh-var(--chrome-h))] lg:flex-row lg:gap-3"
     >
       {Array.from({ length: lanes }).map((_, i) => (
         <section key={i} className="flex flex-col lg:h-full lg:w-[264px] lg:min-w-[264px] lg:flex-none">
@@ -63,7 +84,7 @@ export function BoardSkeleton({ lanes = 7, cards = 3 }: { lanes?: number; cards?
 /** Generic table screen (in-transit, logistics, rulebook, reports). */
 export function TableSkeleton({ rows = 8 }: { rows?: number }) {
   return (
-    <div role="status" aria-label="Loading" className="overflow-hidden rounded-2xl bg-card shadow-card">
+    <div role="status" aria-label="Loading" className="overflow-hidden rounded-card bg-card shadow-card">
       <div className="flex items-center gap-3 border-b border-line bg-paper px-5 py-3.5">
         <Skeleton className="h-3.5 w-[140px]" />
         <Skeleton className="ml-auto h-3.5 w-[90px]" />

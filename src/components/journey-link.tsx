@@ -10,20 +10,16 @@ import { cn } from "@/lib/ui";
 export function JourneyLink({
   so,
   variant = "icon",
-  size = 34,
   className,
 }: {
   so: string;
   variant?: "icon" | "text";
-  /** Icon-variant button edge in px (34 matches the boards' action buttons). */
-  size?: number;
   className?: string;
 }) {
   if (variant === "text") {
     return (
       <Link
         href={`/orders/${encodeURIComponent(so)}`}
-        title="View journey"
         className={cn("font-semibold text-ink transition-colors hover:text-sage", className)}
       >
         {so}
@@ -33,15 +29,17 @@ export function JourneyLink({
   return (
     <Link
       href={`/orders/${encodeURIComponent(so)}`}
-      title="View journey"
       aria-label={`View journey for ${so}`}
-      style={{ height: size, width: size }}
+      // Fixed 40px, matching every other row action. The `size` prop existed so
+      // the logistics table could render these at 32px, which put three separate
+      // tap targets under the touch floor and made the same control two different
+      // sizes on two boards.
       className={cn(
-        "grid place-items-center rounded-[10px] border border-line-strong bg-paper text-ink-soft transition-all hover:-translate-y-px hover:border-sage hover:bg-sage-soft hover:text-sage",
+        "grid h-10 w-10 shrink-0 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage",
         className,
       )}
     >
-      <Icon name="map-arrow-square-linear" size={size >= 34 ? 17 : 15} />
+      <Icon name="map-arrow-square-linear" size={17} />
     </Link>
   );
 }

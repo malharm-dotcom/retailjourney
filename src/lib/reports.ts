@@ -5,6 +5,27 @@ import type { OrderRow } from "./data";
 import { daysBetween, istToday, weekdayOf } from "./ist";
 import { LEG_LABEL, SLA_LABEL, ageingBucket, type SlaLeg, type SlaState } from "./sla";
 import { OVERALL_LABEL, STATUS_LABEL } from "./journey";
+import type { AnchorSource } from "./transit-anchor";
+
+/**
+ * Age/throughput reports measure from `OrderRow.anchor`, not `dispatchedDate`.
+ * The spine carries no dispatch column, so dispatchedDate is null on every
+ * spine-sourced order — these reports were returning zeroed ages (ageing),
+ * "—" (courier TAT) or nothing at all (WH throughput). The anchor resolves
+ * dispatch → WH manifest → earliest child pickup, order-level, identical to
+ * the boards.
+ *
+ * Every such report NAMES its anchor in the output: a manifest-anchored age is
+ * never presented as time since dispatch. Wording matches the logistics
+ * table's age sub-line. (Duplicated rather than shared because that map lives
+ * in a "use client" component and this module is pure/server-side.)
+ */
+const ANCHOR_LABEL: Record<AnchorSource, string> = {
+  DISPATCHED: "dispatch",
+  MANIFESTED: "manifest",
+  PICKED_UP: "pickup",
+  TRACKING_PICK: "pickup",
+};
 
 export interface ReportDef {
   slug: string;
@@ -36,13 +57,15 @@ export const REPORTS: ReportDef[] = [
   {
     slug: "ageing",
     title: "Live in-transit ageing",
-    description: "Open shipments bucketed by days on the road; breaching-soon first.",
+    description:
+      "Open shipments bucketed by days out, anchored on dispatch where known, else the WH manifest.",
     icon: "hourglass-bold-duotone",
   },
   {
     slug: "courier-scorecard",
     title: "Courier scorecard",
-    description: "On-time %, transit TAT, attempts and NDRs per logistics partner.",
+    description:
+      "On-time %, days to deliver from the WH-out anchor, attempts and NDRs per logistics partner.",
     icon: "delivery-bold-duotone",
   },
   {
@@ -54,7 +77,8 @@ export const REPORTS: ReportDef[] = [
   {
     slug: "wh-throughput",
     title: "WH throughput",
-    description: "Orders, pieces and boxes dispatched per facility per day.",
+    description:
+      "Orders, pieces and boxes leaving each facility per day (dispatch date, else the WH manifest).",
     icon: "box-bold-duotone",
   },
   {
@@ -129,22 +153,27 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
     case "ageing": {
       const open = rows.filter((r) => ["PICKUP_PENDING", "IN_TRANSIT"].includes(r.order.overallStatus));
       return {
-        columns: ["SO", "Store", "Courier", "LR", "Dispatched", "Days out", "Bucket", "Breaching"],
+        columns: ["SO", "Store", "Courier", "LR", "Anchored on", "Anchor", "Days out", "Bucket", "Breaching"],
         linkCol: 0,
         rows: open
-          .map((r) => {
-            const days = r.order.dispatchedDate ? daysBetween(r.order.dispatchedDate, today) : 0;
-            return { r, days };
-          })
-          .sort((a, b) => b.days - a.days)
+          .map((r) => ({
+            r,
+            // undefined, not 0 — an order with no anchor at all is a data gap,
+            // not a shipment that left today.
+            days: r.anchor.date ? Math.max(0, daysBetween(r.anchor.date, today)) : undefined,
+          }))
+          // Oldest first; anchorless rows sort to the bottom rather than
+          // masquerading as freshly-dispatched.
+          .sort((a, b) => (b.days ?? -1) - (a.days ?? -1))
           .map(({ r, days }) => [
             r.order.soNumber,
             r.order.storeNameFormat,
             r.order.logisticsPartner ?? "—",
             r.order.lrNumber ?? "—",
-            r.order.dispatchedDate ?? "—",
-            days,
-            ageingBucket(days),
+            r.anchor.date ?? "—",
+            r.anchor.source ? ANCHOR_LABEL[r.anchor.source] : "—",
+            days ?? "—",
+            days === undefined ? "—" : ageingBucket(days),
             r.breaching ? "YES" : "—",
           ]),
       };
@@ -159,7 +188,10 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
         partners.set(r.order.logisticsPartner, list);
       }
       return {
-        columns: ["Partner", "Shipments", "Delivered", "On-time %", "Avg transit days", "NDR shipments", "Open"],
+        // "Avg days to deliver" rather than "Avg transit days": for a
+        // manifest-anchored order this spans the WH→pickup dwell as well as
+        // the road time, so calling it transit would overstate the courier.
+        columns: ["Partner", "Shipments", "Delivered", "On-time %", "Avg days to deliver", "NDR shipments", "Open"],
         rows: [...partners.entries()]
           .sort((a, b) => b[1].length - a[1].length)
           .map(([partner, list]) => {
@@ -168,8 +200,8 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
               (r) => r.sla.legs.find((l) => l.leg === "LOGISTICS_DELIVERY")?.state === "WITHIN_SLA",
             );
             const tats = delivered
-              .filter((r) => r.order.dispatchedDate)
-              .map((r) => daysBetween(r.order.dispatchedDate!, r.order.deliveredDate!));
+              .filter((r) => r.anchor.date)
+              .map((r) => Math.max(0, daysBetween(r.anchor.date!, r.order.deliveredDate!)));
             return [
               partner,
               list.length,
@@ -204,9 +236,12 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
     case "wh-throughput": {
       const days = new Map<string, { orders: number; qty: number; boxes: number }>();
       for (const r of rows) {
-        if (!r.order.dispatchedDate) continue;
-        if (daysBetween(r.order.dispatchedDate, today) > 14) continue;
-        const key = `${r.order.dispatchedDate} · ${r.order.facility}`;
+        // Orders with no anchor at all stay excluded — there is no day to
+        // attribute their throughput to. (Live spine: zero such orders.)
+        const anchor = r.anchor.date;
+        if (!anchor) continue;
+        if (daysBetween(anchor, today) > 14) continue;
+        const key = `${anchor} · ${r.order.facility}`;
         const e = days.get(key) ?? { orders: 0, qty: 0, boxes: 0 };
         e.orders += 1;
         e.qty += r.order.fulfilledQty ?? r.order.qty;
@@ -214,7 +249,9 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
         days.set(key, e);
       }
       return {
-        columns: ["Dispatch day · facility", "Orders", "Pieces", "Boxes"],
+        // "WH-out day": the day the order left the warehouse — its dispatch
+        // date when known, else its manifest day. Not necessarily a dispatch.
+        columns: ["WH-out day · facility", "Orders", "Pieces", "Boxes"],
         rows: [...days.entries()]
           .sort((a, b) => (a[0] < b[0] ? 1 : -1))
           .map(([k, e]) => [k, e.orders, e.qty, e.boxes]),

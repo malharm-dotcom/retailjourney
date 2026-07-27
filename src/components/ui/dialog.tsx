@@ -29,16 +29,16 @@ export function DialogContent({
           keeps the node mounted for the data-[state=closed] exit animation. */}
       <DialogPrimitive.Content
         className={cn(
-          "fixed inset-0 z-50 m-auto h-fit max-h-[85dvh] w-[min(94vw,480px)] overflow-y-auto rounded-2xl bg-card p-6 shadow-pop outline-none data-[state=open]:animate-dialogIn data-[state=closed]:animate-[dialogIn_.15s_ease-in_reverse]",
+          "fixed inset-0 z-50 m-auto h-fit max-h-[85dvh] w-[min(94vw,480px)] overflow-y-auto rounded-card bg-card p-6 shadow-pop outline-none data-[state=open]:animate-dialogIn data-[state=closed]:animate-[dialogIn_.15s_ease-in_reverse]",
           className,
         )}
         {...props}
       >
-        <DialogPrimitive.Title className="font-display text-lg font-bold tracking-tight">
+        <DialogPrimitive.Title className="font-display text-title font-bold tracking-tight">
           {title}
         </DialogPrimitive.Title>
         {description ? (
-          <DialogPrimitive.Description className="mt-1 text-[13px] text-mute">
+          <DialogPrimitive.Description className="mt-1 text-ui leading-relaxed text-mute">
             {description}
           </DialogPrimitive.Description>
         ) : null}

@@ -11,25 +11,28 @@ import { Sidebar } from "./sidebar";
 export function AppShell({
   controls,
   syncStrip,
+  isAdmin = false,
   children,
 }: {
   controls: React.ReactNode;
   syncStrip: React.ReactNode;
+  isAdmin?: boolean;
   children: React.ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="min-h-dvh lg:flex">
-      <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} isAdmin={isAdmin} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 border-b border-line bg-ground/80 backdrop-blur-md backdrop-saturate-150">
           <div className="flex h-[60px] items-center gap-3 px-5 sm:px-7">
             <button
+              type="button"
               onClick={() => setDrawerOpen(true)}
               aria-label="Open menu"
-              className="grid h-9 w-9 place-items-center rounded-[10px] text-ink-soft hover:bg-line/60 lg:hidden"
+              className="grid h-10 w-10 place-items-center rounded-control text-ink-soft hover:bg-line/60 lg:hidden"
             >
               <Icon name="hamburger-menu-linear" size={20} />
             </button>
@@ -43,7 +46,7 @@ export function AppShell({
           <div className="flex justify-end border-t border-line/60 px-5 py-[3px] sm:px-7">{syncStrip}</div>
         </header>
 
-        <main className="mx-auto w-full max-w-[1360px] px-5 pb-12 sm:px-7">{children}</main>
+        <main className="mx-auto w-full max-w-shell px-5 pb-12 sm:px-7">{children}</main>
       </div>
     </div>
   );

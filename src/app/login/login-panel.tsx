@@ -35,16 +35,20 @@ export function LoginPanel({ google }: { google: boolean }) {
   };
 
   return (
-    <div className="rounded-2xl bg-card p-6 shadow-card">
+    <div className="rounded-card bg-card p-6 shadow-card">
       {google ? (
         <>
+          {/* Secondary. The email + password form below it is the provisioned path
+              (there is no self-signup — accounts come from the seed script), so the
+              ink primary belongs to that submit, not to this. */}
           <button
+            type="button"
             onClick={() => signIn("google", { callbackUrl })}
-            className="flex w-full items-center justify-center gap-2 rounded-[10px] bg-ink py-3 text-[13.5px] font-semibold text-paper transition-colors hover:bg-ink/85"
+            className="flex w-full items-center justify-center gap-2 rounded-control border border-line-control bg-paper py-3 text-ui font-semibold text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
           >
             Continue with Google — @snitch.com
           </button>
-          <div className="my-5 flex items-center gap-3 text-[11px] uppercase tracking-[0.06em] text-mute">
+          <div className="my-5 flex items-center gap-3 text-cap uppercase tracking-[0.06em] text-mute">
             <span className="h-px flex-1 bg-line" />
             or
             <span className="h-px flex-1 bg-line" />
@@ -54,7 +58,7 @@ export function LoginPanel({ google }: { google: boolean }) {
 
       <form onSubmit={submit} className="grid gap-3.5">
         <label className="grid gap-1.5">
-          <span className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-mute">Email</span>
+          <span className="text-cap font-semibold uppercase tracking-[0.06em] text-mute">Email</span>
           <input
             type="email"
             required
@@ -62,24 +66,24 @@ export function LoginPanel({ google }: { google: boolean }) {
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-[13.5px] text-ink outline-none transition-colors focus:border-sage"
+            className="rounded-control border border-line bg-paper px-3.5 py-2.5 text-ui text-ink outline-none transition-colors focus:border-sage"
             placeholder="you@snitch.com"
           />
         </label>
         <label className="grid gap-1.5">
-          <span className="text-[11.5px] font-semibold uppercase tracking-[0.06em] text-mute">Password</span>
+          <span className="text-cap font-semibold uppercase tracking-[0.06em] text-mute">Password</span>
           <input
             type="password"
             required
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-[10px] border border-line bg-paper px-3.5 py-2.5 text-[13.5px] text-ink outline-none transition-colors focus:border-sage"
+            className="rounded-control border border-line bg-paper px-3.5 py-2.5 text-ui text-ink outline-none transition-colors focus:border-sage"
           />
         </label>
 
         {error ? (
-          <p role="alert" className="rounded-[10px] bg-breach-bg px-3.5 py-2.5 text-[12.5px] font-semibold text-breach">
+          <p role="alert" className="rounded-control bg-breach-bg px-3.5 py-2.5 text-dense font-semibold text-breach">
             {error}
           </p>
         ) : null}
@@ -88,7 +92,10 @@ export function LoginPanel({ google }: { google: boolean }) {
           type="submit"
           disabled={busy}
           className={cn(
-            "mt-1 rounded-[10px] bg-sage py-3 text-[13.5px] font-semibold text-white transition-colors hover:bg-sage/90",
+            // Was `bg-sage`, which put a second primary in a 420px panel beside the
+            // ink "Continue with Google" and contradicted `variant="primary"`
+            // (bg-ink) everywhere else in the product. One primary per decision.
+            "mt-1 rounded-control bg-ink py-3 text-ui font-semibold text-paper transition-colors hover:bg-ink/85",
             busy && "opacity-60",
           )}
         >

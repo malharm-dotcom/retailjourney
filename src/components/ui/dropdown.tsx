@@ -23,7 +23,7 @@ export function DropdownContent({
         sideOffset={8}
         collisionPadding={12}
         className={cn(
-          "z-50 min-w-[220px] rounded-xl border border-line bg-card p-1.5 shadow-pop data-[state=open]:animate-rise",
+          "z-50 min-w-[220px] rounded-control bg-card p-1.5 shadow-pop data-[state=open]:animate-rise",
           className,
         )}
         {...props}
@@ -34,12 +34,20 @@ export function DropdownContent({
 
 export function DropdownItem({
   className,
+  destructive,
   ...props
-}: React.ComponentPropsWithoutRef<typeof DropdownPrimitive.Item>) {
+}: React.ComponentPropsWithoutRef<typeof DropdownPrimitive.Item> & {
+  /** Ends or destroys something. Reads red at rest, not only on hover, so it is
+   *  distinguishable before the pointer arrives — and by shape as much as hue. */
+  destructive?: boolean;
+}) {
   return (
     <DropdownPrimitive.Item
       className={cn(
-        "flex cursor-pointer select-none items-center gap-2.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-soft outline-none data-[highlighted]:bg-sage-soft data-[highlighted]:text-sage",
+        "flex min-h-[38px] cursor-pointer select-none items-center gap-2.5 rounded-control px-3 py-2 text-ui font-medium outline-none",
+        destructive
+          ? "text-breach data-[highlighted]:bg-breach-bg data-[highlighted]:text-breach"
+          : "text-ink-soft data-[highlighted]:bg-sage-soft data-[highlighted]:text-sage",
         className,
       )}
       {...props}

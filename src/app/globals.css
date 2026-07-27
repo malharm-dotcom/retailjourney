@@ -3,28 +3,39 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    /* Height of the fixed app chrome above a full-height board: the 60px top
+     * bar, the sync strip, and the PageHead block. The kanban and its loading
+     * skeleton both size themselves to the remaining viewport, and they used to
+     * hardcode `calc(100dvh-238px)` independently — so any change to the bar or
+     * the heading silently desynchronised the board from its own skeleton.
+     * One value, two consumers. */
+    --chrome-h: 238px;
+
+    /* Height of the sticky top bar: the 60px control row plus the sync strip
+     * beneath it. Sticky table headers offset by this so a column label parks
+     * directly under the bar instead of scrolling behind it. Derived by hand from
+     * app-shell.tsx — if the bar's height changes, change it here and both the
+     * board headers and the rulebook legend follow. */
+    --bar-h: 82px;
+  }
   html {
     @apply antialiased;
   }
   body {
-    @apply bg-ground text-ink font-sans text-sm leading-normal;
+    @apply bg-ground text-ink font-sans text-ui leading-normal;
   }
   ::selection {
     @apply bg-sage text-white;
   }
   :focus-visible {
-    outline: 2px solid #3e5d4c;
+    outline: 2px solid theme("colors.sage.DEFAULT");
     outline-offset: 2px;
     border-radius: 4px;
   }
 }
 
 @layer components {
-  /* Page container — the prototype's .wrap */
-  .wrap {
-    @apply mx-auto w-full max-w-wrap px-5 sm:px-8;
-  }
-
   /* Tabular numerals for anything data-shaped */
   .mono {
     font-variant-numeric: tabular-nums;
@@ -37,7 +48,7 @@
   .rail::before {
     content: "";
     @apply absolute bottom-3 left-0 top-3 w-1 rounded-r;
-    background: var(--rail, #9a9080);
+    background: var(--rail, theme("colors.pending.DEFAULT"));
   }
 }
 
@@ -54,9 +65,17 @@
     scroll-behavior: auto !important;
   }
   .animate-rise,
-  .animate-pulse2,
   .animate-slideIn,
-  .animate-cardLand {
+  .animate-cardLand,
+  .animate-cardLeave {
+    animation: none !important;
+  }
+  /* The baton draw and the stage pop are scale/scaleX, so they go. Their
+   * elements are authored to sit at their FINISHED state by default and the
+   * animation only plays the transition into it — dropping the animation
+   * therefore leaves a fully-drawn track, never a collapsed one. */
+  .animate-batonDraw,
+  .animate-stageIn {
     animation: none !important;
   }
   /* Opacity-only variants stay useful; transform-based motion is dropped. */
@@ -64,5 +83,12 @@
   .animate-fade,
   .animate-overlayIn {
     animation: fade 0.01ms both !important;
+  }
+  /* `arrive` survives deliberately. It is a background wash with no transform,
+   * and it is the only signal that a value changed under the user without their
+   * input — removing it would remove information, not discomfort. It is slowed
+   * rather than dropped so it stays perceptible without flashing. */
+  .animate-arrive {
+    animation-duration: 2s !important;
   }
 }

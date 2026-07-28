@@ -111,24 +111,40 @@ export function buildAuthOptions(): NextAuthOptions {
     secret: sessionSecret(),
     pages: { signIn: "/login" },
     callbacks: {
-      async signIn({ user, account }) {
+      async signIn({ user, account, profile }) {
         if (account?.provider === "google") {
-          // hd param is advisory — enforce the domain server-side (PRD §8c).
-          const email = user.email ?? "";
-          if (!email.endsWith("@snitch.com")) return false;
+          // hd param is advisory — enforce the domain server-side (PRD §8c),
+          // and on the claim Google actually verified, not on whatever the
+          // account happens to carry.
+          const email = (profile?.email ?? user.email ?? "").trim().toLowerCase();
+          // An unverified address is an unowned one. Without this gate the
+          // suffix check below proves nothing: a directory can hold an
+          // @snitch.com address whose mailbox was never confirmed.
+          const verified = (profile as { email_verified?: boolean } | undefined)?.email_verified === true;
+          if (!verified || !email.endsWith("@snitch.com")) {
+            console.warn(`[auth] google sign-in denied — domain/verification: ${email || "<no email>"}`);
+            return false;
+          }
           // New @snitch.com logins need an Admin-activated user record.
           const known = await findUserByEmail(email);
-          return Boolean(known?.active);
+          if (!known?.active) {
+            console.warn(`[auth] google sign-in denied — not an active user: ${email}`);
+            return false;
+          }
+          return true;
         }
         return true;
       },
       async jwt({ token, user }) {
         if (user?.id) token.uid = user.id;
-        const u = token.uid
-          ? await findUserById(token.uid)
-          : token.email
-            ? await findUserByEmail(token.email)
-            : undefined;
+        // The credentials provider returns our own row id, so the id lookup
+        // hits. Google returns *its* `sub` — an id no User row will ever
+        // carry — so fall through to the email that signIn just verified,
+        // then overwrite token.uid below with the real one.
+        const email = user?.email ?? token.email;
+        const u =
+          (token.uid ? await findUserById(token.uid) : undefined) ??
+          (email ? await findUserByEmail(email) : undefined);
         if (u) {
           token.uid = u.id;
           token.role = u.role;

@@ -24,13 +24,16 @@ export async function scopedOrders(scope: FacilityScope, user: User): Promise<Or
   const anchorShipments = await repo.listAnchorShipments(orders.map((o) => o.soNumber));
   return orders.map((order) => {
     const rule = ruleFor(rules, order.storeId, order.type, order.orderDate);
-    const sla = computeOrderSla(order, rule);
+    // The children feed both the transit anchor and the SLA engine's HANDOVER
+    // leg — same pickup, so the age and the verdict cannot disagree.
+    const children = anchorShipments.get(order.soNumber);
+    const sla = computeOrderSla(order, rule, undefined, children);
     return {
       order,
       rule,
       sla,
       breaching: isBreaching(sla),
-      anchor: transitAnchor(order, anchorShipments.get(order.soNumber)),
+      anchor: transitAnchor(order, children),
     };
   });
 }
@@ -39,8 +42,8 @@ export async function orderBySo(soNumber: string): Promise<OrderRow | undefined>
   const order = await repo.getOrder(soNumber);
   if (!order) return undefined;
   const rule = ruleFor(await repo.listRules(), order.storeId, order.type, order.orderDate);
-  const sla = computeOrderSla(order, rule);
   const shipments = await repo.listShipments(soNumber);
+  const sla = computeOrderSla(order, rule, undefined, shipments);
   return {
     order,
     rule,

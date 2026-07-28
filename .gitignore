@@ -38,3 +38,8 @@ next-env.d.ts
 /src/generated/prisma
 
 snowflake.log
+
+# agent skills (installed locally, not part of the app)
+.agents/
+.impeccable/
+skills-lock.json

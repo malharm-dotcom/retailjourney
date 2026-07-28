@@ -56,6 +56,24 @@ function earliest(values: (string | undefined)[]): string | undefined {
 }
 
 /**
+ * The moment the order physically left the warehouse in a courier's hands:
+ * the EARLIEST child pickup, taking each child's eShipz scan (`pickedUpTs`)
+ * over the spine's own pick date (`trackingPickTs`).
+ *
+ * One definition of "handed over" app-wide — the SLA engine's HANDOVER leg
+ * keys off this, so the board's age and the board's verdict cannot disagree
+ * about when the baton changed hands. `undefined` means no child has been
+ * picked up yet, which is a real pending handover, not an on-time one.
+ *
+ * Earliest, not latest: the order left when its first box did, and a later
+ * AWB must not be able to move the handover backwards or forwards. Only 16
+ * live orders are multi-AWB and the two readings disagree on 11 of them.
+ */
+export function earliestPickup(shipments: AnchorShipment[] = []): string | undefined {
+  return earliest(shipments.map((s) => s.pickedUpTs ?? s.trackingPickTs));
+}
+
+/**
  * Resolve the date transit age should be measured from. Returns an empty
  * anchor when every link is missing — callers keep their existing behaviour
  * in that case, and the order is a genuine spine-side data gap.

@@ -3,6 +3,7 @@
 // this module only *colours* — it never gates a transition.
 
 import { addDays, atIstCutoff, daysBetween, istToday, nowIso, weekdayOf } from "./ist";
+import { earliestPickup, type AnchorShipment } from "./transit-anchor";
 import type { Order, RulebookEntry, Weekday } from "./types";
 import { WEEKDAYS } from "./types";
 
@@ -130,8 +131,20 @@ export function deriveTargets(orderDate: string, rule?: RulebookEntry): DerivedT
   return { orderCutoffTs, handoverDeadlineTs, pickupTargetTs, idealDeliveryDate };
 }
 
-/** Compute every leg's SLA for one order. */
-export function computeOrderSla(order: Order, rule?: RulebookEntry, now: string = nowIso()): OrderSla {
+/**
+ * Compute every leg's SLA for one order.
+ *
+ * `shipments` carries the order's AWB children — the HANDOVER leg's actual is
+ * a courier pickup, which lives at child grain. Callers that omit it get a
+ * handover leg with no actual (BREACHED_PENDING once the deadline passes),
+ * which is the honest reading for an order with no children.
+ */
+export function computeOrderSla(
+  order: Order,
+  rule?: RulebookEntry,
+  now: string = nowIso(),
+  shipments: AnchorShipment[] = [],
+): OrderSla {
   // Snowflake-persisted deadlines are the sole authority when present (the
   // rulebook values are baked into each distribution_analytics row); the
   // rulebook derivation is the fallback for orders that predate that sync.
@@ -146,8 +159,14 @@ export function computeOrderSla(order: Order, rule?: RulebookEntry, now: string 
   const expectedTs = order.expectedDate ? atIstCutoff(order.expectedDate) : undefined;
   const deliveredTs =
     order.deliveredTs ?? (order.deliveredDate ? atIstCutoff(order.deliveredDate, "6PM") : undefined);
-  const handoverActual =
-    order.dispatchedTs ?? (order.dispatchedDate ? atIstCutoff(order.dispatchedDate, "6PM") : undefined);
+  // Handover = the physical courier pickup, not a warehouse event. The spine
+  // carries no dispatch column, so dispatchedTs/dispatchedDate are null on
+  // every live order and this leg used to have no actual at all — it read
+  // BREACHED_PENDING on 93% of the book. Anchoring on the earliest child
+  // pickup is what sync.ts has effectively been persisting, minus the
+  // manifest's generosity: a manifested-but-uncollected order stays pending
+  // rather than being credited as handed over.
+  const handoverActual = order.dispatchedTs ?? earliestPickup(shipments);
 
   const legs: LegSla[] = [
     {

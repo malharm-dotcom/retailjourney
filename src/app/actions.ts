@@ -11,6 +11,7 @@ import { runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSource, type Syn
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { FACILITY_COOKIE, currentUser } from "@/lib/session";
+import { assertUserAccessPatch, type UserAccessPatch } from "@/lib/user-admin";
 import type { Order, OrderStatus, ShipmentStatus } from "@/lib/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
@@ -150,6 +151,43 @@ export async function mapChannelToStore(channel: string, storeId: string): Promi
       db.unmatchedChannel.deleteMany({ where: { channel } }),
     ]);
     revalidatePath("/admin");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Admin: set another account's role, facility entitlements and active flag.
+ *  Grants and revokes both land here — see lib/user-admin.ts for the lockout
+ *  rules, which are enforced server-side because this action is callable
+ *  without ever rendering the screen that would have warned about them. */
+export async function updateUserAccess(userId: string, patch: UserAccessPatch): Promise<ActionResult> {
+  try {
+    const actor = await currentUser();
+    if (policyOf(actor.role).isAdmin !== true) throw new Error("Admin only");
+    if (!databaseConfigured()) throw new Error("User management requires the database");
+
+    const all = await repo.listUsers();
+    const target = all.find((u) => u.id === userId);
+    if (!target) throw new Error("User not found");
+    assertUserAccessPatch({ actor, target, patch, all });
+
+    await prisma().user.update({
+      where: { id: userId },
+      data: {
+        role: patch.role,
+        facilities: patch.facilities,
+        allView: patch.allView,
+        // "" from an emptied text input means "no AM scope", not a user whose
+        // scope is the empty string — that would match no store and read as a
+        // silent lockout on every board.
+        areaManager: patch.areaManager?.trim() || null,
+        active: patch.active,
+      },
+    });
+    // The sidebar, facility switcher and every board read off the session's
+    // role, so a revoke has to invalidate the whole layout, not just /admin.
+    revalidatePath("/", "layout");
     return { ok: true };
   } catch (e) {
     return fail(e);

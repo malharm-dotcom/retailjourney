@@ -14,12 +14,21 @@ import { fmtDateTime } from "@/lib/ist";
 import { ROLE_POLICY } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
-import { FACILITY_SHORT } from "@/lib/facilities";
 import { cn } from "@/lib/ui";
 import { SyncHealthCards, UnmatchedChannels, type SourceCard, type SyncRunView } from "./sync-panel";
+import { UsersPanel, type RoleOption } from "./users-panel";
+import type { Role } from "@/lib/types";
 
 export const metadata = { title: "Admin" };
 export const dynamic = "force-dynamic";
+
+/** Derived from ROLE_POLICY rather than listed here, so a role added to the
+ *  policy map is offered on this screen without a second edit. */
+const roleOptions: RoleOption[] = (Object.keys(ROLE_POLICY) as Role[]).map((r) => ({
+  value: r,
+  label: ROLE_POLICY[r].label,
+  readOnly: ROLE_POLICY[r].readOnly,
+}));
 
 function toRunView(r?: {
   startedAt: Date;
@@ -121,59 +130,21 @@ export default async function AdminPage() {
         </div>
       </div>
 
-      <section className="mb-6 overflow-hidden rounded-card bg-card shadow-card">
-        <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
-          <Icon name="users-group-two-rounded-bold-duotone" size={17} className="text-sage" />
-          <h2 className="text-ui font-bold">Users & entitlements</h2>
-          {/* Was "new @snitch.com sign-ins appear here pending activation" above a
-              table with no activate control and no edit affordance on role,
-              facilities or AM scope — a promise the screen cannot keep. Accounts
-              are created by `scripts/seed-admin.mts`, so this says so. */}
-          <span className="ml-auto text-cap text-mute">
-            read-only · accounts are provisioned with <span className="mono">scripts/seed-admin.mts</span>
-          </span>
-        </header>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] border-collapse text-left">
-            <thead>
-              <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
-                <th className="px-5 py-3 font-semibold">User</th>
-                <th className="px-4 py-3 font-semibold">Role</th>
-                <th className="px-4 py-3 font-semibold">Facilities</th>
-                <th className="px-4 py-3 font-semibold">All view</th>
-                <th className="px-4 py-3 font-semibold">AM scope</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-line text-dense last:border-b-0 hover:bg-paper">
-                  <td className="px-5 py-3">
-                    <span className="block font-semibold">{u.name}</span>
-                    <span className="mono block text-cap text-mute">{u.email}</span>
-                  </td>
-                  <td className="px-4 py-3 text-ink-soft">{ROLE_POLICY[u.role].label}</td>
-                  <td className="px-4 py-3 text-ink-soft">
-                    {u.facilities.length ? u.facilities.map((f) => FACILITY_SHORT[f]).join(" · ") : "All facilities"}
-                  </td>
-                  <td className="px-4 py-3">{u.allView ? "✓" : "—"}</td>
-                  <td className="px-4 py-3 text-ink-soft">{u.areaManager ?? "—"}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={cn(
-                        "rounded-full px-2.5 py-1 text-meta font-bold",
-                        u.active ? "bg-deliv-bg text-deliv" : "bg-pending-bg text-ink-soft",
-                      )}
-                    >
-                      {u.active ? "active" : "pending"}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
+      <UsersPanel
+        users={users.map((u) => ({
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          facilities: u.facilities,
+          allView: u.allView,
+          areaManager: u.areaManager,
+          active: u.active,
+        }))}
+        roles={roleOptions}
+        actorId={user.id}
+        dbReady={dbReady}
+      />
 
       <section className="overflow-hidden rounded-card bg-card shadow-card">
         <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">

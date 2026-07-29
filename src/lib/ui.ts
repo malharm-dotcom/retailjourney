@@ -52,45 +52,47 @@ interface ToneStyle {
 
 export const TONE: Record<Tone, ToneStyle> = {
   pending: {
-    pill: "bg-pending-bg text-ink-soft",
-    tile: "bg-pending-bg text-ink-soft",
-    hex: "#9A9080",
+    // Now uses its own foreground rather than borrowing ink-soft: the old
+    // pending hex was too light to sit on its own tint, which is why it had to.
+    pill: "bg-pending-bg text-pending",
+    tile: "bg-pending-bg text-pending",
+    hex: "#59534A",
     gloss: "Waiting — no action taken yet",
   },
   handling: {
     pill: "bg-ofd-bg text-ofd",
     tile: "bg-ofd-bg text-ofd",
-    hex: "#855C21",
+    hex: "#74481E",
     gloss: "Being handled right now",
   },
   staged: {
     pill: "bg-stage-bg text-stage",
     tile: "bg-stage-bg text-stage",
-    hex: "#2A6F67",
+    hex: "#1D6054",
     gloss: "Warehouse done — waiting for pickup",
   },
   motion: {
     pill: "bg-transit-bg text-transit",
     tile: "bg-transit-bg text-transit",
-    hex: "#416984",
+    hex: "#2B577F",
     gloss: "In motion with the courier",
   },
   done: {
     pill: "bg-deliv-bg text-deliv",
     tile: "bg-deliv-bg text-deliv",
-    hex: "#396F54",
+    hex: "#33603B",
     gloss: "Arrived and accounted for",
   },
   failed: {
     pill: "bg-breach-bg text-breach",
     tile: "bg-breach-bg text-breach",
-    hex: "#A34737",
+    hex: "#922119",
     gloss: "Failed, breached or stopped",
   },
   paused: {
     pill: "bg-hold-bg text-hold",
     tile: "bg-hold-bg text-hold",
-    hex: "#705A88",
+    hex: "#5A4B75",
     gloss: "Paused on purpose",
   },
 };
@@ -128,46 +130,69 @@ export const TONE_LEGEND: { tone: Tone; gloss: string }[] = (
   ["pending", "handling", "staged", "motion", "done", "failed", "paused"] as Tone[]
 ).map((tone) => ({ tone, gloss: TONE[tone].gloss }));
 
+/**
+ * Icon cut: these render at 13–15px inside pills and rows, so they use the
+ * SOLID `-bold` variant, not `-bold-duotone`. Duotone paints a second, lighter
+ * layer that collapses to mud below ~16px — this file's own SourceBadge comment
+ * already said so and the pills used duotone anyway. Duotone stays where it
+ * earns its detail: 19px nav and panel headers.
+ */
 export const OVERALL_VISUAL: Record<OverallStatus, StatusVisual> = {
-  WH_PROCESSING: { icon: "box-bold-duotone", label: "WH Processing", tone: "pending" },
-  PICKUP_PENDING: { icon: "hand-money-bold-duotone", label: "Pickup Pending", tone: "pending" },
-  IN_TRANSIT: { icon: "delivery-bold-duotone", label: "In Transit", tone: "motion" },
-  DELIVERED: { icon: "check-circle-bold-duotone", label: "Delivered", tone: "done" },
+  WH_PROCESSING: { icon: "box-bold", label: "WH Processing", tone: "pending" },
+  // Was `hand-money`. A money glyph for "packed, waiting for the courier" —
+  // the old set's worst semantic miss. A clock says what this actually is.
+  PICKUP_PENDING: { icon: "clock-circle-bold", label: "Pickup Pending", tone: "pending" },
+  IN_TRANSIT: { icon: "delivery-bold", label: "In Transit", tone: "motion" },
+  DELIVERED: { icon: "check-circle-bold", label: "Delivered", tone: "done" },
   // Beyond delivered: the store has booked the stock in. Same "good, finished"
   // family, one step further.
-  INWARDED: { icon: "clipboard-check-bold-duotone", label: "Inwarded", tone: "done" },
+  INWARDED: { icon: "archive-check-bold", label: "Inwarded", tone: "done" },
 };
 
 export const SHIPMENT_VISUAL: Record<ShipmentStatus, StatusVisual> = {
   IN_TRANSIT: OVERALL_VISUAL.IN_TRANSIT,
   // The courier has it in hand for the last mile — hands-on, not merely moving.
-  OUT_FOR_DELIVERY: { icon: "scooter-bold-duotone", label: "Out for Delivery", tone: "handling" },
+  OUT_FOR_DELIVERY: { icon: "scooter-bold", label: "Out for Delivery", tone: "handling" },
   DELIVERED: OVERALL_VISUAL.DELIVERED,
-  DELIVERY_FAILED: { icon: "danger-triangle-bold-duotone", label: "Delivery Failed", tone: "failed" },
+  DELIVERY_FAILED: { icon: "danger-triangle-bold", label: "Delivery Failed", tone: "failed" },
   // Coming back to us: nothing is happening to it until it lands.
-  RETURN: { icon: "rewind-back-bold-duotone", label: "Return", tone: "pending" },
+  RETURN: { icon: "undo-left-bold", label: "Return", tone: "pending" },
 };
 
 export const WH_STATUS_VISUAL: Record<OrderStatus, StatusVisual> = {
-  NOT_STARTED: { icon: "sleeping-square-bold-duotone", label: "Not Started", tone: "pending" },
+  // Was `sleeping-square`. A sleeping face in an operations queue reads as a
+  // toy; this state just means nobody has touched the order yet.
+  NOT_STARTED: { icon: "minus-circle-bold", label: "Not Started", tone: "pending" },
   // Was transit-blue, which also meant IN_TRANSIT and DISPATCHED. A picker's
   // trolley is not a courier's van; blue now means courier custody only.
-  PICKING: { icon: "cart-check-bold-duotone", label: "Picking", tone: "handling" },
-  PACKING: { icon: "box-minimalistic-bold-duotone", label: "Packing", tone: "handling" },
-  ON_HOLD: { icon: "pause-circle-bold-duotone", label: "On Hold", tone: "paused" },
+  PICKING: { icon: "cart-large-minimalistic-bold", label: "Picking", tone: "handling" },
+  PACKING: { icon: "box-minimalistic-bold", label: "Packing", tone: "handling" },
+  ON_HOLD: { icon: "pause-circle-bold", label: "On Hold", tone: "paused" },
   // Both were sage, i.e. indistinguishable from the active nav item.
-  READY_TO_DISPATCH: { icon: "checklist-minimalistic-bold-duotone", label: "Ready to Dispatch", tone: "staged" },
-  RTS_LOGIC: { icon: "document-add-bold-duotone", label: "RTS Logic", tone: "staged" },
-  DISPATCHED_TO_STORE: { icon: "delivery-bold-duotone", label: "Dispatched", tone: "motion" },
-  CANCELLED: { icon: "close-circle-bold-duotone", label: "Cancelled", tone: "failed" },
-  UNFULFILLABLE: { icon: "ghost-bold-duotone", label: "Unfulfillable", tone: "failed" },
+  READY_TO_DISPATCH: { icon: "checklist-minimalistic-bold", label: "Ready to Dispatch", tone: "staged" },
+  // This step generates the sale invoice — an "add document" glyph did not say
+  // that, and a bill does.
+  RTS_LOGIC: { icon: "bill-list-bold", label: "RTS Logic", tone: "staged" },
+  // Was byte-identical to IN_TRANSIT: two different states rendering the same
+  // glyph on the same screen. This one is the moment it LEAVES us.
+  DISPATCHED_TO_STORE: { icon: "export-bold", label: "Dispatched", tone: "motion" },
+  CANCELLED: { icon: "close-circle-bold", label: "Cancelled", tone: "failed" },
+  // Was `ghost`, on a state that means written-off stock.
+  UNFULFILLABLE: { icon: "forbidden-circle-bold", label: "Unfulfillable", tone: "failed" },
 };
 
+/**
+ * SLA verdicts share a shield family so they are legible AS verdicts. Both of
+ * the middle two used to be exact duplicates of a delivery state — WITHIN_SLA
+ * rendered the Delivered glyph and BREACHED rendered the Delivery Failed one —
+ * so an SLA column and a status column showed the same icons meaning different
+ * things.
+ */
 export const SLA_VISUAL: Record<SlaState, StatusVisual> = {
-  FUTURE_SLA: { icon: "hourglass-bold-duotone", label: "Future SLA", tone: "pending" },
-  WITHIN_SLA: { icon: "check-circle-bold-duotone", label: "Within SLA", tone: "done" },
-  BREACHED: { icon: "danger-triangle-bold-duotone", label: "Breached", tone: "failed" },
-  BREACHED_PENDING: { icon: "alarm-bold-duotone", label: "Breached · Pending", tone: "failed" },
+  FUTURE_SLA: { icon: "hourglass-bold", label: "Future SLA", tone: "pending" },
+  WITHIN_SLA: { icon: "shield-check-bold", label: "Within SLA", tone: "done" },
+  BREACHED: { icon: "shield-cross-bold", label: "Breached", tone: "failed" },
+  BREACHED_PENDING: { icon: "alarm-bold", label: "Breached · Pending", tone: "failed" },
 };
 
 /**
@@ -189,9 +214,11 @@ export function visualByLabel(value: unknown): StatusVisual | null {
 export const RECEIPT_VISUAL = {
   // The store has the boxes but has not booked them in — that is a task
   // sitting on someone's desk, so it reads as hands-on, not as "in motion".
-  RECEIVED: { icon: "inbox-in-bold-duotone", label: "Received", tone: "handling" },
-  INWARDED: { icon: "archive-check-bold-duotone", label: "Inwarded", tone: "done" },
-  CLOSED: { icon: "check-circle-bold-duotone", label: "Closed", tone: "done" },
+  RECEIVED: { icon: "inbox-in-bold", label: "Received", tone: "handling" },
+  INWARDED: { icon: "archive-check-bold", label: "Inwarded", tone: "done" },
+  // Distinct from DELIVERED's check-circle: "closed" is the ledger being ruled
+  // off, not the parcel arriving.
+  CLOSED: { icon: "check-square-bold", label: "Closed", tone: "done" },
 } as const satisfies Record<string, StatusVisual>;
 
 /**

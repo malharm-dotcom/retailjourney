@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/ui";
 
@@ -49,7 +49,8 @@ function NavList({ onNavigate, isAdmin }: { onNavigate?: () => void; isAdmin: bo
                   onClick={onNavigate}
                   aria-current={on ? "page" : undefined}
                   className={cn(
-                    "flex min-h-[42px] items-center gap-3 rounded-control px-3 py-2.5 text-ui font-semibold transition-colors",
+                    "flex min-h-[42px] items-center gap-3 rounded-control px-3 py-2.5 text-ui font-semibold",
+                    "transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.985]",
                     on ? "bg-sage-soft text-sage" : "text-ink-soft hover:bg-line/60 hover:text-ink",
                   )}
                 >
@@ -74,16 +75,18 @@ function Wordmark({ className }: { className?: string }) {
   );
 }
 
-/** Left navigation: a fixed rail on desktop, a slide-in drawer on phone/tablet. */
+/**
+ * Left navigation: a fixed rail on desktop, a slide-in drawer on phone/tablet.
+ *
+ * The drawer was the one overlay in the product not built on Radix, and it was
+ * missing everything Radix gives away: it had no exit animation (it slid in and
+ * then vanished on unmount), no focus trap, no focus restore, no scroll lock —
+ * the page scrolled underneath it — and no `aria-modal`, so a screen reader
+ * could walk straight out of an open drawer into the page behind. Moving it
+ * onto DialogPrimitive fixes all five at once and deletes the hand-rolled
+ * Escape listener, because Radix already does that too.
+ */
 export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onClose: () => void; isAdmin?: boolean }) {
-  // Close the drawer on Escape while it's open.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
-
   return (
     <>
       {/* Desktop rail */}
@@ -97,27 +100,38 @@ export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onC
       </aside>
 
       {/* Mobile drawer */}
-      {open ? (
-        <div className="fixed inset-0 z-50 lg:hidden">
-          <div className="absolute inset-0 animate-overlayIn bg-ink/30 backdrop-blur-[2px]" onClick={onClose} />
-          <aside className="absolute left-0 top-0 flex h-full w-[248px] animate-slideIn flex-col border-r border-line bg-paper shadow-pop">
+      <DialogPrimitive.Root open={open} onOpenChange={(o) => !o && onClose()}>
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Overlay className="fixed inset-0 z-50 bg-ink/30 backdrop-blur-[2px] data-[state=open]:animate-overlayIn data-[state=closed]:animate-[fade_.14s_ease-in_reverse] lg:hidden" />
+          <DialogPrimitive.Content
+            // Width is capped rather than fixed at 248px: at a 390px viewport a
+            // fixed drawer leaves an awkward strip, and 80vw keeps the
+            // dismiss-by-tapping-outside target honest at every phone size.
+            className={cn(
+              "fixed inset-y-0 left-0 z-50 flex w-[min(80vw,272px)] flex-col border-r border-line bg-paper shadow-pop outline-none lg:hidden",
+              "data-[state=open]:animate-drawerIn data-[state=closed]:animate-drawerOut",
+            )}
+            // The drawer is navigation; the links describe themselves. Passing
+            // undefined explicitly opts out of Radix's description warning
+            // rather than inventing prose no one needs read aloud.
+            aria-describedby={undefined}
+          >
+            <DialogPrimitive.Title className="sr-only">Navigation</DialogPrimitive.Title>
             <div className="flex h-[60px] items-center justify-between px-6">
               <Wordmark />
-              <button
-                type="button"
-                onClick={onClose}
+              <DialogPrimitive.Close
                 aria-label="Close menu"
-                className="grid h-10 w-10 place-items-center rounded-control text-ink-soft hover:bg-line/60"
+                className="grid h-10 w-10 place-items-center rounded-control text-ink-soft transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97] hover:bg-line/60"
               >
                 <Icon name="close-circle-bold" size={18} />
-              </button>
+              </DialogPrimitive.Close>
             </div>
             <div className="pt-2">
               <NavList onNavigate={onClose} isAdmin={isAdmin} />
             </div>
-          </aside>
-        </div>
-      ) : null}
+          </DialogPrimitive.Content>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
     </>
   );
 }

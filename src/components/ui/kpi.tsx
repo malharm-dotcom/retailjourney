@@ -49,7 +49,13 @@ export function KpiCard({
       href={href}
       className={cn(
         shell,
-        "transition-[transform,box-shadow] duration-200 hover:-translate-y-[3px] hover:shadow-lift motion-reduce:hover:translate-y-0",
+        // The lift stays here and only here. On a KPI the whole card IS the
+        // link, so lifting it describes something true — unlike the queue card,
+        // where the click target was a button inside it. Pulled from 3px/200ms
+        // to 2px on the house curve so it sits in the same motion family as
+        // every other control, and given the same press state.
+        "transition-[transform,box-shadow] duration-150 ease-ui hover:-translate-y-[2px] hover:shadow-lift",
+        "active:translate-y-0 active:scale-[0.99] motion-reduce:hover:translate-y-0",
         className,
       )}
     >

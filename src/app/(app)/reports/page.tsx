@@ -25,7 +25,7 @@ export default function ReportsPage() {
             href={`/reports/${r.slug}`}
             className="group rounded-card bg-card p-5 shadow-card transition-[transform,box-shadow] duration-200 hover:-translate-y-[3px] hover:shadow-lift motion-reduce:hover:translate-y-0"
           >
-            <span className="grid h-10 w-10 place-items-center rounded-control bg-sage-soft text-sage transition-colors group-hover:bg-sage group-hover:text-white">
+            <span className="grid h-10 w-10 place-items-center rounded-control bg-sage-soft text-sage transition-colors duration-150 ease-ui group-hover:bg-sage group-hover:text-white">
               <Icon name={r.icon} size={21} />
             </span>
             <h2 className="mt-3.5 font-display text-title font-bold leading-snug tracking-tight">{r.title}</h2>

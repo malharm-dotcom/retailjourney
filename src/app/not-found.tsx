@@ -11,7 +11,7 @@ export default function NotFound() {
       </p>
       <Link
         href="/"
-        className="flex min-h-[38px] items-center rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper transition-colors hover:bg-ink/85"
+        className="flex min-h-[38px] items-center rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85"
       >
         Back to Control Tower
       </Link>

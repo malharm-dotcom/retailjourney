@@ -139,7 +139,7 @@ export function UsersPanel({
               const editing = openId === u.id && draft;
               const roleLabel = roles.find((r) => r.value === u.role)?.label ?? u.role;
               return (
-                <tr key={u.id} className="border-b border-line text-dense last:border-b-0 hover:bg-paper">
+                <tr key={u.id} className="border-b border-line text-dense last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper">
                   {editing ? (
                     <td colSpan={7} className="bg-paper px-5 py-4">
                       <div className="mb-3 flex items-baseline gap-2">
@@ -178,7 +178,7 @@ export function UsersPanel({
                             value={draft.areaManager}
                             onChange={(e) => setDraft({ ...draft, areaManager: e.target.value })}
                             placeholder="none — sees all stores"
-                            className="w-full rounded-control border border-line-control bg-paper px-3 py-2 text-ui text-ink outline-none transition-colors placeholder:text-mute focus:border-sage"
+                            className="w-full rounded-control border border-line-control bg-paper px-3 py-2 text-ui text-ink outline-none transition-colors duration-150 ease-ui placeholder:text-mute focus:border-sage"
                           />
                         </label>
 
@@ -196,7 +196,7 @@ export function UsersPanel({
                                   aria-pressed={on}
                                   onClick={() => toggleFacility(f)}
                                   className={cn(
-                                    "flex min-h-[38px] items-center gap-2 rounded-full border px-3.5 py-2 text-ui font-medium transition-colors",
+                                    "flex min-h-[38px] items-center gap-2 rounded-full border px-3.5 py-2 text-ui font-medium transition-colors duration-150 ease-ui",
                                     on
                                       ? "border-ink bg-ink text-white"
                                       : "border-line-control bg-paper text-ink-soft hover:border-ink-soft",

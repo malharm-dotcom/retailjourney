@@ -140,7 +140,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
                 <div className="flex w-[74px] shrink-0 flex-col items-center gap-1.5 text-center">
                   <span
                     className={cn(
-                      "grid h-9 w-9 place-items-center rounded-full border-2 transition-colors",
+                      "grid h-9 w-9 place-items-center rounded-full border-2 transition-colors duration-150 ease-ui",
                       done && "border-sage bg-sage text-white",
                       current && "border-sage bg-sage-soft text-sage animate-stageIn",
                       !reached && "border-line-control bg-paper text-mute",
@@ -348,7 +348,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
                       href={o.trackingLink}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex-1 rounded-control border border-line-control bg-paper py-2 text-center text-dense font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+                      className="flex-1 rounded-control border border-line-control bg-paper py-2 text-center text-dense font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:text-sage"
                     >
                       Courier tracking ↗
                     </a>
@@ -358,7 +358,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
                       href={o.podLink}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex-1 rounded-control border border-line-control bg-paper py-2 text-center text-dense font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+                      className="flex-1 rounded-control border border-line-control bg-paper py-2 text-center text-dense font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:text-sage"
                     >
                       POD ↗
                     </a>

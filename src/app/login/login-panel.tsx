@@ -44,7 +44,7 @@ export function LoginPanel({ google }: { google: boolean }) {
           <button
             type="button"
             onClick={() => signIn("google", { callbackUrl })}
-            className="flex w-full items-center justify-center gap-2 rounded-control border border-line-control bg-paper py-3 text-ui font-semibold text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
+            className="flex w-full items-center justify-center gap-2 rounded-control border border-line-control bg-paper py-3 text-ui font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:bg-sage-soft hover:text-sage"
           >
             Continue with Google — @snitch.com
           </button>
@@ -66,7 +66,7 @@ export function LoginPanel({ google }: { google: boolean }) {
             autoFocus
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            className="rounded-control border border-line bg-paper px-3.5 py-2.5 text-ui text-ink outline-none transition-colors focus:border-sage"
+            className="rounded-control border border-line bg-paper px-3.5 py-2.5 text-ui text-ink outline-none transition-colors duration-150 ease-ui focus:border-sage"
             placeholder="you@snitch.com"
           />
         </label>
@@ -78,7 +78,7 @@ export function LoginPanel({ google }: { google: boolean }) {
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            className="rounded-control border border-line bg-paper px-3.5 py-2.5 text-ui text-ink outline-none transition-colors focus:border-sage"
+            className="rounded-control border border-line bg-paper px-3.5 py-2.5 text-ui text-ink outline-none transition-colors duration-150 ease-ui focus:border-sage"
           />
         </label>
 
@@ -95,7 +95,7 @@ export function LoginPanel({ google }: { google: boolean }) {
             // Was `bg-sage`, which put a second primary in a 420px panel beside the
             // ink "Continue with Google" and contradicted `variant="primary"`
             // (bg-ink) everywhere else in the product. One primary per decision.
-            "mt-1 rounded-control bg-ink py-3 text-ui font-semibold text-paper transition-colors hover:bg-ink/85",
+            "mt-1 rounded-control bg-ink py-3 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85",
             busy && "opacity-60",
           )}
         >

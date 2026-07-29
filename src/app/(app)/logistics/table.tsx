@@ -175,7 +175,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 shown.map((r) => {
                   const v = r.shipment ? SHIPMENT_VISUAL[r.shipment] : OVERALL_VISUAL.PICKUP_PENDING;
                   return (
-                    <tr key={r.so} className="border-b border-line last:border-b-0 hover:bg-paper">
+                    <tr key={r.so} className="border-b border-line last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper">
                       <td
                         className="rail px-5 py-3"
                         style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}

@@ -26,14 +26,14 @@ export default function AppNotFound() {
       <div className="mt-1 flex flex-wrap items-center justify-center gap-2">
         <Link
           href="/reports/order-lookup"
-          className="flex min-h-[38px] items-center gap-2 rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper transition-colors hover:bg-ink/85"
+          className="flex min-h-[38px] items-center gap-2 rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85"
         >
           <Icon name="magnifer-linear" size={15} />
           Search every order
         </Link>
         <Link
           href="/in-transit"
-          className="flex min-h-[38px] items-center gap-2 rounded-control border border-line-control bg-paper px-4 py-2.5 text-ui font-semibold text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
+          className="flex min-h-[38px] items-center gap-2 rounded-control border border-line-control bg-paper px-4 py-2.5 text-ui font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:bg-sage-soft hover:text-sage"
         >
           Back to the board
         </Link>

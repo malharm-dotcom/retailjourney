@@ -72,7 +72,7 @@ function MiniRow({
   return (
     <Link
       href={`/orders/${so}`}
-      className="rail flex items-center gap-3 border-b border-line px-5 py-3 last:border-b-0 hover:bg-paper"
+      className="rail flex items-center gap-3 border-b border-line px-5 py-3 last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper"
       style={{ "--rail": rail } as React.CSSProperties}
     >
       <div className="min-w-0 flex-1">
@@ -137,7 +137,7 @@ export default async function ControlTower() {
         right={
           <Link
             href="/in-transit"
-            className="flex min-h-[38px] items-center gap-2 rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper shadow-card transition-colors hover:bg-ink/85"
+            className="flex min-h-[38px] items-center gap-2 rounded-control bg-ink px-4 py-2.5 text-ui font-semibold text-paper shadow-card transition-colors duration-150 ease-ui hover:bg-ink/85"
           >
             <Icon name="delivery-bold-duotone" size={16} />
             Live in-transit board

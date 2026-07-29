@@ -168,7 +168,7 @@ export function RulebookTabs({
                   {gridLines.map(({ store: s, rule: r }, i) => (
                     <tr
                       key={`${s.id}:${r?.wh ?? "none"}:${i}`}
-                      className="border-b border-line last:border-b-0 hover:bg-paper"
+                      className="border-b border-line last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper"
                     >
                       <td className="sticky left-0 z-10 bg-card px-5 py-2.5">
                         <span className="block text-dense font-semibold">{s.storeName}</span>
@@ -237,7 +237,7 @@ export function RulebookTabs({
                     ),
                   ];
                   return (
-                    <tr key={s.id} className="border-b border-line text-dense last:border-b-0 hover:bg-paper">
+                    <tr key={s.id} className="border-b border-line text-dense last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper">
                       <td className="mono px-5 py-3 text-mute">{s.branchCode}</td>
                       <td className="px-4 py-3 font-semibold">{s.storeName}</td>
                       <td className="px-4 py-3 text-ink-soft">{s.storeCity}</td>
@@ -287,7 +287,7 @@ function VersionSelector({ snapshots, version }: { snapshots: string[]; version:
       <select
         value={version ?? snapshots[0]}
         onChange={(e) => router.push(`${pathname}?v=${e.target.value}`)}
-        className="rounded-control border border-line-control bg-paper px-3 py-2 text-dense font-semibold text-ink transition-colors hover:border-sage focus:border-sage focus:outline-none"
+        className="rounded-control border border-line-control bg-paper px-3 py-2 text-dense font-semibold text-ink transition-colors duration-150 ease-ui hover:border-sage focus:border-sage focus:outline-none"
       >
         {snapshots.map((s) => (
           <option key={s} value={s}>

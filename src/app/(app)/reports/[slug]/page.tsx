@@ -45,7 +45,7 @@ export default async function ReportPage({
         right={
           <Link
             href="/reports"
-            className="flex items-center gap-1.5 rounded-control border border-line-control bg-paper px-3.5 py-2 text-dense font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+            className="flex items-center gap-1.5 rounded-control border border-line-control bg-paper px-3.5 py-2 text-dense font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:text-sage"
           >
             <Icon name="arrow-left-linear" size={14} />
             All reports

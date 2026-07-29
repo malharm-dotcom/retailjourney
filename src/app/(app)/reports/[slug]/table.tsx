@@ -78,14 +78,14 @@ export function ReportTable({
         </label>
         <button
           type="submit"
-          className="rounded-control bg-ink px-4 py-2 text-ui font-semibold text-paper transition-colors hover:bg-ink/85"
+          className="rounded-control bg-ink px-4 py-2 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85"
         >
           Apply
         </button>
         <button
           type="button"
           onClick={exportCsv}
-          className="ml-auto flex items-center gap-1.5 rounded-control border border-line-control bg-paper px-3.5 py-2 text-dense font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+          className="ml-auto flex items-center gap-1.5 rounded-control border border-line-control bg-paper px-3.5 py-2 text-dense font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:text-sage"
         >
           <Icon name="download-minimalistic-bold" size={14} />
           Export CSV
@@ -113,7 +113,7 @@ export function ReportTable({
                 </tr>
               ) : (
                 data.rows.map((row, i) => (
-                  <tr key={i} className="border-b border-line text-dense last:border-b-0 hover:bg-paper">
+                  <tr key={i} className="border-b border-line text-dense last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper">
                     {row.map((cell, j) => {
                       // Every SLA verdict on this surface used to render as grey
                       // `text-ink-soft` — "BREACHED" and "Within SLA" indistinguishable

@@ -86,7 +86,7 @@ export function ShipmentDialog({
 
   const optionClass = (isCurrent: boolean) =>
     cn(
-      "flex min-h-[42px] items-center gap-2 rounded-control border px-3 py-2.5 text-ui font-semibold transition-colors",
+      "flex min-h-[42px] items-center gap-2 rounded-control border px-3 py-2.5 text-ui font-semibold transition-colors duration-150 ease-ui",
       isCurrent
         ? "cursor-default border-line bg-paper text-mute"
         : "border-line-control bg-paper text-ink-soft hover:border-sage hover:bg-sage-soft hover:text-sage",

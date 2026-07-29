@@ -42,7 +42,7 @@ export function UserMenu({
         <button
           type="button"
           aria-label={`Account menu — ${user.name.split(" (")[0]}`}
-          className="flex min-h-[40px] items-center gap-2.5 rounded-control px-1.5 py-1 text-dense text-ink-soft transition-colors hover:bg-line/60"
+          className="flex min-h-[40px] items-center gap-2.5 rounded-control px-1.5 py-1 text-dense text-ink-soft transition-colors duration-150 ease-ui hover:bg-line/60"
         >
           <span
             aria-hidden

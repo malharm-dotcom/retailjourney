@@ -92,7 +92,9 @@
   .animate-stageIn {
     animation: none !important;
   }
-  /* Opacity-only variants stay useful; transform-based motion is dropped. */
+  /* Opacity-only variants stay useful; transform-based motion is dropped.
+   * `.animate-fade` is kept in this list although nothing uses it today: the
+   * `fade` keyframe still backs `overlayIn` and the dialog/dropdown exits. */
   .animate-dialogIn,
   .animate-fade,
   .animate-overlayIn {

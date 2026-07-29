@@ -127,13 +127,11 @@ export function RulebookTabs({
         <VersionSelector snapshots={snapshots} version={version} />
       </div>
 
-      <div
-        key={`${tab}:${type}`}
-        id="rulebook-panel"
-        role="tabpanel"
-        aria-labelledby={`rulebook-tab-${tab}`}
-        className="animate-fade"
-      >
+      {/* No `key` and no fade. The key forced a full remount of a table that
+          can run to hundreds of rows on every tab click, and the fade made you
+          wait 180ms to read it — on a reference screen whose whole job is
+          looking something up. Switching is now instant. */}
+      <div id="rulebook-panel" role="tabpanel" aria-labelledby={`rulebook-tab-${tab}`}>
       {tab === "grid" ? (
         <>
           {/* The legend is sticky. It used to sit above a table that runs to

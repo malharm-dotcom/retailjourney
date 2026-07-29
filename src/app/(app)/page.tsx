@@ -39,7 +39,7 @@ function Panel({
         <span className={cn("grid h-7 w-7 place-items-center rounded-control", TONE[tone].tile)}>
           <Icon name={icon} size={16} />
         </span>
-        <h2 className="text-ui font-bold">{title}</h2>
+        <h2 className="font-display text-sec font-bold">{title}</h2>
         <span className="mono ml-auto font-display text-title font-bold">{count}</span>
       </header>
       <div className="flex-1">{children}</div>

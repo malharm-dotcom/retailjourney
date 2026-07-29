@@ -107,7 +107,7 @@ export function UsersPanel({
     <section className="mb-6 overflow-hidden rounded-card bg-card shadow-card">
       <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
         <Icon name="users-group-two-rounded-bold-duotone" size={17} className="text-sage" />
-        <h2 className="text-ui font-bold">Users &amp; entitlements</h2>
+        <h2 className="font-display text-sec font-bold">Users &amp; entitlements</h2>
         <span className="ml-auto text-cap text-mute">
           {dbReady ? (
             <>

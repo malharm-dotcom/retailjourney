@@ -107,8 +107,11 @@ export function RulebookTabs({
               tabIndex={tab === t ? 0 : -1}
               onClick={() => setTab(t)}
               className={cn(
-                "rounded-md px-3.5 py-[7px] text-dense font-semibold transition-colors",
-                tab === t ? "bg-white text-ink shadow-[0_1px_3px_rgba(35,32,25,.12)]" : "text-ink-soft hover:text-ink",
+                "rounded-md px-3.5 py-[7px] text-dense font-semibold transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97]",
+                // `bg-card`, not raw white: the card surface is warm now, so a
+                // pure-white active tab read as a hole punched in the page. The
+                // shadow follows the new ink value for the same reason.
+                tab === t ? "bg-card text-ink shadow-[0_1px_3px_rgba(39,34,27,.12)]" : "text-ink-soft hover:text-ink",
               )}
             >
               {label}
@@ -318,7 +321,7 @@ function LaneView({ rules }: { rules: RulebookViewRow[] }) {
             <span className="grid h-8 w-8 place-items-center rounded-control bg-sage-soft text-sage">
               <Icon name="routing-3-bold-duotone" size={17} />
             </span>
-            <h3 className="text-ui font-bold">{lane}</h3>
+            <h3 className="font-display text-title font-bold">{lane}</h3>
             <span className="mono ml-auto font-display text-sm font-bold text-ink-soft">
               {e.stores.size} stores
             </span>

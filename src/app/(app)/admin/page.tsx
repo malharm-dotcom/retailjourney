@@ -116,7 +116,7 @@ export default async function AdminPage() {
             <Icon name="shield-check-bold-duotone" size={19} />
           </span>
           <div>
-            <h3 className="text-ui font-bold">Google SSO</h3>
+            <h3 className="font-display text-title font-bold">Google SSO</h3>
             <p className="text-cap text-mute">@snitch.com sign-in with admin activation</p>
           </div>
           <span
@@ -149,7 +149,7 @@ export default async function AdminPage() {
       <section className="overflow-hidden rounded-card bg-card shadow-card">
         <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
           <Icon name="history-bold-duotone" size={17} className="text-sage" />
-          <h2 className="text-ui font-bold">Sync log</h2>
+          <h2 className="font-display text-sec font-bold">Sync log</h2>
           <span className="ml-auto text-cap text-mute">last {health.recentRuns.length} runs</span>
         </header>
         {health.recentRuns.length === 0 ? (

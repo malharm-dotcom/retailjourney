@@ -70,8 +70,8 @@ export function FacilitySwitcher({
             }}
             onClick={() => choose(t.key)}
             className={cn(
-              "rounded-md px-3 py-[7px] text-dense font-semibold transition-colors",
-              on ? "bg-white text-ink shadow-[0_1px_3px_rgba(35,32,25,.12)]" : "text-ink-soft hover:text-ink",
+              "rounded-md px-3 py-[7px] text-dense font-semibold transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97]",
+              on ? "bg-card text-ink shadow-[0_1px_3px_rgba(39,34,27,.12)]" : "text-ink-soft hover:text-ink",
             )}
           >
             {t.label}

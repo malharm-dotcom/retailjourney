@@ -120,7 +120,7 @@ export function FieldGrid({
           <section key={g.title} className="overflow-hidden rounded-card bg-card shadow-card">
             <header className="flex items-center gap-2 border-b border-line bg-paper px-4 py-3">
               <Icon name={g.icon} size={15} className="text-sage" />
-              <h3 className="text-dense font-bold">{g.title}</h3>
+              <h3 className="font-display text-title font-bold">{g.title}</h3>
             </header>
             <div className="px-4 py-2">
               {g.fields.map((f) => {

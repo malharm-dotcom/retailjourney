@@ -190,7 +190,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
         <section className="overflow-hidden rounded-card bg-card shadow-card">
           <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
             <Icon name="history-bold-duotone" size={17} className="text-sage" />
-            <h2 className="text-ui font-bold">Journey timeline</h2>
+            <h2 className="font-display text-sec font-bold">Journey timeline</h2>
             <span className="ml-auto text-cap text-mute">{events.length} events · every change is logged</span>
           </header>
           <ol className="px-5 py-4">
@@ -236,7 +236,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
           <section className="overflow-hidden rounded-card bg-card shadow-card">
             <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
               <Icon name="stopwatch-bold-duotone" size={17} className="text-sage" />
-              <h2 className="text-ui font-bold">SLA by leg</h2>
+              <h2 className="font-display text-sec font-bold">SLA by leg</h2>
               <span className="ml-auto text-cap text-mute">rulebook-derived · advisory</span>
             </header>
             {o.tatInheritedFrom ? (
@@ -273,7 +273,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
             <section className="overflow-hidden rounded-card bg-card shadow-card">
               <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
                 <Icon name="box-bold-duotone" size={17} className="text-sage" />
-                <h2 className="text-ui font-bold">Shipments</h2>
+                <h2 className="font-display text-sec font-bold">Shipments</h2>
                 <span className="ml-auto text-cap text-mute">
                   {shipments.length > 1 ? `split dispatch — ${shipments.length} AWBs` : "1 AWB"}
                 </span>
@@ -311,7 +311,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
             <section className="overflow-hidden rounded-card bg-card shadow-card">
               <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
                 <Icon name="routing-2-bold-duotone" size={17} className="text-sage" />
-                <h2 className="text-ui font-bold">Tracking</h2>
+                <h2 className="font-display text-sec font-bold">Tracking</h2>
                 {o.logisticsPartner === "SELF" ? (
                   <span className="ml-auto rounded-full bg-ofd-bg px-2 py-0.5 text-meta font-bold text-ofd">
                     manual lane — no eShipz feed

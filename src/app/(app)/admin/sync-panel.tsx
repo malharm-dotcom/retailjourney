@@ -81,7 +81,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
                 <Icon name={c.icon} size={19} />
               </span>
               <div className="min-w-0">
-                <h3 className="text-ui font-bold">{c.name}</h3>
+                <h3 className="font-display text-title font-bold">{c.name}</h3>
                 <p className="text-cap text-mute">{c.detail}</p>
               </div>
               {c.passive ? null : (
@@ -149,7 +149,7 @@ export function UnmatchedChannels({
     <section className="mb-6 overflow-hidden rounded-card bg-card shadow-card">
       <header className="flex items-center gap-2.5 border-b border-line bg-ofd-bg px-5 py-3.5">
         <Icon name="danger-triangle-bold-duotone" size={17} className="text-ofd" />
-        <h2 className="text-ui font-bold">Unmatched channels — review queue</h2>
+        <h2 className="font-display text-sec font-bold">Unmatched channels — review queue</h2>
         <span className="ml-auto text-cap text-mute">
           orders from these channels are held until mapped to a store
         </span>

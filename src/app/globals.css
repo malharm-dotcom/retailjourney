@@ -67,8 +67,19 @@
   .animate-rise,
   .animate-slideIn,
   .animate-cardLand,
-  .animate-cardLeave {
+  .animate-cardLeave,
+  /* The drawer travels on translateX, which is exactly the movement this
+   * setting exists to remove. Radix keeps the node mounted either way, so
+   * dropping the animation gives a clean appear/disappear, not a broken panel. */
+  .animate-drawerIn,
+  .animate-drawerOut {
     animation: none !important;
+  }
+  /* Press feedback is a transform, so it goes. The colour change underneath it
+   * survives and still confirms the tap — the point is feedback, not scale. */
+  .active\:scale-\[0\.97\]:active,
+  .active\:scale-\[0\.985\]:active {
+    transform: none !important;
   }
   /* The baton draw and the stage pop are scale/scaleX, so they go. Their
    * elements are authored to sit at their FINISHED state by default and the
@@ -84,11 +95,16 @@
   .animate-overlayIn {
     animation: fade 0.01ms both !important;
   }
-  /* `arrive` survives deliberately. It is a background wash with no transform,
-   * and it is the only signal that a value changed under the user without their
-   * input — removing it would remove information, not discomfort. It is slowed
-   * rather than dropped so it stays perceptible without flashing. */
+  /* `arrive` and `breachArrive` survive deliberately. They are background
+   * washes with no transform, and they are the only signal that a value
+   * changed under the user without their input — removing them would remove
+   * information, not discomfort. Slowed rather than dropped so they stay
+   * perceptible without flashing. `breachArrive` gets the longer beat: it is
+   * the one that means someone has to act. */
   .animate-arrive {
     animation-duration: 2s !important;
+  }
+  .animate-breachArrive {
+    animation-duration: 2.4s !important;
   }
 }

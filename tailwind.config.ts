@@ -1,93 +1,101 @@
 import type { Config } from "tailwindcss";
 
-// RetailJourney design tokens — derived 1:1 from the approved prototype
-// (retailjourney-in-transit-v2.html). Cream ground, near-black ink, sage accent,
-// semantic status colours always paired with icon + label, never colour alone.
+// RetailJourney design tokens — the "Ledger" language.
+//
+// The status ramp is designed in OKLCH and converted to sRGB, which is the
+// point: five of the seven tones share ONE foreground lightness (L 0.445) and
+// one chroma (C ≈ 0.075). That shared lightness is what makes seven colours
+// read as a single system rather than seven separate decisions — the specific
+// failure of the previous ramp, whose foregrounds drifted across the set.
+//
+// Two exceptions earn their place:
+//   pending  C 0.016 — "nothing to do yet" recedes into the cream
+//   breach   L 0.435 / C 0.150 — ~1.8x the ramp's chroma, so a breach outranks
+//            a pending by WEIGHT and not merely by hue
+//
+// Every foreground clears 4.5:1 on its own tint at 11px semibold (measured
+// 6.26–6.82) and on all three surfaces. Both breach values sit just inside the
+// sRGB gamut edge for their hue — nothing is silently clamped.
+// Colour is never the only channel: status renders as icon + label always.
 
 const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        ground: "#F1EEE6",
-        paper: "#FBF9F4",
-        card: "#FFFFFF",
+        // Surfaces carry the same warm hue bias (H 85) as the ramp, so the
+        // neutrals read as chosen rather than a generic grey on a cream ground.
+        ground: "#F0ECE4",
+        paper: "#F8F5F0",
+        card: "#FDFCF9",
         ink: {
-          DEFAULT: "#232019",
-          soft: "#5C5648",
+          DEFAULT: "#27221B", // 13.39:1 on ground
+          soft: "#59534B", // 6.45:1 on ground
         },
-        // Secondary text, not decoration: it carries store meta, checkpoint
-        // cities, every table header and every KPI subtitle. The prototype's
-        // #968E7E read at 2.80:1 on the cream ground — below AA at any size, on
-        // a shared floor terminal. Darkened until it clears 4.5:1 on the
-        // DARKEST surface it ever sits on (ground), which puts it at 4.70 there,
-        // 5.18 on paper and 5.45 on card.
-        mute: "#6F695D",
+        // Secondary text, not decoration: store meta, checkpoint cities, every
+        // table header and KPI subtitle. Darkened until it clears 4.5:1 on the
+        // DARKEST surface it ever sits on (ground) — 4.74 there, 5.14 on paper,
+        // 5.44 on card. The first pass at this value measured 3.98 and failed.
+        mute: "#6D6760",
         line: {
           // Decorative separators — deliberately near-invisible, no contrast
           // requirement because they never carry meaning on their own.
-          DEFAULT: "#EBE5D8",
-          strong: "#E0D8C8",
+          DEFAULT: "#E7E2D9",
+          strong: "#DCD7CC",
           // Control boundaries (input, select, chip) DO carry meaning: they say
-          // "this is editable". WCAG 1.4.11 wants 3:1 against adjacent colour,
-          // and `strong` managed 1.22 on ground. 3.08 / 3.40 / 3.57 on
-          // ground / paper / card.
-          control: "#8C877D",
+          // "this is editable". WCAG 1.4.11 wants 3:1 against adjacent colour.
+          // 3.15 on ground, 3.62 on card.
+          control: "#89847C",
         },
         // Sage is CHROME ONLY — active nav, focus, selection, hover accent,
-        // primary affordance. It used to also mean READY_TO_DISPATCH, RTS_LOGIC,
-        // INWARDED and the Pickup-Pending KPI, which is why colour could never
-        // carry status by itself. Statuses use the semantic ramp below.
+        // primary affordance. It never carries a status; that is the whole
+        // reason the semantic ramp below exists. 6.67:1 on ground.
         sage: {
-          DEFAULT: "#3E5D4C",
-          soft: "#E8EEE9",
-          line: "#CBD8CF",
+          DEFAULT: "#305A44",
+          soft: "#E3F1E9",
+          line: "#C8DCD0",
         },
 
         // ── Status ramp: hue answers "where is the baton", nothing else ──
-        // Every foreground below clears 4.5:1 on its own tint at 11px semibold
-        // (measured 5.00–5.06); the tints themselves are unchanged from the
-        // approved prototype, so the cream world is intact.
+        // Foreground / tint ratios, measured: see the header comment.
 
-        // In courier motion, and only that. Previously also meant PICKING,
-        // RECEIVED and DISPATCHED — four meanings, so blue meant "somewhere in
-        // the middle" rather than anything.
+        // In courier motion, and only that.
         transit: {
-          DEFAULT: "#416984",
-          bg: "#E7EFF4",
+          DEFAULT: "#2B577F", // 6.45:1 on its tint
+          bg: "#E3EEFA",
         },
         // Needs hands now: PICKING, PACKING, OUT_FOR_DELIVERY, and a store
         // receipt still waiting to be inwarded.
         ofd: {
-          DEFAULT: "#855C21",
-          bg: "#F5ECD9",
+          DEFAULT: "#74481E", // 6.63:1
+          bg: "#F8EADE",
         },
         // Staged — the warehouse is done and the baton is waiting to be taken.
-        // New token: these states used to borrow sage and read as chrome.
         stage: {
-          DEFAULT: "#2A6F67",
-          bg: "#E4F0EE",
+          DEFAULT: "#1D6054", // 6.30:1
+          bg: "#E0F1ED",
         },
         // Arrived and finished: DELIVERED, INWARDED, CLOSED, WITHIN_SLA.
         deliv: {
-          DEFAULT: "#396F54",
-          bg: "#E6F0EA",
+          DEFAULT: "#33603B", // 6.26:1
+          bg: "#E4F1E5",
         },
-        // Failed or overdue. Never used for a mere coverage gap.
+        // Failed or overdue. Never used for a mere coverage gap. The one tone
+        // that breaks the ramp's uniformity, deliberately — see header.
         breach: {
-          DEFAULT: "#A34737",
-          bg: "#F6E8E3",
+          DEFAULT: "#922119", // 6.82:1
+          bg: "#FDDFDA",
         },
-        // Waiting, nothing to do yet. `DEFAULT` is a rail colour only; pending
-        // pills use ink-soft on the tint (4.54:1), never this on that.
+        // Waiting, nothing to do yet. Chroma pulled almost to zero so it
+        // recedes into the cream instead of competing with real work.
         pending: {
-          DEFAULT: "#9A9080",
-          bg: "#EEEAE0",
+          DEFAULT: "#59534A", // 6.51:1
+          bg: "#F0EDE8",
         },
         // Deliberately paused by a human.
         hold: {
-          DEFAULT: "#705A88",
-          bg: "#EFEAF4",
+          DEFAULT: "#5A4B75", // 6.60:1
+          bg: "#EFEAF9",
         },
       },
       fontFamily: {
@@ -111,6 +119,12 @@ const config: Config = {
         ui: ["13px", { lineHeight: "1.5" }], // default UI body, controls, labels
         row: ["14px", { lineHeight: "1.45" }], // primary value in a row
         title: ["15.5px", { lineHeight: "1.3" }], // card and panel titles
+        // The missing tier. Every section heading in the app was `text-ui
+        // font-bold` — 13px body text doing an h2's job — so the display face
+        // jumped from the 27-32px h1 straight to nothing. Tracking is negative
+        // because tracking is size-specific: letters read too far apart as they
+        // grow, and a single letter-spacing value is wrong somewhere.
+        sec: ["19px", { lineHeight: "1.2", letterSpacing: "-0.015em" }],
         num: ["19px", { lineHeight: "1.1" }], // the big tabular figure
       },
       borderRadius: {
@@ -142,8 +156,26 @@ const config: Config = {
         // box-shadow only: no transform, so it never nudges a row the user is
         // about to click.
         arrive: {
-          from: { backgroundColor: "rgba(65,105,132,.14)", boxShadow: "inset 3px 0 0 0 #416984" },
+          from: { backgroundColor: "rgba(43,87,127,.13)", boxShadow: "inset 3px 0 0 0 #2B577F" },
           to: { backgroundColor: "transparent", boxShadow: "inset 3px 0 0 0 transparent" },
+        },
+        // An order CROSSING INTO BREACH. Distinct from `arrive` because it is
+        // the single most consequential state change in the product and it was
+        // silent: `breaching` was not part of the board's change signature, so
+        // nothing fired — while the row simultaneously re-sorted to the top of
+        // the board (breaches sort first) with nothing bridging the jump.
+        // Breach-keyed, and background/box-shadow only like its sibling: no
+        // transform, so a row the user is reaching for never moves.
+        breachArrive: {
+          from: { backgroundColor: "rgba(146,33,25,.16)", boxShadow: "inset 3px 0 0 0 #922119" },
+          to: { backgroundColor: "transparent", boxShadow: "inset 3px 0 0 0 transparent" },
+        },
+        // The mobile drawer, now a Radix Dialog so it has a real exit. Enter
+        // and exit travel the SAME edge — a panel that slides in from the left
+        // and vanishes in place reads as two unrelated events.
+        drawerIn: {
+          from: { transform: "translateX(-100%)" },
+          to: { transform: "translateX(0)" },
         },
         // The baton pass. A completed leg's connector draws left-to-right, so
         // the journey reads as a hand-off in the direction the work travels
@@ -196,7 +228,17 @@ const config: Config = {
         batonDraw: "batonDraw .5s cubic-bezier(.16,1,.3,1) both",
         stageIn: "stageIn .34s cubic-bezier(.16,1,.3,1) both",
         arrive: "arrive 1.6s ease-out both",
+        breachArrive: "breachArrive 1.6s ease-out both",
+        // Deliberate open, faster close: the open is a decision the user made
+        // and watches, the close is the system getting out of the way.
+        drawerIn: "drawerIn .26s cubic-bezier(.32,.72,0,1)",
+        drawerOut: "drawerIn .18s cubic-bezier(.32,.72,0,1) reverse",
         shimmer: "shimmer 1.4s linear infinite",
+      },
+      transitionTimingFunction: {
+        // The house curve. Every press, hover and colour change in the product
+        // uses this one so motion reads as a single hand.
+        ui: "cubic-bezier(.2,.7,.3,1)",
       },
       maxWidth: {
         // The single content measure. AppShell owns it; the old 1220px `.wrap`

@@ -18,7 +18,7 @@ import {
 import { Button, Field, Input, Select } from "@/components/ui/primitives";
 import { REQUIRED_CAPTURES, STATUS_LABEL, WH_FLOW, WH_TRANSITIONS } from "@/lib/journey";
 import { LOGISTICS_PARTNERS, type Order, type OrderStatus, type OrderType } from "@/lib/types";
-import { WH_STATUS_VISUAL, cn, railOf } from "@/lib/ui";
+import { TONE, WH_STATUS_VISUAL, cn, railOf, type Tone } from "@/lib/ui";
 
 export interface KanbanCard {
   so: string;
@@ -47,6 +47,32 @@ const TERMINAL_MOVES: OrderStatus[] = ["CANCELLED", "UNFULFILLABLE"];
 /** Cards rendered per lane before "Show more" — keeps the DOM bounded at live
  *  volume (hundreds of orders per lane) while the lane header shows the true count. */
 const LANE_PAGE = 25;
+
+/**
+ * Within a lane, cards group by how urgent their handover is.
+ *
+ * A lane used to be one undifferentiated column of up to 150 cards behind a
+ * "Show more" button — an endless scroll where the four overdue orders that
+ * actually needed a supervisor looked exactly like the hundred that did not.
+ * Grouping turns a lane into three headings you can read in one glance, and a
+ * collapsed group is a count rather than a scroll.
+ */
+type DueGroup = "overdue" | "today" | "scheduled";
+
+const DUE_GROUPS: { key: DueGroup; label: string; tone: Tone; icon: string }[] = [
+  { key: "overdue", label: "Handover overdue", tone: "failed", icon: "shield-cross-bold" },
+  { key: "today", label: "Due today", tone: "staged", icon: "checklist-minimalistic-bold" },
+  { key: "scheduled", label: "Scheduled", tone: "pending", icon: "clock-circle-bold" },
+];
+
+const dueGroupOf = (c: KanbanCard): DueGroup =>
+  c.due === "overdue" ? "overdue" : c.due === "today" ? "today" : "scheduled";
+
+/** Groups that start open. "Scheduled" is the long tail — it is the one you
+ *  scroll past, so it starts as a count and opens on demand. */
+const OPEN_BY_DEFAULT: Record<DueGroup, boolean> = { overdue: true, today: true, scheduled: false };
+
+type Density = "comfortable" | "compact";
 
 interface PendingMove {
   card: KanbanCard;
@@ -77,6 +103,13 @@ export function Kanban({
   // an SO from a pick list had to hold it in their head and scan seven lanes.
   const [q, setQ] = useState("");
   const searchId = useId();
+  // Comfortable shows the whole card; compact drops the meta a supervisor
+  // already knows and tightens the rhythm, so roughly twice as many orders fit
+  // in a lane's viewport. Same board, same actions — just less air.
+  const [density, setDensity] = useState<Density>("comfortable");
+  // Collapse state per lane+group. Keyed rather than nested so a lane with no
+  // cards in a group never allocates anything.
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   // Cards mid-departure: still drawn in their OLD lane, playing the exit. Without
   // this the card vanished from one lane and reappeared in another with nothing
   // connecting the two, so the eye could not follow the baton across the board.
@@ -257,6 +290,26 @@ export function Kanban({
             below show matches only.
           </p>
         ) : null}
+
+        {/* Density. A floor lead working a lane wants the whole card; a
+            supervisor sweeping seven lanes for what is late wants twice as many
+            rows on screen. Same board, two reading distances. */}
+        <div className="ml-auto flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]" role="group" aria-label="Card density">
+          {(["comfortable", "compact"] as Density[]).map((d) => (
+            <button
+              key={d}
+              type="button"
+              aria-pressed={density === d}
+              onClick={() => setDensity(d)}
+              className={cn(
+                "rounded-md px-3 py-[6px] text-dense font-semibold capitalize transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97]",
+                density === d ? "bg-card text-ink shadow-[0_1px_3px_rgba(39,34,27,.12)]" : "text-ink-soft hover:text-ink",
+              )}
+            >
+              {d}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Status changes are announced here. The board's feedback was a corner
@@ -303,8 +356,43 @@ export function Kanban({
                   Nothing here
                 </div>
               ) : (
-                <div className="flex flex-col gap-2 lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:px-0.5">
-                  {visible.map((c) => {
+                <div
+                  className={cn(
+                    "flex flex-col lg:min-h-0 lg:flex-1 lg:overflow-y-auto lg:overflow-x-hidden lg:px-0.5",
+                    density === "compact" ? "gap-1.5" : "gap-2",
+                  )}
+                >
+                  {DUE_GROUPS.map((g) => {
+                    // Counts are the TRUE per-group totals, not the paged slice:
+                    // a collapsed group has to be able to say how much it hides.
+                    const total = list.filter((c) => dueGroupOf(c) === g.key).length;
+                    if (total === 0) return null;
+                    const key = `${lane}:${g.key}`;
+                    const open = collapsed[key] ?? OPEN_BY_DEFAULT[g.key];
+                    const inGroup = visible.filter((c) => dueGroupOf(c) === g.key);
+                    return (
+                      <div key={g.key} className="flex flex-col">
+                        <button
+                          type="button"
+                          aria-expanded={open}
+                          onClick={() => setCollapsed((s) => ({ ...s, [key]: !open }))}
+                          // Sticky so you always know which group you are inside
+                          // once a lane is scrolling.
+                          className="sticky top-0 z-[1] flex items-center gap-1.5 rounded-md bg-ground px-2 py-1.5 text-left text-meta font-bold uppercase tracking-[0.07em] transition-[transform,background-color] duration-150 ease-ui active:scale-[0.985]"
+                          style={{ color: TONE[g.tone].hex }}
+                        >
+                          <Icon
+                            name="alt-arrow-down-bold"
+                            size={11}
+                            className={cn("shrink-0 transition-transform duration-150 ease-ui", !open && "-rotate-90")}
+                          />
+                          <Icon name={g.icon} size={12} className="shrink-0" />
+                          <span className="truncate">{g.label}</span>
+                          <span className="mono ml-auto shrink-0 tracking-normal text-ink-soft">{total}</span>
+                        </button>
+                        {open ? (
+                          <div className={cn("flex flex-col pt-1.5", density === "compact" ? "gap-1" : "gap-2")}>
+                            {inGroup.map((c) => {
                     // The effective status: an optimistically advanced card
                     // must offer its NEW lane's transitions, not the stale ones.
                     const status = laneOf(c);
@@ -315,16 +403,19 @@ export function Kanban({
                       <article
                         key={c.so}
                         className={cn(
-                          // A left accent bar carries the due state instead of a
-                          // pill on the header row — a pill had to share width
-                          // with the order number and clipped to "hando overdu".
-                          "group flex flex-col rounded-control border-l-[3px] bg-card p-3 shadow-card transition-[transform,box-shadow] duration-150 ease-out hover:-translate-y-px hover:shadow-lift motion-reduce:hover:translate-y-0",
+                          // No left accent bar and no due badge: the card sits
+                          // inside a group whose sticky header already states
+                          // the due state, in its colour, with its count. The
+                          // rail repeated on every card in the group what one
+                          // heading says once.
+                          //
+                          // No hover lift either. The card is not the click
+                          // target — the button inside it is — so lifting the
+                          // whole card on hover advertised an affordance that
+                          // does not exist, on a surface built for scanning.
+                          "group flex flex-col rounded-control bg-card shadow-card transition-[box-shadow,border-color] duration-150 ease-ui hover:shadow-lift",
+                          density === "compact" ? "p-2.5" : "p-3",
                           leaving[c.so] ? "animate-cardLeave" : landed[c.so] ? "animate-cardLand" : null,
-                          c.due === "overdue"
-                            ? "border-l-breach"
-                            : c.due === "today"
-                              ? "border-l-stage"
-                              : "border-l-transparent",
                         )}
                       >
                         {/* Order number owns its line. */}
@@ -333,29 +424,19 @@ export function Kanban({
                           variant="text"
                           className="mono block font-display text-ui font-bold text-ink"
                         />
-                        {c.due || c.outOfRulebook ? (
+                        {/* A FLAG, not a breach: this order simply has no
+                            rulebook target, so it runs on a fallback EDD.
+                            Neutral pending token — never the breach red. It
+                            survives compact because it is the one thing on the
+                            card a supervisor cannot infer from the group. */}
+                        {c.outOfRulebook ? (
                           <div className="mt-1 flex flex-wrap items-center gap-1">
-                            {c.due ? (
-                              <span
-                                className={cn(
-                                  "rounded-md px-1.5 py-0.5 text-meta font-bold",
-                                  c.due === "overdue" ? "bg-breach-bg text-breach" : "bg-stage-bg text-stage",
-                                )}
-                              >
-                                {c.due === "overdue" ? "handover overdue" : "due today"}
-                              </span>
-                            ) : null}
-                            {/* A FLAG, not a breach: this order simply has no
-                                rulebook target, so it runs on a fallback EDD.
-                                Neutral pending token — never the breach red. */}
-                            {c.outOfRulebook ? (
-                              <span
-                                className="rounded-md bg-pending-bg px-1.5 py-0.5 text-meta font-bold text-ink-soft"
-                                title="No rulebook target for this store/order type — delivery target falls back to the eShipz EDD"
-                              >
-                                out of rulebook
-                              </span>
-                            ) : null}
+                            <span
+                              className="rounded-md bg-pending-bg px-1.5 py-0.5 text-meta font-bold text-pending"
+                              title="No rulebook target for this store/order type — delivery target falls back to the eShipz EDD"
+                            >
+                              out of rulebook
+                            </span>
                           </div>
                         ) : null}
                         {/* One clean truncation, full name on hover. */}
@@ -371,7 +452,9 @@ export function Kanban({
                           {c.priority ? " · HIGH" : ""}
                           {status === "RTS_LOGIC" && c.invoice ? <span className="mono"> · inv {c.invoice}</span> : null}
                         </div>
-                        {c.campaign ? (
+                        {/* Campaign is the first thing to go in compact: it is
+                            context, not a decision input. */}
+                        {c.campaign && density === "comfortable" ? (
                           <div className="mt-1 truncate text-cap font-medium text-ink-soft" title={c.campaign}>
                             {c.campaign}
                           </div>
@@ -388,7 +471,7 @@ export function Kanban({
                                 // Was `hover:bg-sage`: the primary action changed
                                 // colour into the chrome accent on hover, which
                                 // read as a different button. It darkens instead.
-                                className="flex min-h-[34px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control bg-ink px-2 py-1.5 text-cap font-semibold text-paper transition-colors hover:bg-ink/85 disabled:opacity-50"
+                                className="flex min-h-[34px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control bg-ink px-2 py-1.5 text-cap font-semibold text-paper transition-[transform,background-color] duration-150 ease-ui active:scale-[0.97] hover:bg-ink/85 disabled:opacity-50"
                               >
                                 <span className="truncate">{STATUS_LABEL[primaryNext]}</span>
                                 <Icon name="arrow-right-linear" size={13} className="shrink-0" />
@@ -399,7 +482,7 @@ export function Kanban({
                                 <DropdownTrigger asChild>
                                   <button
                                     type="button"
-                                    className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-control border border-line-control text-ink-soft hover:border-sage hover:text-sage"
+                                    className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-control border border-line-control text-ink-soft transition-[transform,border-color,color] duration-150 ease-ui active:scale-[0.97] hover:border-sage hover:text-sage"
                                     aria-label={`More transitions for ${c.so}`}
                                   >
                                     <Icon name="menu-dots-bold" size={14} />
@@ -441,12 +524,17 @@ export function Kanban({
                           </div>
                         ) : null}
                       </article>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </div>
                     );
                   })}
                   {hidden > 0 ? (
                     <button
                       onClick={() => setLaneShown((s) => ({ ...s, [lane]: shown + LANE_PAGE * 2 }))}
-                      className="rounded-xl border border-dashed border-line-control px-3 py-2.5 text-xs font-semibold text-ink-soft transition-colors hover:border-sage hover:text-sage"
+                      className="rounded-xl border border-dashed border-line-control px-3 py-2.5 text-cap font-semibold text-ink-soft transition-[transform,border-color,color] duration-150 ease-ui active:scale-[0.985] hover:border-sage hover:text-sage"
                     >
                       Show more — {hidden} hidden
                     </button>

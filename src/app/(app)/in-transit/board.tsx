@@ -45,8 +45,19 @@ function visualOf(r: TransitRow): StatusVisual {
 /** How often the board pulls fresh server data while the tab is visible. */
 const REFRESH_MS = 75_000;
 
-/** A shipment's identity for change detection: what would visibly move. */
-const signatureOf = (r: TransitRow) => `${r.shipment ?? r.overall}|${r.msg ?? ""}|${r.city ?? ""}|${r.attempts}`;
+/**
+ * A shipment's identity for change detection: what would visibly move.
+ *
+ * `breaching` is in here deliberately. It was not, which meant the single most
+ * consequential state change in the product — an order crossing into breach —
+ * produced no signal at all, while the row simultaneously jumped to the top of
+ * the board (breaches sort first) with nothing bridging the move.
+ */
+const signatureOf = (r: TransitRow) =>
+  `${r.shipment ?? r.overall}|${r.msg ?? ""}|${r.city ?? ""}|${r.attempts}|${r.breaching ? "B" : "-"}`;
+
+/** Long enough for the 1.6s wash, and for its 2.4s reduced-motion form. */
+const WASH_MS = 2600;
 
 /** Shared cell padding, so every column keeps one vertical rhythm. */
 const CELL = "px-2 py-3 md:py-4";
@@ -76,25 +87,45 @@ export function TransitBoard({
   // open on a wall screen, so a change nobody saw arrive is a change nobody
   // acted on. These get a one-off wash, not an entrance.
   const [arrived, setArrived] = useState<Set<string>>(new Set());
-  const seen = useRef<Map<string, string> | null>(null);
+  // Rows that CROSSED INTO BREACH on this refresh. Kept separate from `arrived`
+  // because it is a different event deserving a different, louder cue: the row
+  // also re-sorts to the top when this happens, so the wash is the only thing
+  // connecting where it was to where it now is.
+  const [breached, setBreached] = useState<Set<string>>(new Set());
+  const [announcement, setAnnouncement] = useState("");
+  const seen = useRef<Map<string, { sig: string; breaching: boolean }> | null>(null);
   const arriveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const next = new Map(rows.map((r) => [r.so, signatureOf(r)]));
+    const next = new Map(rows.map((r) => [r.so, { sig: signatureOf(r), breaching: r.breaching }]));
     const prev = seen.current;
     seen.current = next;
     // First render establishes the baseline: everything is "new" on arrival and
     // flashing the whole board would be noise, not signal.
     if (!prev) return;
     const changed = new Set<string>();
-    for (const [so, sig] of next) {
+    const crossed = new Set<string>();
+    for (const [so, cur] of next) {
       const before = prev.get(so);
-      if (before !== undefined && before !== sig) changed.add(so);
+      if (before === undefined) continue;
+      // Crossing into breach wins over any other change on the same row —
+      // there is only one wash per row and this is the one worth spending it on.
+      if (!before.breaching && cur.breaching) crossed.add(so);
+      else if (before.sig !== cur.sig) changed.add(so);
     }
-    if (changed.size === 0) return;
+    if (changed.size === 0 && crossed.size === 0) return;
     setArrived(changed);
+    setBreached(crossed);
+    // Colour and motion are both invisible to a screen reader, and this is the
+    // one change on the board that means somebody has to act.
+    if (crossed.size > 0) {
+      setAnnouncement(`${crossed.size} shipment${crossed.size === 1 ? "" : "s"} just breached SLA`);
+    }
     if (arriveTimer.current) clearTimeout(arriveTimer.current);
-    arriveTimer.current = setTimeout(() => setArrived(new Set()), 2000);
+    arriveTimer.current = setTimeout(() => {
+      setArrived(new Set());
+      setBreached(new Set());
+    }, WASH_MS);
   }, [rows]);
 
   useEffect(() => () => void (arriveTimer.current && clearTimeout(arriveTimer.current)), []);
@@ -175,6 +206,12 @@ export function TransitBoard({
         </div>
       </div>
 
+      {/* Breach arrivals are announced. The wash and the rail colour are both
+          invisible to a screen reader, and this is the change that matters. */}
+      <p aria-live="assertive" className="sr-only">
+        {announcement}
+      </p>
+
       <div className="overflow-hidden rounded-card bg-card shadow-card">
         {/* Sticky so the column meaning survives a long scroll. `top` clears the
             60px bar plus the sync strip that sit above it. */}
@@ -199,10 +236,11 @@ export function TransitBoard({
               <div
                 key={r.so}
                 className={cn(
-                  "rail grid grid-cols-1 gap-0 border-b border-line px-5 last:border-b-0 hover:bg-paper md:grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] md:items-center",
+                  "rail grid grid-cols-1 gap-0 border-b border-line px-5 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] md:items-center",
                   // No entrance animation. The rows are the content; staggering
                   // them made every filter tap cost half a second of choreography
                   // on top of a server round-trip.
+                  breached.has(r.so) && "animate-breachArrive",
                   arrived.has(r.so) && "animate-arrive",
                 )}
                 style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}

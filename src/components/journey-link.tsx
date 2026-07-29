@@ -5,7 +5,7 @@
 
 import Link from "next/link";
 import { Icon } from "@/components/icon";
-import { cn } from "@/lib/ui";
+import { ROW_ACTION, cn } from "@/lib/ui";
 
 export function JourneyLink({
   so,
@@ -20,7 +20,10 @@ export function JourneyLink({
     return (
       <Link
         href={`/orders/${encodeURIComponent(so)}`}
-        className={cn("font-semibold text-ink transition-colors hover:text-sage", className)}
+        className={cn(
+          "font-semibold text-ink transition-colors duration-150 ease-ui hover:text-sage",
+          className,
+        )}
       >
         {so}
       </Link>
@@ -34,10 +37,7 @@ export function JourneyLink({
       // the logistics table could render these at 32px, which put three separate
       // tap targets under the touch floor and made the same control two different
       // sizes on two boards.
-      className={cn(
-        "grid h-10 w-10 shrink-0 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage",
-        className,
-      )}
+      className={cn(ROW_ACTION, className)}
     >
       <Icon name="map-arrow-square-linear" size={17} />
     </Link>

@@ -13,7 +13,7 @@ import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Field, Input, Select } from "@/components/ui/primitives";
 import type { AnchorSource } from "@/lib/transit-anchor";
 import { LOGISTICS_PARTNERS, type ShipmentStatus, type Source } from "@/lib/types";
-import { OVERALL_VISUAL, SHIPMENT_VISUAL, TONE, cn, railOf } from "@/lib/ui";
+import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf } from "@/lib/ui";
 import { fmtDate } from "@/lib/ist";
 
 export interface LogisticsRow {
@@ -240,7 +240,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                                 type="button"
                                 aria-label={`Edit courier, LR and DC for ${r.so}`}
                                 onClick={() => openEdit(r)}
-                                className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
+                                className={ROW_ACTION}
                               >
                                 <Icon name="pen-2-linear" size={15} />
                               </button>
@@ -256,7 +256,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                                   <button
                                     type="button"
                                     aria-label={`Update shipment status for ${r.so}`}
-                                    className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
+                                    className={ROW_ACTION}
                                   >
                                     <Icon name="delivery-bold-duotone" size={15} />
                                   </button>

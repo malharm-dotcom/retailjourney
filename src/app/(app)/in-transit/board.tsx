@@ -9,7 +9,7 @@ import { ShipmentDialog } from "@/components/shipment-dialog";
 import { StatusPill } from "@/components/ui/pill";
 import { Chip, Input } from "@/components/ui/primitives";
 import { ageingBucket } from "@/lib/sla";
-import { AGE_EMPHASIS, OVERALL_VISUAL, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
+import { AGE_EMPHASIS, OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
 import type { OverallStatus, ShipmentStatus, Source } from "@/lib/types";
 
 export interface TransitRow {
@@ -251,7 +251,7 @@ export function TransitBoard({
                       target="_blank"
                       rel="noreferrer"
                       aria-label={`Open courier tracking for ${r.so} in a new tab`}
-                      className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
+                      className={ROW_ACTION}
                     >
                       <Icon name="routing-2-linear" size={17} />
                     </a>
@@ -269,7 +269,7 @@ export function TransitBoard({
                       <button
                         type="button"
                         aria-label={`Update shipment status for ${r.so}`}
-                        className="grid h-10 w-10 place-items-center rounded-control border border-line-control bg-paper text-ink-soft transition-colors hover:border-sage hover:bg-sage-soft hover:text-sage"
+                        className={ROW_ACTION}
                       >
                         <Icon name="pen-new-square-linear" size={17} />
                       </button>

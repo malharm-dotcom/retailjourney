@@ -103,6 +103,17 @@ export interface StatusVisual {
   tone: Tone;
 }
 
+/**
+ * The 40px square row-action button — tracking link, edit, update shipment,
+ * view journey. It was written out as a literal in four places across the
+ * board, the logistics table and JourneyLink, which is exactly how two of them
+ * drifted to 32px and fell under the touch floor. One definition now.
+ */
+export const ROW_ACTION =
+  "grid h-10 w-10 shrink-0 place-items-center rounded-control border border-line-control bg-paper text-ink-soft " +
+  "transition-[transform,background-color,border-color,color] duration-150 ease-ui active:scale-[0.97] " +
+  "hover:border-sage hover:bg-sage-soft hover:text-sage";
+
 /** Pill classes for a status. */
 export const pillOf = (v: StatusVisual) => TONE[v.tone].pill;
 /** Tinted icon-tile classes for a status. */

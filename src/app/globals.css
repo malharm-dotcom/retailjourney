@@ -76,9 +76,12 @@
     animation: none !important;
   }
   /* Press feedback is a transform, so it goes. The colour change underneath it
-   * survives and still confirms the tap — the point is feedback, not scale. */
-  .active\:scale-\[0\.97\]:active,
-  .active\:scale-\[0\.985\]:active {
+   * survives and still confirms the tap — the point is feedback, not scale.
+   * Matched on the element rather than the utility class so it cannot drift
+   * out of sync with whatever scale value a call site happens to use. */
+  button:active,
+  a:active,
+  [role="button"]:active {
     transform: none !important;
   }
   /* The baton draw and the stage pop are scale/scaleX, so they go. Their

@@ -20,6 +20,14 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./src/**/*.{ts,tsx}"],
+  future: {
+    // Wraps every `hover:` utility in `@media (hover: hover)`. This app runs on
+    // floor tablets, where a tap leaves the hover style stuck on the control
+    // until you touch something else — so a row you tapped stays highlighted
+    // and reads as selected. One flag fixes it everywhere instead of gating
+    // ~90 hover utilities by hand.
+    hoverOnlyWhenSupported: true,
+  },
   theme: {
     extend: {
       colors: {

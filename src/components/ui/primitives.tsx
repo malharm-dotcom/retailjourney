@@ -17,7 +17,15 @@ export const Button = React.forwardRef<
       // confirm — submitting is opted into, never inherited.
       type={type}
       className={cn(
-        "inline-flex min-h-[38px] items-center justify-center gap-2 rounded-control px-4 py-2 text-ui font-semibold transition-colors disabled:pointer-events-none disabled:opacity-45",
+        // Press feedback. There was none anywhere in the product — not one
+        // `active:` state — and this runs on tablets where hover does not
+        // exist, so a supervisor doing 200 transitions a shift got no
+        // confirmation the tap registered until the server came back. The
+        // scale is deliberately small: at tens-of-times-a-day frequency,
+        // motion should be felt rather than watched.
+        "inline-flex min-h-[38px] items-center justify-center gap-2 rounded-control px-4 py-2 text-ui font-semibold",
+        "transition-[transform,background-color,border-color,color] duration-150 ease-ui",
+        "active:scale-[0.97] disabled:pointer-events-none disabled:opacity-45",
         variant === "primary" && "bg-ink text-paper hover:bg-ink/85",
         variant === "ghost" && "text-ink-soft hover:bg-line/60",
         variant === "outline" &&
@@ -39,7 +47,7 @@ export const Input = React.forwardRef<
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        "w-full rounded-control border bg-paper px-3 py-2 text-ui text-ink outline-none transition-colors placeholder:text-mute focus:border-sage",
+        "w-full rounded-control border bg-paper px-3 py-2 text-ui text-ink outline-none transition-colors duration-150 ease-ui placeholder:text-mute focus:border-sage",
         // line-control clears 3:1 against the field fill and the page, so the
         // boundary that says "this is editable" is actually visible. `line-strong`
         // managed 1.22:1 on the cream ground.
@@ -60,7 +68,7 @@ export const Select = React.forwardRef<
       ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
-        "w-full rounded-control border bg-paper px-3 py-2 text-ui text-ink outline-none transition-colors focus:border-sage",
+        "w-full rounded-control border bg-paper px-3 py-2 text-ui text-ink outline-none transition-colors duration-150 ease-ui focus:border-sage",
         invalid ? "border-breach bg-breach-bg/40" : "border-line-control",
         className,
       )}
@@ -118,7 +126,8 @@ export function Chip({
       type="button"
       aria-pressed={active}
       className={cn(
-        "flex min-h-[38px] items-center gap-2 rounded-full border px-3.5 py-2 text-ui font-medium transition-colors",
+        "flex min-h-[38px] items-center gap-2 rounded-full border px-3.5 py-2 text-ui font-medium",
+        "transition-[transform,background-color,border-color,color] duration-150 ease-ui active:scale-[0.97]",
         active ? "border-ink bg-ink text-white" : "border-line-control bg-paper text-ink-soft hover:border-ink-soft",
         className,
       )}

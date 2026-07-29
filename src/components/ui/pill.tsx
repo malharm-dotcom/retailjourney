@@ -1,8 +1,19 @@
 import { Icon } from "@/components/icon";
-import { TONE, cn, pillOf, type StatusVisual } from "@/lib/ui";
+import { TONE, cn, pillOf, railOf, type StatusVisual } from "@/lib/ui";
 import type { Source } from "@/lib/types";
 
-/** Status pill — icon + label, optional source badge. Never colour alone. */
+/**
+ * Status pill — a ruled tag: solid rule on the leading edge, tint behind,
+ * icon + label. Never colour alone.
+ *
+ * The `failed` tone escalates by SHAPE, not only hue. Every pill used to be
+ * the same lozenge in a different colour, so on a fast scan down a status
+ * column "we have lost the day" carried exactly the same visual weight as
+ * "waiting, and that is fine" — the reader had to decode hue to find the
+ * problem. A breach now also gains a full hairline ring and a heavier weight,
+ * so it registers as escalated before the colour is read at all. That is the
+ * whole point: hue is the slowest channel to scan.
+ */
 export function StatusPill({
   visual,
   source,
@@ -14,14 +25,19 @@ export function StatusPill({
   size?: "sm" | "md";
   className?: string;
 }) {
+  const escalated = visual.tone === "failed";
   return (
     <span className={cn("inline-flex items-center gap-2 whitespace-nowrap", className)}>
       <span
         className={cn(
-          "inline-flex items-center gap-1.5 rounded-full font-semibold",
-          size === "md" ? "px-3 py-1.5 text-xs" : "px-2 py-0.5 text-meta",
+          "inline-flex items-center gap-1.5 rounded-r-[3px] border-l-[3px]",
+          size === "md" ? "px-2.5 py-1.5 text-cap" : "px-2 py-0.5 text-meta",
           pillOf(visual),
+          // `ring-breach` rather than a dynamic ring colour: escalation is only
+          // ever the failed tone, so the class stays static and Tailwind-safe.
+          escalated ? "font-extrabold tracking-[0.012em] ring-1 ring-inset ring-breach" : "font-semibold",
         )}
+        style={{ borderLeftColor: railOf(visual) }}
         title={TONE[visual.tone].gloss}
       >
         <Icon name={visual.icon} size={size === "md" ? 15 : 13} />

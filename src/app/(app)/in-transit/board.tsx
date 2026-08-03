@@ -212,10 +212,15 @@ export function TransitBoard({
         {announcement}
       </p>
 
-      <div className="overflow-hidden rounded-card bg-card shadow-card">
+      {/* No overflow-hidden here: it becomes the sticky header's containing
+          block for scroll purposes, which breaks its sticky offset entirely
+          (the header stops tracking real page scroll and overlaps the first
+          row instead of clearing it). Corners are rounded on the header / edge
+          rows directly instead. */}
+      <div className="rounded-card bg-card shadow-card">
         {/* Sticky so the column meaning survives a long scroll. `top` clears the
             60px bar plus the sync strip that sit above it. */}
-        <div className="sticky top-[var(--bar-h)] z-10 hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid">
+        <div className="sticky top-[var(--bar-h)] z-10 hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] rounded-t-card border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid">
           <div className={CELL}>Store</div>
           <div className={CELL}>LR · Courier</div>
           <div className={CELL}>Status</div>
@@ -225,18 +230,25 @@ export function TransitBoard({
         </div>
 
         {shown.length === 0 ? (
-          <div className="px-6 py-14 text-center text-sm text-mute">
+          <div className="max-md:rounded-t-card rounded-b-card px-6 py-14 text-center text-sm text-mute">
             No shipments match — clear the filters or switch facility.
           </div>
         ) : (
-          shown.map((r) => {
+          shown.map((r, i) => {
             const v = visualOf(r);
             const age = AGE_EMPHASIS[ageingBucket(r.ageing)];
+            const isFirst = i === 0;
+            const isLast = i === shown.length - 1;
             return (
               <div
                 key={r.so}
                 className={cn(
                   "rail grid grid-cols-1 gap-0 border-b border-line px-5 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] md:items-center",
+                  // The header is `hidden` below `md`, so on mobile the first
+                  // row is the card's actual top edge and needs the corner the
+                  // header would otherwise own.
+                  isFirst && "max-md:rounded-t-card",
+                  isLast && "rounded-b-card",
                   // No entrance animation. The rows are the content; staggering
                   // them made every filter tap cost half a second of choreography
                   // on top of a server round-trip.

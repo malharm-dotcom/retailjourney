@@ -144,14 +144,19 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-card bg-card shadow-card">
+      {/* No overflow-hidden here: it becomes the sticky thead's containing
+          block for scroll purposes, which breaks its sticky offset entirely
+          (the header stops tracking real page scroll and overlaps the first
+          row instead of clearing it). Corners are rounded on the edge cells
+          directly instead. */}
+      <div className="rounded-card bg-card shadow-card">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[980px] border-collapse text-left">
             {/* Sticky: this table runs to hundreds of rows and the column
                 meaning used to scroll away on every surface except Reports. */}
             <thead className="sticky top-[var(--bar-h)] z-10">
               <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
-                <th className="px-5 py-3 font-semibold">Store · SO</th>
+                <th className="rounded-tl-card px-5 py-3 font-semibold">Store · SO</th>
                 <th className="px-3 py-3 font-semibold">DC · LR</th>
                 <th className="px-3 py-3 font-semibold">Courier</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
@@ -159,7 +164,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 <th className="px-3 py-3 font-semibold">Expected</th>
                 <th className="px-3 py-3 text-center font-semibold">Attempts</th>
                 <th className="px-3 py-3 font-semibold">POD</th>
-                <th className="px-3 py-3">
+                <th className="rounded-tr-card px-3 py-3">
                   <span className="sr-only">Row actions</span>
                 </th>
               </tr>
@@ -167,17 +172,18 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
             <tbody>
               {shown.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="px-6 py-12 text-center text-sm text-mute">
+                  <td colSpan={9} className="rounded-b-card px-6 py-12 text-center text-sm text-mute">
                     Nothing here — adjust the filters or dispatch something from the Warehouse queue.
                   </td>
                 </tr>
               ) : (
-                shown.map((r) => {
+                shown.map((r, i) => {
                   const v = r.shipment ? SHIPMENT_VISUAL[r.shipment] : OVERALL_VISUAL.PICKUP_PENDING;
+                  const isLast = i === shown.length - 1;
                   return (
                     <tr key={r.so} className="border-b border-line last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper">
                       <td
-                        className="rail px-5 py-3"
+                        className={cn("rail px-5 py-3", isLast && "rounded-bl-card")}
                         style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
                       >
                         <Link href={`/orders/${r.so}`} className="text-ui font-semibold hover:text-sage">
@@ -231,7 +237,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                           <span className="text-dense text-mute">—</span>
                         )}
                       </td>
-                      <td className="px-3 py-3">
+                      <td className={cn("px-3 py-3", isLast && "rounded-br-card")}>
                         <div className="flex justify-end gap-2">
                           <JourneyLink so={r.so} />
                           {canEdit ? (

@@ -2,6 +2,8 @@
 // server action for UI flows and by curl for pipeline testing:
 //   POST /api/sync/run          → run the 15-min sources (eShipz poller)
 //   POST /api/sync/run {"source":"ESHIPZ"|"SNOWFLAKE"} → run one
+//   POST /api/sync/run {"source":"SNOWFLAKE","reseed":true} → ignore the
+//     stored watermark and force the full 20-day window (manual reseed)
 
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth";
@@ -16,16 +18,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "admin only" }, { status: 403 });
   }
   let source: string | undefined;
+  let reseed = false;
   try {
-    const body = (await req.json()) as { source?: string };
+    const body = (await req.json()) as { source?: string; reseed?: boolean };
     source = body?.source;
+    reseed = body?.reseed === true;
   } catch {
     // empty body = run all
   }
   try {
     let summaries: SyncSummary[];
     if (source === "ESHIPZ") summaries = [await runEshipzSync()];
-    else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync()];
+    else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync({ reseed })];
     else summaries = await runAllSyncs();
     return NextResponse.json({ summaries });
   } catch (e) {

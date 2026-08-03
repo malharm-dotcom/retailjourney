@@ -5,13 +5,13 @@
 
 import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
 import { prisma, databaseConfigured } from "../db";
-import { isoFromEpochMs, istDateOf, nowIso, istToday } from "../ist";
+import { isoFromEpochMs, isoFromIstNtz, istDateOf, nowIso, istToday } from "../ist";
 import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
 import { flattenRulebook, rulebookTemplateFor, type RulebookOrderType, type RulebookViewRow } from "../rulebook-map";
 import { slaState } from "../sla";
-import { queryRetailJourneySpine, snowflakeConfigured } from "../snowflake";
+import { queryRetailJourneySpine, snowflakeConfigured, type DistributionRow } from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
@@ -176,6 +176,7 @@ async function finishRun(
   id: string,
   summary: Omit<SyncSummary, "source">,
   note?: string,
+  watermark?: string,
 ): Promise<void> {
   await prisma().syncRun.update({
     where: { id },
@@ -187,6 +188,7 @@ async function finishRun(
       conflicts: summary.conflicts,
       errors: summary.errors.length ? summary.errors.slice(0, MAX_ERRORS_STORED) : undefined,
       ...(note ? { note } : {}),
+      ...(watermark !== undefined ? { watermark } : {}),
     },
   });
 }
@@ -797,7 +799,34 @@ async function syncSnowflakeOrder(
   return applySyncPatch(existing, patch, events, "SYNCED_SNOWFLAKE", overallOverride);
 }
 
-export async function runSnowflakeSync(): Promise<SyncSummary> {
+/** The watermark carried forward is the newest LAST_UPDATED among rows this
+ *  run saw, compared as true instants (not string sort) so a differing
+ *  fractional-seconds width can never misorder two rows. Rows without
+ *  LAST_UPDATED (new, not yet stamped upstream) don't move it.
+ *  (Exported for the watermark regression tests only.) */
+export function maxLastUpdated(rows: DistributionRow[]): string | undefined {
+  let best: { raw: string; instant: number } | undefined;
+  for (const r of rows) {
+    if (!r.LAST_UPDATED) continue;
+    const iso = isoFromIstNtz(r.LAST_UPDATED);
+    if (!iso) continue;
+    const instant = Date.parse(iso);
+    if (!best || instant > best.instant) best = { raw: r.LAST_UPDATED, instant };
+  }
+  return best?.raw;
+}
+
+/** Watermark of the last successful Snowflake run, or undefined for "no
+ *  successful run yet" — the caller falls back to the full 20-day window. */
+async function getSnowflakeWatermark(): Promise<string | undefined> {
+  const run = await prisma().syncRun.findFirst({
+    where: { source: "SNOWFLAKE", ok: true, watermark: { not: null } },
+    orderBy: { startedAt: "desc" },
+  });
+  return run?.watermark ?? undefined;
+}
+
+export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise<SyncSummary> {
   if (!databaseConfigured()) throw new Error("Snowflake sync requires DATABASE_URL");
   if (!snowflakeConfigured()) {
     throw new Error("Snowflake sync requires SNOWFLAKE_ACCOUNT / SNOWFLAKE_USERNAME / SNOWFLAKE_PRIVATE_KEY");
@@ -806,9 +835,10 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
   const run = await startRun("SNOWFLAKE");
   const summary: SyncSummary = { source: "SNOWFLAKE", ok: false, fetched: 0, upserted: 0, conflicts: 0, errors: [] };
   const db = prisma();
+  const priorWatermark = opts.reseed ? undefined : await getSnowflakeWatermark();
 
   try {
-    const rows = await queryRetailJourneySpine();
+    const rows = await queryRetailJourneySpine(priorWatermark);
     summary.fetched = rows.length;
     const mapped = mapDistributionRows(rows);
 
@@ -884,7 +914,18 @@ export async function runSnowflakeSync(): Promise<SyncSummary> {
       return byFinalStore.has(k) || byChannelCode.has(k);
     });
     summary.ok = summary.errors.length === 0;
-    await finishRun(run.id, summary, qcNotes.size ? [...qcNotes].join(" | ") : undefined);
+    // Advance only on a fully successful batch — a run with errors leaves the
+    // stored watermark untouched so the failed slice is retried next time.
+    const newWatermark = summary.ok ? (maxLastUpdated(rows) ?? priorWatermark) : undefined;
+    console.log(
+      `[sync:snowflake] mode=${priorWatermark ? "incremental" : "full"} fetched=${summary.fetched} upserted=${summary.upserted} watermark ${priorWatermark ?? "∅"} → ${(summary.ok ? newWatermark : priorWatermark) ?? "∅"}`,
+    );
+    await finishRun(
+      run.id,
+      summary,
+      qcNotes.size ? [...qcNotes].join(" | ") : undefined,
+      newWatermark,
+    );
     return summary;
   } catch (e) {
     summary.errors.push(e instanceof Error ? e.message : String(e));

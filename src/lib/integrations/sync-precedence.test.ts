@@ -7,8 +7,13 @@
 
 import { describe, expect, it } from "vitest";
 import { isPollableAwb } from "../distribution-map";
-import { ORDER_TRANSIT_FIELDS, guardedStatus, transitPatchFromChild } from "./sync";
+import type { DistributionRow } from "../snowflake";
+import { ORDER_TRANSIT_FIELDS, guardedStatus, maxLastUpdated, transitPatchFromChild } from "./sync";
 import type { Order, OrderShipment } from "../types";
+
+function row(lastUpdated: string | null): DistributionRow {
+  return { LAST_UPDATED: lastUpdated } as DistributionRow;
+}
 
 function order(over: Partial<Order>): Order {
   return {
@@ -89,5 +94,34 @@ describe("terminal-freeze surface", () => {
     for (const f of ["shipmentStatus", "deliveredTs", "deliveredDate", "trackingStatus", "podLink", "expectedDate"]) {
       expect(ORDER_TRANSIT_FIELDS).toContain(f);
     }
+  });
+});
+
+describe("maxLastUpdated — the watermark advanced after a Snowflake run", () => {
+  it("picks the newest LAST_UPDATED across the fetched rows", () => {
+    const rows = [row("2026-07-28 05:17:09.000"), row("2026-07-30 03:04:07.000"), row("2026-07-13 14:32:57.000")];
+    expect(maxLastUpdated(rows)).toBe("2026-07-30 03:04:07.000");
+  });
+
+  it("several rows sharing the exact newest instant (batch-stamped upstream) still resolve to one value — the boundary is never duplicated across runs", () => {
+    const rows = [row("2026-07-28 05:17:09.000"), row("2026-07-28 05:17:09.000"), row("2026-07-28 05:17:09.000")];
+    expect(maxLastUpdated(rows)).toBe("2026-07-28 05:17:09.000");
+  });
+
+  it("ignores NULL LAST_UPDATED rows (new orders upstream hasn't stamped yet) rather than treating null as newest", () => {
+    const rows = [row("2026-07-28 05:17:09.000"), row(null), row(null)];
+    expect(maxLastUpdated(rows)).toBe("2026-07-28 05:17:09.000");
+  });
+
+  it("returns undefined when every row is NULL — the watermark stays unset, so the next run still falls back to the full window", () => {
+    expect(maxLastUpdated([row(null), row(null)])).toBeUndefined();
+  });
+
+  it("compares true instants, not raw strings — a shorter fractional-seconds suffix never loses to a lexically larger one", () => {
+    // "2026-07-30 03:04:07.5" sorts before "2026-07-30 03:04:07.000" as a string
+    // (since "5" > "0" only past index 0), which is exactly the bug a naive
+    // string max would hit here: the .5 row is 500ms later and must win.
+    const rows = [row("2026-07-30 03:04:07.000"), row("2026-07-30 03:04:07.5")];
+    expect(maxLastUpdated(rows)).toBe("2026-07-30 03:04:07.5");
   });
 });

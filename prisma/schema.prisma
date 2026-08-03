@@ -379,6 +379,11 @@ model SyncRun {
   conflicts    Int       @default(0)
   errors       Json?
   note         String?
+  /// SNOWFLAKE only: LAST_UPDATED (IST NTZ string) of the newest row this run
+  /// saw, set only when the run finished with ok=true. The next run's
+  /// incremental pull resumes from here; NULL means "no successful run yet" —
+  /// fall back to the full 20-day window.
+  watermark    String?
 
   @@index([source, startedAt])
 }

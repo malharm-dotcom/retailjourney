@@ -105,6 +105,12 @@ export interface DistributionRow {
   INWARDED_DATE: string | null;
   STI_QTY: number | null;
   EX_SHORT: number | null;
+  /** IST wall-clock string, second precision (declared NTZ(9) but upstream only
+   *  ever stamps whole seconds, and does so in per-job batches — many rows
+   *  share one exact value). NULL on rows upstream hasn't touched with its own
+   *  update job yet (freshly created orders sit NULL until then), so an
+   *  incremental filter must always admit NULL rows or new orders vanish. */
+  LAST_UPDATED: string | null;
 }
 
 /**
@@ -121,7 +127,7 @@ export const SPINE_PENDING_COLUMNS = [
   "LAST_CHECKPOINT_TAG",
 ] as const;
 
-export const SPINE_QUERY = `
+const SPINE_SELECT = `
 SELECT
   ORDER_NAME, ORDER_TIMESTAMP, ORDER_DATE, ORDER_TYPE, WAREHOUSE_NAME,
   QUANTITY, STORE, INVOICE_NUMBER, MANIFESTED_TIMESTAMP,
@@ -140,13 +146,46 @@ SELECT
   LAST_CHECKPOINT_CITY, LAST_CHECKPOINT_STATE, POD_LINK, PACKAGE_COUNT,
   PICKUP_SLA, DELIVERY_SLA, LOGISTICS_DELIVERY_SLA, PERFECT_ORDER_SLA,
   SHIPMENT_BILL, STORE_CHANNEL, RULEBOOK_COVERED, DELIVERY_TARGET_EDD,
-  INWARDED_DATE, STI_QTY, EX_SHORT
-FROM ${SPINE_TABLE}
+  INWARDED_DATE, STI_QTY, EX_SHORT, LAST_UPDATED
+FROM ${SPINE_TABLE}`;
+
+// Stable order across runs. The parent rollup no longer depends on row order
+// (see pickParentRow in distribution-map.ts), but a deterministic feed keeps
+// sync diffs and OrderEvent noise reproducible.
+const SPINE_ORDER_BY = `ORDER BY ORDER_NAME, SHIPMENT_BILL NULLS FIRST, TRACKING_NUMBER NULLS FIRST`;
+
+/** Full 20-day window — the only mode before a watermark exists, and the
+ *  explicit manual-reseed fallback thereafter. */
+export const SPINE_QUERY = `${SPINE_SELECT}
 WHERE ORDER_DATE >= DATEADD(day, -20, CURRENT_DATE)
--- Stable order across runs. The parent rollup no longer depends on row order
--- (see pickParentRow in distribution-map.ts), but a deterministic feed keeps
--- sync diffs and OrderEvent noise reproducible.
-ORDER BY ORDER_NAME, SHIPMENT_BILL NULLS FIRST, TRACKING_NUMBER NULLS FIRST`;
+${SPINE_ORDER_BY}`;
+
+/** IST wall-clock NTZ string as Snowflake itself renders it
+ *  ("YYYY-MM-DD HH:mm:ss" or with a fractional-seconds suffix). Validated
+ *  before interpolation since this becomes literal SQL text. */
+const NTZ_TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/;
+
+/**
+ * Build the spine query for a given watermark. No watermark → full 20-day
+ * window (first run / manual reseed). With a watermark, pull only rows
+ * touched since then — `>=`, not `>`: LAST_UPDATED is batch-stamped to
+ * whole-second precision and many rows share one exact value, so a strict
+ * `>` risks dropping siblings of the row that set the watermark. Re-fetching
+ * the boundary is safe because applySyncPatch/upsertShipments are no-ops on
+ * unchanged data. NULL LAST_UPDATED rows are always included: upstream only
+ * stamps a row once its own update job has touched it, so freshly-created
+ * orders sit at NULL until then — excluding them would silently hide new
+ * orders from the incremental pull indefinitely.
+ */
+export function spineQueryFor(watermark?: string): string {
+  if (!watermark) return SPINE_QUERY;
+  if (!NTZ_TS_RE.test(watermark)) {
+    throw new Error(`invalid Snowflake watermark format: ${JSON.stringify(watermark)}`);
+  }
+  return `${SPINE_SELECT}
+WHERE (LAST_UPDATED >= TO_TIMESTAMP_NTZ('${watermark}') OR LAST_UPDATED IS NULL)
+${SPINE_ORDER_BY}`;
+}
 
 export function snowflakeConfigured(): boolean {
   return Boolean(
@@ -255,9 +294,10 @@ export async function querySnowflake<T>(sqlText: string): Promise<T[]> {
   }
 }
 
-/** The hourly reader: last 20 days of RETAIL_JOURNEY_SPINE, one row per
- *  (order, bill, AWB). Throws on failure — the caller (sync run) records the
- *  error in SyncRun and the scheduler survives. */
-export async function queryRetailJourneySpine(): Promise<DistributionRow[]> {
-  return querySnowflake<DistributionRow>(SPINE_QUERY);
+/** The hourly reader: one row per (order, bill, AWB). Full 20-day window when
+ *  `watermark` is omitted (first run / manual reseed); otherwise only rows
+ *  changed since it (see spineQueryFor). Throws on failure — the caller (sync
+ *  run) records the error in SyncRun and the scheduler survives. */
+export async function queryRetailJourneySpine(watermark?: string): Promise<DistributionRow[]> {
+  return querySnowflake<DistributionRow>(spineQueryFor(watermark));
 }

@@ -3,7 +3,7 @@
 // this module only *colours* — it never gates a transition.
 
 import { addDays, atIstCutoff, daysBetween, istToday, nowIso, weekdayOf } from "./ist";
-import { earliestPickup, type AnchorShipment } from "./transit-anchor";
+import { earliestTrackingPick, type AnchorShipment } from "./transit-anchor";
 import type { Order, RulebookEntry, Weekday } from "./types";
 import { WEEKDAYS } from "./types";
 
@@ -27,7 +27,10 @@ export type SlaLeg =
 
 export const LEG_LABEL: Record<SlaLeg, string> = {
   PLACEMENT: "Creation / Placement",
-  HANDOVER: "WH Handover",
+  // "WH Handover" read as the moment the baton changed hands, i.e. the pickup —
+  // which is the neighbouring leg. This one ends at the manifest and measures
+  // the warehouse's own throughput, so it is named for that.
+  HANDOVER: "WH Processing",
   PICKUP: "Courier Pickup",
   DELIVERY: "Store Delivery",
   LOGISTICS_DELIVERY: "Logistics Delivery",
@@ -134,10 +137,12 @@ export function deriveTargets(orderDate: string, rule?: RulebookEntry): DerivedT
 /**
  * Compute every leg's SLA for one order.
  *
- * `shipments` carries the order's AWB children — the HANDOVER leg's actual is
- * a courier pickup, which lives at child grain. Callers that omit it get a
- * handover leg with no actual (BREACHED_PENDING once the deadline passes),
- * which is the honest reading for an order with no children.
+ * `shipments` carries the order's AWB children — the PICKUP leg's actual is a
+ * courier pick date, which lives at child grain. Callers that omit it fall back
+ * to the order's own `shippedTs`, and get a pending pickup leg when there is
+ * none: the honest reading for an order nothing has collected.
+ *
+ * The WH-processing leg needs no children — it ends at the order-level manifest.
  */
 export function computeOrderSla(
   order: Order,
@@ -159,14 +164,29 @@ export function computeOrderSla(
   const expectedTs = order.expectedDate ? atIstCutoff(order.expectedDate) : undefined;
   const deliveredTs =
     order.deliveredTs ?? (order.deliveredDate ? atIstCutoff(order.deliveredDate, "6PM") : undefined);
-  // Handover = the physical courier pickup, not a warehouse event. The spine
-  // carries no dispatch column, so dispatchedTs/dispatchedDate are null on
-  // every live order and this leg used to have no actual at all — it read
-  // BREACHED_PENDING on 93% of the book. Anchoring on the earliest child
-  // pickup is what sync.ts has effectively been persisting, minus the
-  // manifest's generosity: a manifested-but-uncollected order stays pending
-  // rather than being credited as handed over.
-  const handoverActual = order.dispatchedTs ?? earliestPickup(shipments);
+  // Two legs, two different questions, two different clocks:
+  //
+  //   WH_PROCESSING  handover_deadline_ts vs manifestedTs   — did the warehouse
+  //                  finish its work on time? Ends at the manifest.
+  //   PICKUP         pickup_tat           vs trackingPickTs — did the courier
+  //                  collect on time? Starts at the manifest.
+  //
+  // 4850589 correctly moved the pickup question off dispatchedDate, but left
+  // the WAREHOUSE question anchored on a pickup-derived actual, which charged
+  // courier lateness to the warehouse: 985 orders read BREACHED purely because
+  // a van came late for a consignment that was manifested on time (478 of them
+  // manifested more than 24h before the deadline). Those breaches do not
+  // disappear — 300 of them move to the pickup leg, where they belong.
+  //
+  // No fallback to a pickup timestamp here, deliberately. An order with no
+  // manifest has not evidenced that the warehouse finished, and crediting it
+  // from a courier scan is the exact generosity 4850589 removed.
+  const whProcessingActual = order.dispatchedTs ?? order.manifestedTs;
+  // Courier's own pick date first; `shippedTs` is the fallback that keeps the
+  // self-delivery lane measurable — those orders have no eShipz feed, so they
+  // never carry a trackingPickTs and their pickup is only ever known because a
+  // human entered it (set-once, on Logistics).
+  const pickupActual = earliestTrackingPick(shipments) ?? order.shippedTs;
 
   const legs: LegSla[] = [
     {
@@ -178,14 +198,14 @@ export function computeOrderSla(
     {
       leg: "HANDOVER",
       targetTs: t.handoverDeadlineTs,
-      actualTs: handoverActual,
-      state: slaState(t.handoverDeadlineTs, handoverActual, now),
+      actualTs: whProcessingActual,
+      state: slaState(t.handoverDeadlineTs, whProcessingActual, now),
     },
     {
       leg: "PICKUP",
       targetTs: t.pickupTargetTs,
-      actualTs: order.shippedTs,
-      state: slaState(t.pickupTargetTs, order.shippedTs, now),
+      actualTs: pickupActual,
+      state: slaState(t.pickupTargetTs, pickupActual, now),
     },
     {
       leg: "DELIVERY",

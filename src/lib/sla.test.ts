@@ -1,7 +1,14 @@
-// HANDOVER-leg anchoring (PRD §4, §7). The leg's actual is the physical
-// courier pickup at child grain, not the null dispatchedDate the spine never
-// fills and not the WH manifest, which credits an order that is still sitting
-// on the dock.
+// Leg anchoring (PRD §4, §7). Two legs, two clocks, and the whole point is
+// that they do not share an actual:
+//
+//   HANDOVER (WH Processing)  handover_deadline_ts vs manifestedTs
+//   PICKUP   (Courier Pickup) pickup_tat           vs child trackingPickTs
+//                                                  (?? order.shippedTs)
+//
+// The warehouse leg used to read a pickup-derived actual, which charged
+// courier lateness to the warehouse. Moving it to the manifest does not
+// forgive late warehouse work — a manifest after the deadline still breaches —
+// it just stops a late van from breaching a consignment that was ready on time.
 
 import { describe, expect, it } from "vitest";
 import { computeOrderSla } from "./sla";
@@ -55,34 +62,45 @@ describe("earliestPickup", () => {
   });
 });
 
-describe("computeOrderSla — HANDOVER leg", () => {
-  it("is WITHIN_SLA when the earliest child was picked up before the deadline", () => {
-    const leg = handover(order(), [{ trackingPickTs: "2026-07-22T05:00:00.000Z" }]);
-    expect(leg.actualTs).toBe("2026-07-22T05:00:00.000Z");
+describe("computeOrderSla — WH-processing leg (HANDOVER)", () => {
+  it("is WITHIN_SLA when the manifest beat the deadline", () => {
+    const leg = handover(order({ manifestedTs: "2026-07-21T04:00:00.000Z" }), []);
+    expect(leg.actualTs).toBe("2026-07-21T04:00:00.000Z");
     expect(leg.state).toBe("WITHIN_SLA");
   });
 
-  it("is BREACHED when the pickup landed after the deadline", () => {
-    expect(handover(order(), [{ trackingPickTs: "2026-07-24T05:00:00.000Z" }]).state).toBe("BREACHED");
+  it("still BREACHES genuinely-late warehouse work", () => {
+    // The guard against 4850589's concern: manifest is not a free pass. A
+    // manifest after the deadline breaches exactly as before.
+    expect(handover(order({ manifestedTs: "2026-07-23T04:00:00.000Z" }), []).state).toBe("BREACHED");
   });
 
-  it("stays BREACHED_PENDING for a manifested-but-uncollected order past its deadline", () => {
-    // The manifest anchor used to credit this as handed over. 278 live orders
-    // sit in exactly this state; the whole point of the pickup anchor is that
-    // they keep reading as pending rather than on-time.
-    const leg = handover(order({ manifestedTs: "2026-07-21T04:00:00.000Z" }), []);
+  it("does not let a late courier breach a warehouse that finished on time", () => {
+    // This is the 985-order case. Manifested a day early, collected two days
+    // late: the warehouse leg is clean and the lateness belongs to PICKUP.
+    const o = order({ manifestedTs: "2026-07-21T04:00:00.000Z" });
+    const sla = computeOrderSla(o, undefined, NOW, [{ trackingPickTs: "2026-07-24T05:00:00.000Z" }]);
+    expect(sla.legs.find((l) => l.leg === "HANDOVER")!.state).toBe("WITHIN_SLA");
+    expect(sla.legs.find((l) => l.leg === "PICKUP")!.actualTs).toBe("2026-07-24T05:00:00.000Z");
+  });
+
+  it("ignores the courier pickup entirely — children cannot credit the warehouse", () => {
+    // An un-manifested order is NOT credited by a courier scan. This is the
+    // generosity 4850589 removed and it stays removed.
+    const leg = handover(order(), [{ trackingPickTs: "2026-07-21T05:00:00.000Z" }]);
     expect(leg.actualTs).toBeUndefined();
     expect(leg.state).toBe("BREACHED_PENDING");
   });
 
-  it("is FUTURE_SLA when nothing is picked up but the deadline has not passed", () => {
+  it("is FUTURE_SLA when nothing is manifested but the deadline has not passed", () => {
     expect(handover(order({ handoverDeadlineTs: "2026-07-30T12:30:00.000Z" }), []).state).toBe("FUTURE_SLA");
   });
 
-  it("lets a real dispatch timestamp outrank the pickup", () => {
-    const leg = handover(order({ dispatchedTs: "2026-07-21T05:00:00.000Z" }), [
-      { trackingPickTs: "2026-07-24T05:00:00.000Z" },
-    ]);
+  it("lets a real dispatch timestamp outrank the manifest", () => {
+    const leg = handover(
+      order({ dispatchedTs: "2026-07-21T05:00:00.000Z", manifestedTs: "2026-07-23T04:00:00.000Z" }),
+      [],
+    );
     expect(leg.actualTs).toBe("2026-07-21T05:00:00.000Z");
     expect(leg.state).toBe("WITHIN_SLA");
   });
@@ -93,25 +111,73 @@ describe("computeOrderSla — HANDOVER leg", () => {
     expect(leg.state).toBe("BREACHED_PENDING");
   });
 
-  it("takes the earliest box of a split order, not the last", () => {
-    // Earliest is before the deadline, latest is after — A(i) vs A(ii).
-    const leg = handover(order(), [
-      { trackingPickTs: "2026-07-24T05:00:00.000Z" },
-      { trackingPickTs: "2026-07-22T05:00:00.000Z" },
-    ]);
-    expect(leg.actualTs).toBe("2026-07-22T05:00:00.000Z");
-    expect(leg.state).toBe("WITHIN_SLA");
-  });
-
   it("is null, not breaching, when the rulebook sets no handover deadline", () => {
     const leg = handover(order({ handoverDeadlineTs: undefined }), []);
     expect(leg.state).toBeNull();
   });
+});
 
+describe("computeOrderSla — PICKUP leg", () => {
+  const PICKUP_TAT = "2026-07-23T12:30:00.000Z";
+  const pickup = (o: Order, kids?: AnchorShipment[]) =>
+    computeOrderSla(o, undefined as RulebookEntry | undefined, NOW, kids).legs.find((l) => l.leg === "PICKUP")!;
+
+  it("anchors on the courier's own pick date", () => {
+    const leg = pickup(order({ pickupTat: PICKUP_TAT }), [{ trackingPickTs: "2026-07-22T05:00:00.000Z" }]);
+    expect(leg.actualTs).toBe("2026-07-22T05:00:00.000Z");
+    expect(leg.state).toBe("WITHIN_SLA");
+  });
+
+  it("takes the earliest box of a split order, not the last", () => {
+    const leg = pickup(order({ pickupTat: PICKUP_TAT }), [
+      { trackingPickTs: "2026-07-24T05:00:00.000Z" },
+      { trackingPickTs: "2026-07-22T05:00:00.000Z" },
+    ]);
+    expect(leg.actualTs).toBe("2026-07-22T05:00:00.000Z");
+  });
+
+  it("does NOT use pickedUpTs — the leg is measured on the spine's pick clock", () => {
+    const leg = pickup(order({ pickupTat: PICKUP_TAT }), [{ pickedUpTs: "2026-07-22T05:00:00.000Z" }]);
+    expect(leg.actualTs).toBeUndefined();
+  });
+
+  it("falls back to shippedTs so the self-delivery lane stays measurable", () => {
+    // No eShipz feed means no trackingPickTs, ever. shippedTs is the only
+    // pickup those orders will ever have, and it is what the manual write on
+    // Logistics sets (set-once).
+    const leg = pickup(order({ pickupTat: PICKUP_TAT, shippedTs: "2026-07-22T05:00:00.000Z" }), []);
+    expect(leg.actualTs).toBe("2026-07-22T05:00:00.000Z");
+    expect(leg.state).toBe("WITHIN_SLA");
+  });
+
+  it("prefers the courier pick date over shippedTs when both exist", () => {
+    // shippedTs is stamped at poll-observation time, not the real pick moment.
+    const leg = pickup(order({ pickupTat: PICKUP_TAT, shippedTs: "2026-07-24T09:00:00.000Z" }), [
+      { trackingPickTs: "2026-07-22T05:00:00.000Z" },
+    ]);
+    expect(leg.actualTs).toBe("2026-07-22T05:00:00.000Z");
+  });
+
+  it("is pending when nothing has collected it", () => {
+    expect(pickup(order({ pickupTat: PICKUP_TAT }), []).state).toBe("BREACHED_PENDING");
+  });
+});
+
+describe("the two legs stay independent", () => {
   it("does not disturb the other legs", () => {
     const sla = computeOrderSla(order(), undefined, NOW, [{ trackingPickTs: "2026-07-24T05:00:00.000Z" }]);
     expect(sla.legs.find((l) => l.leg === "PLACEMENT")!.actualTs).toBe("2026-07-20T04:00:00.000Z");
-    expect(sla.legs.find((l) => l.leg === "PICKUP")!.actualTs).toBeUndefined(); // still order.shippedTs
     expect(sla.legs.find((l) => l.leg === "DELIVERY")!.actualTs).toBeUndefined();
+  });
+
+  it("reads different actuals for the same order", () => {
+    const sla = computeOrderSla(
+      order({ manifestedTs: "2026-07-21T04:00:00.000Z", pickupTat: "2026-07-23T12:30:00.000Z" }),
+      undefined,
+      NOW,
+      [{ trackingPickTs: "2026-07-22T05:00:00.000Z" }],
+    );
+    expect(sla.legs.find((l) => l.leg === "HANDOVER")!.actualTs).toBe("2026-07-21T04:00:00.000Z");
+    expect(sla.legs.find((l) => l.leg === "PICKUP")!.actualTs).toBe("2026-07-22T05:00:00.000Z");
   });
 });

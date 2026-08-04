@@ -74,6 +74,18 @@ export function earliestPickup(shipments: AnchorShipment[] = []): string | undef
 }
 
 /**
+ * The courier's own pick date — the PICKUP SLA leg's actual.
+ *
+ * Deliberately `trackingPickTs` only, NOT the `pickedUpTs ?? trackingPickTs`
+ * blend `earliestPickup` uses: the pickup leg is measured against the spine's
+ * pick date, which is the same clock the rulebook's `pickup_tat` is written
+ * in. Earliest child, for the same grain reason as everything else here.
+ */
+export function earliestTrackingPick(shipments: AnchorShipment[] = []): string | undefined {
+  return earliest(shipments.map((s) => s.trackingPickTs));
+}
+
+/**
  * Resolve the date transit age should be measured from. Returns an empty
  * anchor when every link is missing — callers keep their existing behaviour
  * in that case, and the order is a genuine spine-side data gap.

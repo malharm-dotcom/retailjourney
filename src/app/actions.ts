@@ -68,6 +68,36 @@ export async function setShipmentStatus(
   }
 }
 
+/**
+ * The Logistics lens's hand-edit. The client sends whatever it likes; the
+ * forward-only ladder check, the delivered lock and the set-once pickup are all
+ * enforced in the repo — nothing here trusts the caller's idea of what a legal
+ * next stage is.
+ */
+export async function updateShipmentManually(
+  soNumber: string,
+  input: { to?: ShipmentStatus; pickupDate?: string },
+  note?: string,
+): Promise<ActionResult> {
+  try {
+    const user = await currentUser();
+    assertCan(user, "canEditLogistics");
+    const order = await repo.getOrder(soNumber);
+    if (!order) throw new Error(`Order ${soNumber} not found`);
+    assertFacility(user, order.facility);
+    await repo.manualShipmentUpdate(
+      soNumber,
+      { to: input.to, pickupDate: input.pickupDate || undefined },
+      { id: user.id, name: user.name },
+      note,
+    );
+    revalidatePath("/", "layout");
+    return { ok: true };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
 export async function recordNdr(soNumber: string, note?: string): Promise<ActionResult> {
   try {
     const user = await currentUser();

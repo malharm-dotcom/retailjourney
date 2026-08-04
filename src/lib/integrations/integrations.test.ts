@@ -7,11 +7,18 @@ import { mapShipment } from "./eshipz-source";
 
 describe("eshipz-map behaviourFor", () => {
   it("maps the primary tags", () => {
-    expect(behaviourFor("InfoReceived")).toBe("pickup_pending");
-    expect(behaviourFor("InfoReceived", "PickupRegistered")).toBe("pickup_pending");
-    expect(behaviourFor("InfoReceived", "OutForPickup")).toBe("pickup_pending");
-    expect(behaviourFor("PickedUp")).toBe("in_transit");
+    // InfoReceived and PickedUp each own a ladder rung now. They used to
+    // collapse into "pickup_pending" (no status at all) and "in_transit"
+    // respectively, which lost the distinction between a label that exists,
+    // a parcel that has been collected, and a parcel that is moving.
+    expect(behaviourFor("InfoReceived")).toBe("inforeceived");
+    // Subtags are only consulted for the Exception tag, so these stay put.
+    expect(behaviourFor("InfoReceived", "PickupRegistered")).toBe("inforeceived");
+    expect(behaviourFor("InfoReceived", "OutForPickup")).toBe("inforeceived");
+    expect(behaviourFor("PickedUp")).toBe("picked_up");
     expect(behaviourFor("InTransit")).toBe("in_transit");
+    // Still genuinely stateless — the carrier has said nothing yet.
+    expect(behaviourFor("Pending")).toBe("pickup_pending");
     expect(behaviourFor("OutForDelivery")).toBe("ofd");
     expect(behaviourFor("Delivered")).toBe("delivered");
   });

@@ -1,8 +1,18 @@
 "use client";
 
-// Shipment status update — used from the In-Transit board and Logistics queue.
-// Sync flows respect the transition map; a manual actor may force any status
-// (manual override is always available, PRD §2). Every change → OrderEvent.
+// Shipment status update — the Logistics (courier-action) lens only. In-Transit
+// is a view-only visibility lens and deliberately has no edit affordance.
+//
+// Manual edits walk the LINEAR LADDER and only forwards:
+//   Awaiting Pickup → Picked Up → In Transit → Out for Delivery → Delivered
+// Delivery Failed and Return are off that ladder. They are courier facts the
+// poller owns, and they are not offered as stage targets here — a person
+// telling the system a parcel "is returning" is a guess; the carrier scan is
+// the fact. (Recording an NDR *attempt* is still available below: that is a
+// counter, not a stage move.)
+//
+// The forward-only rule is enforced server-side in checkManualStage. This UI
+// only renders what the server would accept — it is a courtesy, not the guard.
 //
 // This dialog used to be five identically-styled buttons in a 2×3 grid where one
 // click wrote a TERMINAL status with no confirmation and no undo — sitting next to
@@ -13,26 +23,28 @@
 //
 // So: the note is captured BEFORE the actions (it used to sit below them, which
 // meant the click that submitted also discarded whatever the user was about to
-// type), the choices are tiered by consequence, and the two irreversible ones go
+// type), the choices are tiered by consequence, and the irreversible one goes
 // through a confirmation that restates which shipment is about to be closed.
 
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { recordNdr, setShipmentStatus } from "@/app/actions";
+import { recordNdr, updateShipmentManually } from "@/app/actions";
 import { Icon } from "@/components/icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button, Field, Input } from "@/components/ui/primitives";
-import { SHIPMENT_LABEL } from "@/lib/journey";
+import { SHIPMENT_LABEL, SHIPMENT_LADDER, isLadderStatus, ladderOrdinal } from "@/lib/journey";
+import { fmtDate } from "@/lib/ist";
 import { SHIPMENT_VISUAL, cn } from "@/lib/ui";
 import type { ShipmentStatus } from "@/lib/types";
 
-/** Statuses that end the shipment. `SHIPMENT_TRANSITIONS.DELIVERED` is empty, so
- *  there is no route out of Delivered once it is written. */
-const IRREVERSIBLE: ShipmentStatus[] = ["DELIVERED", "RETURN"];
-
-/** Mid-journey updates: safe, frequent, applied on one click. */
-const ONWARD: ShipmentStatus[] = ["IN_TRANSIT", "OUT_FOR_DELIVERY"];
+/** Rungs strictly ahead of `current`. Equal-or-behind is refused by the server,
+ *  so offering it would only teach the user that this dialog lies. */
+function forwardTargets(current?: ShipmentStatus): ShipmentStatus[] {
+  if (current !== undefined && !isLadderStatus(current)) return [];
+  const from = ladderOrdinal(current);
+  return SHIPMENT_LADDER.filter((_, i) => from === undefined || i > from);
+}
 
 export function ShipmentDialog({
   soNumber,
@@ -41,6 +53,7 @@ export function ShipmentDialog({
   store,
   lr,
   courier,
+  pickup,
   children,
 }: {
   soNumber: string;
@@ -51,38 +64,74 @@ export function ShipmentDialog({
   store?: string;
   lr?: string;
   courier?: string;
+  /** Already-recorded pickup date. Present = set-once has fired and the field
+   *  is closed; the server would ignore a second value anyway. */
+  pickup?: string;
   children: React.ReactNode;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [note, setNote] = useState("");
+  const [pickupDate, setPickupDate] = useState("");
   const [confirming, setConfirming] = useState<ShipmentStatus | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const targets = forwardTargets(current);
+  const onward = targets.filter((s) => s !== "DELIVERED");
+  const canDeliver = targets.includes("DELIVERED");
+  const offLadder = current !== undefined && !isLadderStatus(current);
 
   const close = () => {
     setOpen(false);
     setNote("");
+    setPickupDate("");
     setConfirming(null);
   };
 
+  const done = (msg: string) => {
+    toast.success(msg);
+    close();
+    router.refresh();
+  };
+
+  /** Stage move (optionally carrying the pickup date entered above). */
   const apply = (to: ShipmentStatus) =>
     startTransition(async () => {
-      const res =
-        to === "DELIVERY_FAILED"
-          ? await recordNdr(soNumber, note || undefined)
-          : await setShipmentStatus(soNumber, to, note || undefined);
+      const res = await updateShipmentManually(
+        soNumber,
+        { to, pickupDate: pickupDate || undefined },
+        note || undefined,
+      );
       if (!res.ok) {
         toast.error(res.error);
         return;
       }
-      toast.success(
-        to === "DELIVERY_FAILED" ? `NDR recorded on ${soNumber}` : `${soNumber} marked ${SHIPMENT_LABEL[to]}`,
-      );
-      close();
-      router.refresh();
+      done(`${soNumber} marked ${SHIPMENT_LABEL[to]}`);
     });
 
-  const choose = (to: ShipmentStatus) => (IRREVERSIBLE.includes(to) ? setConfirming(to) : apply(to));
+  /** Pickup date on its own — the common correction for a self-delivery lane
+   *  whose stage is already right. */
+  const savePickup = () =>
+    startTransition(async () => {
+      const res = await updateShipmentManually(soNumber, { pickupDate }, note || undefined);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      done(`Pickup date recorded on ${soNumber}`);
+    });
+
+  const ndr = () =>
+    startTransition(async () => {
+      const res = await recordNdr(soNumber, note || undefined);
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      done(`NDR recorded on ${soNumber}`);
+    });
+
+  const choose = (to: ShipmentStatus) => (to === "DELIVERED" ? setConfirming(to) : apply(to));
 
   const optionClass = (isCurrent: boolean) =>
     cn(
@@ -104,12 +153,8 @@ export function ShipmentDialog({
 
       {confirming ? (
         <DialogContent
-          title={confirming === "DELIVERED" ? "Mark this shipment delivered?" : "Send this shipment back?"}
-          description={
-            confirming === "DELIVERED"
-              ? "This closes the delivery leg and stops SLA measurement. There is no undo in the app."
-              : "This records the shipment as returning. There is no undo in the app."
-          }
+          title="Mark this shipment delivered?"
+          description="This closes the delivery leg and stops SLA measurement. There is no undo in the app."
         >
           {/* What is actually about to change, in the user's own vocabulary. */}
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 rounded-control bg-paper px-4 py-3 text-ui">
@@ -145,8 +190,8 @@ export function ShipmentDialog({
             <Button variant="ghost" onClick={() => setConfirming(null)}>
               Back
             </Button>
-            <Button variant={confirming === "DELIVERED" ? "primary" : "danger"} disabled={pending} onClick={() => apply(confirming)}>
-              {pending ? "Saving…" : confirming === "DELIVERED" ? "Yes, mark delivered" : "Yes, record return"}
+            <Button variant="primary" disabled={pending} onClick={() => apply(confirming)}>
+              {pending ? "Saving…" : "Yes, mark delivered"}
             </Button>
           </div>
         </DialogContent>
@@ -155,8 +200,8 @@ export function ShipmentDialog({
           title={`Update shipment · ${soNumber}`}
           description={
             self
-              ? "Self-delivery lane — no eShipz feed, status is manual only."
-              : "Manual override — logged with your name, and it wins over the synced status."
+              ? "Self-delivery lane — no eShipz feed, so this is the only thing that moves it."
+              : "Manual edit — logged with your name. Status only moves forward."
           }
         >
           {/* Note first: it belongs to whichever action follows, and putting it
@@ -169,56 +214,95 @@ export function ShipmentDialog({
             />
           </Field>
 
-          <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">Still moving</p>
-          <div className="grid grid-cols-2 gap-2">
-            {ONWARD.map((s) => {
-              const v = SHIPMENT_VISUAL[s];
-              const isCurrent = current === s;
-              return (
-                <button key={s} type="button" disabled={pending || isCurrent} onClick={() => choose(s)} className={optionClass(isCurrent)}>
-                  <Icon name={v.icon} size={16} />
-                  {v.label}
-                  {isCurrent ? <span className="ml-auto text-meta">current</span> : null}
-                </button>
-              );
-            })}
-          </div>
+          <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">Pickup date</p>
+          {pickup ? (
+            // Set-once. Showing it read-only is more honest than an input the
+            // server would silently ignore.
+            <p className="rounded-control bg-paper px-3 py-2.5 text-ui text-ink-soft">
+              Collected {fmtDate(pickup)}
+              <span className="mt-0.5 block text-cap text-mute">
+                Recorded once and kept — it anchors the courier-pickup SLA leg.
+              </span>
+            </p>
+          ) : (
+            <div className="flex flex-wrap items-end gap-2">
+              <Field label="" hint="The day the courier actually collected it.">
+                <Input type="date" value={pickupDate} onChange={(e) => setPickupDate(e.target.value)} />
+              </Field>
+              <Button variant="outline" disabled={pending || !pickupDate} onClick={savePickup}>
+                Save date
+              </Button>
+            </div>
+          )}
+
+          {offLadder ? (
+            <p className="mt-4 rounded-control bg-paper px-3 py-2.5 text-ui text-mute">
+              This shipment is {SHIPMENT_LABEL[current!]}. Courier tracking resolves it from here — there
+              is no stage to set by hand.
+            </p>
+          ) : (
+            <>
+              {onward.length > 0 ? (
+                <>
+                  <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+                    Move forward to
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {onward.map((s) => {
+                      const v = SHIPMENT_VISUAL[s];
+                      return (
+                        <button
+                          key={s}
+                          type="button"
+                          disabled={pending}
+                          onClick={() => choose(s)}
+                          className={optionClass(false)}
+                        >
+                          <Icon name={v.icon} size={16} />
+                          {v.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : null}
+
+              {current ? (
+                <p className="mt-3 text-cap text-mute">
+                  Currently {SHIPMENT_LABEL[current]}. Earlier stages are not offered — status never
+                  moves backwards.
+                </p>
+              ) : null}
+            </>
+          )}
 
           <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
             Something went wrong
           </p>
+          {/* Not a stage move: this bumps the attempt counter and flags the
+              shipment. It is the one off-ladder write a human may make, because
+              a failed attempt is something the person at the door knows first. */}
           <button
             type="button"
             disabled={pending}
-            onClick={() => choose("DELIVERY_FAILED")}
+            onClick={ndr}
             className={cn(optionClass(false), "w-full")}
           >
             <Icon name={SHIPMENT_VISUAL.DELIVERY_FAILED.icon} size={16} />
             Record NDR — a failed attempt
           </button>
 
-          <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
-            Closes the shipment · asks you to confirm
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <Button
-              disabled={pending || current === "DELIVERED"}
-              onClick={() => choose("DELIVERED")}
-              className="w-full"
-            >
-              <Icon name={SHIPMENT_VISUAL.DELIVERED.icon} size={16} />
-              {current === "DELIVERED" ? "Already delivered" : "Delivered"}
-            </Button>
-            <Button
-              variant="outline"
-              disabled={pending || current === "RETURN"}
-              onClick={() => choose("RETURN")}
-              className="w-full"
-            >
-              <Icon name={SHIPMENT_VISUAL.RETURN.icon} size={16} />
-              Return
-            </Button>
-          </div>
+          {canDeliver ? (
+            <>
+              <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+                Closes the shipment · asks you to confirm
+              </p>
+              <Button disabled={pending} onClick={() => choose("DELIVERED")} className="w-full">
+                <Icon name={SHIPMENT_VISUAL.DELIVERED.icon} size={16} />
+                Delivered
+              </Button>
+            </>
+          ) : null}
 
           <div className="mt-5 flex justify-end border-t border-line pt-3">
             <Button variant="ghost" onClick={close}>

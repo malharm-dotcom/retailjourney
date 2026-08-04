@@ -42,7 +42,13 @@ export type OverallStatus =
 /** Spine STORE_CHANNEL — how the receiving store is operated. */
 export type StoreChannel = "OWN" | "FRANCHISE";
 
+// The linear lifecycle ladder is INFORECEIVED → PICKED_UP → IN_TRANSIT →
+// OUT_FOR_DELIVERY → DELIVERED (see SHIPMENT_LADDER in journey.ts).
+// DELIVERY_FAILED and RETURN sit OFF that ladder: they are poller-owned states
+// with their own (partly re-entrant) transition edges, never manual targets.
 export type ShipmentStatus =
+  | "INFORECEIVED" // label generated, carrier has the manifest, nothing collected yet
+  | "PICKED_UP" // physically collected — no longer pickup-pending, not yet a transit scan
   | "IN_TRANSIT"
   | "OUT_FOR_DELIVERY"
   | "DELIVERED"

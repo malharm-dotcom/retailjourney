@@ -5,12 +5,13 @@
 
 import { databaseConfigured } from "./db";
 import { PrismaRepo } from "./repo-prisma";
-import { istDateOf, nowIso } from "./ist";
+import { atIstCutoff, istDateOf, nowIso } from "./ist";
 import {
   REQUIRED_CAPTURES,
   STATUS_TIMESTAMPS,
   canTransition,
   canTransitionShipment,
+  checkManualStage,
   rollupOverall,
 } from "./journey";
 import type {
@@ -35,6 +36,17 @@ export interface Actor {
   name: string;
 }
 
+/** What the Logistics lens may hand-edit. Deliberately just these two: the
+ *  stage, and the pickup date that anchors it. */
+export interface ManualShipmentInput {
+  /** Target rung. Must be on SHIPMENT_LADDER — DELIVERY_FAILED / RETURN are
+   *  refused by the guard, not merely absent from the UI. */
+  to?: ShipmentStatus;
+  /** IST business date (yyyy-mm-dd). Set-once: ignored when a pickup is
+   *  already recorded, so a real courier scan is never clobbered. */
+  pickupDate?: string;
+}
+
 export interface OrderRepo {
   listOrders(scope: FacilityScope, areaManager?: string): Promise<Order[]>;
   getOrder(soNumber: string): Promise<Order | undefined>;
@@ -45,6 +57,11 @@ export interface OrderRepo {
   listUsers(): Promise<User[]>;
   transitionStatus(soNumber: string, to: OrderStatus, actor: Actor, captures?: Partial<Order>, note?: string): Promise<Order>;
   transitionShipment(soNumber: string, to: ShipmentStatus, actor: Actor, source: Source, note?: string): Promise<Order>;
+  /** Hand-entered shipment correction from the Logistics lens. Constrained
+   *  forward-only along SHIPMENT_LADDER and refused outright once delivered —
+   *  see checkManualStage. Separate from transitionShipment because sync flows
+   *  keep the older, deliberately non-monotonic transition map. */
+  manualShipmentUpdate(soNumber: string, input: ManualShipmentInput, actor: Actor, note?: string): Promise<Order>;
   recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Promise<Order>;
   updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Promise<Order>;
   /** Child shipments (AWBs) of an order, oldest first. */
@@ -223,6 +240,57 @@ class InMemoryRepo implements OrderRepo {
     return o;
   }
 
+  async manualShipmentUpdate(
+    soNumber: string,
+    input: ManualShipmentInput,
+    actor: Actor,
+    note?: string,
+  ): Promise<Order> {
+    const d = db();
+    const o = mustGet(d, soNumber);
+    if (o.status !== "DISPATCHED_TO_STORE") {
+      throw new Error(`Order ${soNumber} is not dispatched yet`);
+    }
+    const now = nowIso();
+    let touched = false;
+
+    // See PrismaRepo.manualShipmentUpdate — this mirrors it exactly; the guard
+    // itself lives in journey.ts so neither copy re-derives ordinals.
+    const pickupTs = input.pickupDate ? atIstCutoff(input.pickupDate, "9AM") : undefined;
+    if (pickupTs && !o.shippedTs) {
+      o.shippedTs = pickupTs;
+      touched = true;
+      pushEvent(d, o.id, "shippedTs", null, pickupTs, "MANUAL", actor, note);
+    }
+
+    if (input.to) {
+      const outcome = checkManualStage(o.shipmentStatus, input.to);
+      if (outcome.kind === "reject") throw new Error(outcome.reason);
+      if (outcome.kind === "advance") {
+        const to = outcome.to;
+        const from = o.shipmentStatus ?? null;
+        o.shipmentStatus = to;
+        o.shipmentSource = "MANUAL";
+        touched = true;
+        if ((to === "PICKED_UP" || to === "IN_TRANSIT") && !o.shippedTs) o.shippedTs = now;
+        if (to === "OUT_FOR_DELIVERY") {
+          if (!o.firstOfdDate) o.firstOfdDate = now;
+          o.latestOfdDate = now;
+        }
+        if (to === "DELIVERED") {
+          o.deliveredTs = now;
+          o.deliveredDate = istDateOf(now);
+          o.deliveryAttempts += 1;
+        }
+        o.overallStatus = rollupOverall(o);
+        pushEvent(d, o.id, "shipmentStatus", from, to, "MANUAL", actor, note);
+      }
+    }
+
+    if (touched) o.updatedAt = now;
+    return o;
+  }
+
   async recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Promise<Order> {
     const d = db();
     const o = mustGet(d, soNumber);
@@ -324,6 +392,7 @@ export const repo: OrderRepo = {
   listUsers: () => impl().listUsers(),
   transitionStatus: (soNumber, to, actor, captures, note) => impl().transitionStatus(soNumber, to, actor, captures, note),
   transitionShipment: (soNumber, to, actor, source, note) => impl().transitionShipment(soNumber, to, actor, source, note),
+  manualShipmentUpdate: (soNumber, input, actor, note) => impl().manualShipmentUpdate(soNumber, input, actor, note),
   recordNdrAttempt: (soNumber, actor, note) => impl().recordNdrAttempt(soNumber, actor, note),
   updateFields: (soNumber, patch, actor, source, note) => impl().updateFields(soNumber, patch, actor, source, note),
   listShipments: (soNumber) => impl().listShipments(soNumber),

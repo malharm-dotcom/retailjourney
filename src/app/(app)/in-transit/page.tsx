@@ -4,7 +4,6 @@
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
 import { istToday, daysBetween } from "@/lib/ist";
-import { policyOf } from "@/lib/rbac";
 import { requireSession } from "@/lib/session";
 import { TONE, type Tone } from "@/lib/ui";
 import { TransitBoard, type TransitRow } from "./board";
@@ -35,7 +34,6 @@ export default async function InTransitPage() {
   const { user, scope } = await requireSession();
   const rows = await scopedOrders(scope, user);
   const today = istToday();
-  const canEdit = policyOf(user.role).canEditLogistics || policyOf(user.role).isAdmin;
 
   const wh = rows.filter((r) => r.order.overallStatus === "WH_PROCESSING" && !["CANCELLED", "UNFULFILLABLE"].includes(r.order.status));
   const whBreaching = wh.filter((r) => r.breaching).length;
@@ -103,7 +101,10 @@ export default async function InTransitPage() {
           of which are real. */}
       <PageHead
         title="In-transit board"
-        sub="Every shipment on the road right now — one glance, no follow-ups."
+        // Names the lens. This screen answers "where is it and when does it
+        // land" and nothing else — the edit controls moved to Logistics so
+        // there is one place a status can change, not two.
+        sub="Where every shipment is right now, and when it lands. Read-only — corrections are made on Logistics."
       />
 
       {/* A summary STRIP, not four cards. This route used to open with the same
@@ -118,7 +119,7 @@ export default async function InTransitPage() {
         <BoardStat tone="done" label="Delivered Today" value={deliveredToday.length} sub={withinPct != null ? `${withinPct}% within SLA` : "none yet today"} />
       </dl>
 
-      <TransitBoard rows={board} canEdit={canEdit} scopeLabel={scope === "ALL" ? "All" : scope} />
+      <TransitBoard rows={board} scopeLabel={scope === "ALL" ? "All" : scope} />
     </>
   );
 }

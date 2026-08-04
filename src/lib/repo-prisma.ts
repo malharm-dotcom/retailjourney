@@ -5,12 +5,13 @@
 // `manualFields` so sync never overwrites them (manual wins, PRD §2).
 
 import { prisma } from "./db";
-import { istDateOf, nowIso } from "./ist";
+import { atIstCutoff, istDateOf, nowIso } from "./ist";
 import {
   REQUIRED_CAPTURES,
   STATUS_TIMESTAMPS,
   canTransition,
   canTransitionShipment,
+  checkManualStage,
   rollupOverall,
 } from "./journey";
 import {
@@ -23,7 +24,7 @@ import {
   storeToDomain,
   userToDomain,
 } from "./prisma-map";
-import type { Actor, OrderRepo, ShipmentUpsert } from "./repo";
+import type { Actor, ManualShipmentInput, OrderRepo, ShipmentUpsert } from "./repo";
 import type { AnchorShipment } from "./transit-anchor";
 import type {
   FacilityScope,
@@ -201,6 +202,68 @@ export class PrismaRepo implements OrderRepo {
     patch.overallStatus = rollupOverall({ ...o, shipmentStatus: to });
     if (source === "MANUAL") patch.manualFields = mergeManual(o.manualFields ?? [], ["shipmentStatus"]);
     return this.commit(o, patch, [ev("shipmentStatus", o.shipmentStatus ?? null, to, source, actor, note)]);
+  }
+
+  async manualShipmentUpdate(
+    soNumber: string,
+    input: ManualShipmentInput,
+    actor: Actor,
+    note?: string,
+  ): Promise<Order> {
+    const o = await this.mustGet(soNumber);
+    if (o.status !== "DISPATCHED_TO_STORE") {
+      throw new Error(`Order ${soNumber} is not dispatched yet`);
+    }
+    const now = nowIso();
+    const patch: Partial<Order> = {};
+    const events: PendingEvent[] = [];
+    const touched: string[] = [];
+
+    // Pickup first: on an idempotent stage edit this is the only thing that
+    // lands, and on a delivered order the stage guard below throws before we
+    // get here — a delivered shipment is closed to hand edits entirely.
+    const pickupTs = input.pickupDate ? atIstCutoff(input.pickupDate, "9AM") : undefined;
+    if (pickupTs && !o.shippedTs) {
+      patch.shippedTs = pickupTs;
+      touched.push("shippedTs");
+      events.push(ev("shippedTs", null, pickupTs, "MANUAL", actor, note));
+    }
+
+    if (input.to) {
+      const outcome = checkManualStage(o.shipmentStatus, input.to);
+      if (outcome.kind === "reject") throw new Error(outcome.reason);
+      if (outcome.kind === "advance") {
+        const to = outcome.to;
+        patch.shipmentStatus = to;
+        patch.shipmentSource = "MANUAL";
+        touched.push("shipmentStatus");
+        // Set-once, first-real-value-wins. PICKED_UP is the pickup moment now
+        // that it has its own rung; IN_TRANSIT still sets it for shipments that
+        // skip straight past pickup, so nothing that used to get a shippedTs
+        // stops getting one.
+        if ((to === "PICKED_UP" || to === "IN_TRANSIT") && !patch.shippedTs && !o.shippedTs) {
+          patch.shippedTs = now;
+        }
+        if (to === "OUT_FOR_DELIVERY") {
+          if (!o.firstOfdDate) patch.firstOfdDate = now;
+          patch.latestOfdDate = now;
+        }
+        if (to === "DELIVERED") {
+          patch.deliveredTs = now;
+          patch.deliveredDate = istDateOf(now);
+          patch.deliveryAttempts = o.deliveryAttempts + 1;
+        }
+        patch.overallStatus = rollupOverall({ ...o, shipmentStatus: to });
+        events.push(ev("shipmentStatus", o.shipmentStatus ?? null, to, "MANUAL", actor, note));
+      }
+      // kind === "idempotent": the stage is already where the user asked for.
+      // No status write, no event, no timestamp churn — but any set-once
+      // pickup above still stands.
+    }
+
+    if (touched.length === 0) return o;
+    patch.manualFields = mergeManual(o.manualFields ?? [], touched);
+    return this.commit(o, patch, events);
   }
 
   async recordNdrAttempt(soNumber: string, actor: Actor, note?: string): Promise<Order> {

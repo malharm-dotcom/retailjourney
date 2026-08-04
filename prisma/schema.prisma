@@ -47,7 +47,13 @@ enum OverallStatus {
   INWARDED
 }
 
+// Linear ladder: INFORECEIVED → PICKED_UP → IN_TRANSIT → OUT_FOR_DELIVERY →
+// DELIVERED. DELIVERY_FAILED / RETURN are off-ladder, poller-owned states.
+// INFORECEIVED and PICKED_UP were added after go-live: existing IN_TRANSIT rows
+// that were really pickups are NOT backfilled, only new syncs populate them.
 enum ShipmentStatus {
+  INFORECEIVED
+  PICKED_UP
   IN_TRANSIT
   OUT_FOR_DELIVERY
   DELIVERED

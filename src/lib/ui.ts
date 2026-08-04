@@ -161,6 +161,13 @@ export const OVERALL_VISUAL: Record<OverallStatus, StatusVisual> = {
 };
 
 export const SHIPMENT_VISUAL: Record<ShipmentStatus, StatusVisual> = {
+  // Rung 0. The label exists and the carrier has acknowledged it, but nothing
+  // has been collected — so this shares the Pickup Pending look rather than
+  // inventing a sixth thing for a user to learn. It is the same fact.
+  INFORECEIVED: OVERALL_VISUAL.PICKUP_PENDING,
+  // Rung 1. Collected, but no transit scan yet. Motion has started — the
+  // in-transit tone, with a glyph that says "handed over" rather than "moving".
+  PICKED_UP: { icon: "export-bold", label: "Picked Up", tone: "motion" },
   IN_TRANSIT: OVERALL_VISUAL.IN_TRANSIT,
   // The courier has it in hand for the last mile — hands-on, not merely moving.
   OUT_FOR_DELIVERY: { icon: "scooter-bold", label: "Out for Delivery", tone: "handling" },

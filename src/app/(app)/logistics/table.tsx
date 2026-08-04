@@ -11,7 +11,6 @@ import { ShipmentDialog } from "@/components/shipment-dialog";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Field, Input, Select } from "@/components/ui/primitives";
-import type { AnchorSource } from "@/lib/transit-anchor";
 import { LOGISTICS_PARTNERS, type ShipmentStatus, type Source } from "@/lib/types";
 import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf } from "@/lib/ui";
 import { fmtDate } from "@/lib/ist";
@@ -27,7 +26,10 @@ export interface LogisticsRow {
   self: boolean;
   vehicle?: string;
   eway?: string;
-  dispatched?: string;
+  /** Courier collection date (IST business date). Undefined = not collected. */
+  pickup?: string;
+  /** Days since collection. Undefined when `pickup` is. */
+  sincePickup?: number;
   expected?: string;
   delivered?: string;
   shipment?: ShipmentStatus;
@@ -36,19 +38,7 @@ export interface LogisticsRow {
   pod?: string;
   msg?: string;
   breaching: boolean;
-  ageing: number;
-  /** Which anchor `ageing` was measured from — undefined when none exists. */
-  ageFrom?: AnchorSource;
 }
-
-/** The age sub-line names its anchor, so a manifest- or pickup-based age is
- *  never silently passed off as time since dispatch. */
-const AGE_LABEL: Record<AnchorSource, string> = {
-  DISPATCHED: "in transit",
-  MANIFESTED: "since manifest",
-  PICKED_UP: "since pickup",
-  TRACKING_PICK: "since pickup",
-};
 
 type Filter = "open" | "pending" | "transit" | "failed" | "self" | "delivered";
 
@@ -65,8 +55,16 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
     const needle = q.trim().toLowerCase();
     return rows.filter((r) => {
       if (filter === "open" && r.delivered) return false;
-      if (filter === "pending" && (r.shipment || r.delivered)) return false;
-      if (filter === "transit" && !(r.shipment === "IN_TRANSIT" || r.shipment === "OUT_FOR_DELIVERY")) return false;
+      // Awaiting pickup is now either "no scan at all" (null) or the explicit
+      // INFORECEIVED rung. Before that rung existed this was a bare
+      // `r.shipment` test, which would now drop every acknowledged-but-
+      // uncollected shipment out of the one filter that exists to find them.
+      if (filter === "pending" && ((r.shipment && r.shipment !== "INFORECEIVED") || r.delivered)) return false;
+      if (
+        filter === "transit" &&
+        !(r.shipment === "PICKED_UP" || r.shipment === "IN_TRANSIT" || r.shipment === "OUT_FOR_DELIVERY")
+      )
+        return false;
       if (filter === "failed" && r.shipment !== "DELIVERY_FAILED") return false;
       if (filter === "self" && !(r.self && !r.delivered)) return false;
       if (filter === "delivered" && !r.delivered) return false;
@@ -160,7 +158,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 <th className="px-3 py-3 font-semibold">DC · LR</th>
                 <th className="px-3 py-3 font-semibold">Courier</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
-                <th className="px-3 py-3 font-semibold">Dispatched</th>
+                <th className="px-3 py-3 font-semibold">Picked up</th>
                 <th className="px-3 py-3 font-semibold">Expected</th>
                 <th className="px-3 py-3 text-center font-semibold">Attempts</th>
                 <th className="px-3 py-3 font-semibold">POD</th>
@@ -208,13 +206,27 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                       <td className="px-3 py-3">
                         <StatusPill visual={v} source={r.source} size="sm" />
                       </td>
+                      {/* Not collected is a different fact from collected-today,
+                          so it gets its own words rather than a "—" and a 0. */}
                       <td className="mono px-3 py-3 text-dense text-ink-soft">
-                        {fmtDate(r.dispatched)}
-                        {r.ageFrom ? (
-                          <span className="block text-cap text-mute">
-                            {r.ageing}d {AGE_LABEL[r.ageFrom]}
-                          </span>
-                        ) : null}
+                        {r.pickup ? (
+                          <>
+                            {fmtDate(r.pickup)}
+                            {r.sincePickup !== undefined ? (
+                              <span
+                                className={cn(
+                                  "block text-cap",
+                                  // Stale only matters while it is still moving.
+                                  !r.delivered && r.sincePickup >= 5 ? "font-semibold text-breach" : "text-mute",
+                                )}
+                              >
+                                {r.sincePickup}d since pickup
+                              </span>
+                            ) : null}
+                          </>
+                        ) : (
+                          <span className="font-sans text-mute">Not picked up</span>
+                        )}
                       </td>
                       <td className={cn("mono px-3 py-3 text-dense", r.breaching && !r.delivered ? "font-semibold text-breach" : "text-ink-soft")}>
                         {r.delivered ? `del. ${fmtDate(r.delivered)}` : fmtDate(r.expected)}
@@ -258,6 +270,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                                   store={r.store}
                                   lr={r.lr}
                                   courier={r.courier}
+                                  pickup={r.pickup}
                                 >
                                   <button
                                     type="button"

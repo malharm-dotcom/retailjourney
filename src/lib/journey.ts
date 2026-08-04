@@ -35,8 +35,15 @@ export const WH_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   UNFULFILLABLE: [],
 };
 
-/** Allowed Phase B transitions (manual override may set any of these). */
+/** Allowed Phase B transitions for SYNC flows (poller / spine). Manual writes
+ *  do NOT use this map — they go through the linear ladder guard below. */
 export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, ShipmentStatus[]> = {
+  // The two low rungs are sync-only entry points. A first scan may legitimately
+  // land anywhere ahead of them (a shipment can be found already delivered),
+  // so they are permissive forward — but nothing regresses INTO them, which is
+  // why no existing state lists them as a target.
+  INFORECEIVED: ["PICKED_UP", "IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED", "RETURN"],
+  PICKED_UP: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED", "RETURN"],
   IN_TRANSIT: ["OUT_FOR_DELIVERY", "DELIVERY_FAILED", "DELIVERED", "RETURN"],
   OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED", "RETURN"],
   DELIVERY_FAILED: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "RETURN"],
@@ -58,6 +65,92 @@ export function canTransitionShipment(from: ShipmentStatus | undefined, to: Ship
   // freshly scanned (verified live with a delivered Bluedart AWB).
   if (!from) return true;
   return SHIPMENT_TRANSITIONS[from]?.includes(to) ?? false;
+}
+
+// ---------------------------------------------------------------------------
+// The linear ladder — manual writes only.
+//
+// Sync flows keep using SHIPMENT_TRANSITIONS above, which is deliberately
+// non-monotonic (a RETURN can re-forward, an NDR can go back on the road).
+// A human editing a shipment by hand gets a much narrower contract: they may
+// only walk this ladder forwards, and only onto rungs that are on it.
+
+/** The monotonic lifecycle, in ascending order. Index = ordinal. */
+export const SHIPMENT_LADDER = [
+  "INFORECEIVED",
+  "PICKED_UP",
+  "IN_TRANSIT",
+  "OUT_FOR_DELIVERY",
+  "DELIVERED",
+] as const satisfies readonly ShipmentStatus[];
+
+/** A status that sits on the linear ladder (i.e. has an ordinal). */
+export type LadderStatus = (typeof SHIPMENT_LADDER)[number];
+
+/** The statuses a human may set by hand. DELIVERY_FAILED and RETURN are
+ *  excluded on purpose: they are courier facts the poller owns, not stages a
+ *  person advances an order through. (NDR is recorded via its own attempt
+ *  action, which is not a ladder move.) */
+export function isLadderStatus(s: ShipmentStatus | undefined): s is LadderStatus {
+  return s !== undefined && (SHIPMENT_LADDER as readonly string[]).includes(s);
+}
+
+/** Ordinal on the ladder, or undefined for off-ladder / unset states.
+ *  undefined `from` is rung -1 in effect: nothing has happened yet, so any
+ *  ladder target is an advance. */
+export function ladderOrdinal(s: ShipmentStatus | undefined): number | undefined {
+  return isLadderStatus(s) ? SHIPMENT_LADDER.indexOf(s) : undefined;
+}
+
+export type ManualStageOutcome =
+  | { kind: "advance"; to: LadderStatus }
+  /** Same rung — no stage change, but set-once timestamps still apply. */
+  | { kind: "idempotent"; to: LadderStatus }
+  | { kind: "reject"; reason: string };
+
+/**
+ * THE forward-only floor check for manual stage edits. Single source of truth —
+ * both repo implementations call this and nothing else re-derives ordinals.
+ *
+ *   incoming >  current → advance
+ *   incoming == current → idempotent (no stage change, timestamps still set-once)
+ *   incoming <  current → reject, never regress
+ *   current  == DELIVERED → terminal, reject everything
+ *
+ * An off-ladder CURRENT state (DELIVERY_FAILED / RETURN) has no ordinal to
+ * compare against. Rather than invent one, manual edits are refused outright:
+ * a failed or returned shipment is the poller's to resolve, and letting a
+ * human hand-wave it back onto the ladder is exactly the regression this
+ * guard exists to prevent.
+ */
+export function checkManualStage(
+  current: ShipmentStatus | undefined,
+  incoming: ShipmentStatus,
+): ManualStageOutcome {
+  if (!isLadderStatus(incoming)) {
+    return {
+      kind: "reject",
+      reason: `${SHIPMENT_LABEL[incoming]} is set by courier tracking, not by hand`,
+    };
+  }
+  if (current === "DELIVERED") {
+    return { kind: "reject", reason: "This shipment is delivered — its status is final" };
+  }
+  if (current !== undefined && !isLadderStatus(current)) {
+    return {
+      kind: "reject",
+      reason: `${SHIPMENT_LABEL[current]} is resolved by courier tracking, not by hand`,
+    };
+  }
+  const from = ladderOrdinal(current);
+  const to = SHIPMENT_LADDER.indexOf(incoming);
+  if (from === undefined) return { kind: "advance", to: incoming };
+  if (to > from) return { kind: "advance", to: incoming };
+  if (to === from) return { kind: "idempotent", to: incoming };
+  return {
+    kind: "reject",
+    reason: `Cannot move back to ${SHIPMENT_LABEL[incoming]} from ${SHIPMENT_LABEL[current!]}`,
+  };
 }
 
 /**
@@ -100,6 +193,16 @@ export const STATUS_TIMESTAMPS: Partial<Record<OrderStatus, (keyof Order)[]>> = 
  */
 export function rollupOverall(o: Pick<Order, "status" | "shipmentStatus">): OverallStatus {
   if (o.shipmentStatus === "DELIVERED") return "DELIVERED";
+  // INFORECEIVED means the label exists but nothing has been collected — that
+  // is still pickup-pending, NOT in transit. Before this rung existed the same
+  // shipment carried a null shipmentStatus and fell through to the
+  // DISPATCHED_TO_STORE branch below; without this line the bare
+  // `if (o.shipmentStatus)` underneath would silently promote every
+  // awaiting-pickup shipment to In Transit the moment the poller started
+  // emitting the new value.
+  if (o.shipmentStatus === "INFORECEIVED") {
+    return o.status === "DISPATCHED_TO_STORE" ? "PICKUP_PENDING" : "WH_PROCESSING";
+  }
   if (o.shipmentStatus) return "IN_TRANSIT";
   if (o.status === "DISPATCHED_TO_STORE") return "PICKUP_PENDING";
   return "WH_PROCESSING";
@@ -108,12 +211,17 @@ export function rollupOverall(o: Pick<Order, "status" | "shipmentStatus">): Over
 /** Progression rank for the worst-of shipment rollup. DELIVERY_FAILED sits
  *  below IN_TRANSIT — an NDR'd shipment needs attention, it is not
  *  "progressing". RETURN is ranked only for the all-returned edge case. */
+/** Renumbered to make room for the two low rungs. The RELATIVE order of the
+ *  five original values is unchanged — only the gaps moved — so no existing
+ *  rollup outcome shifts. */
 const SHIPMENT_RANK: Record<ShipmentStatus, number> = {
   RETURN: 0,
   DELIVERY_FAILED: 1,
-  IN_TRANSIT: 2,
-  OUT_FOR_DELIVERY: 3,
-  DELIVERED: 4,
+  INFORECEIVED: 2,
+  PICKED_UP: 3,
+  IN_TRANSIT: 4,
+  OUT_FOR_DELIVERY: 5,
+  DELIVERED: 6,
 };
 
 /**
@@ -161,6 +269,8 @@ export const OVERALL_LABEL: Record<OverallStatus, string> = {
 };
 
 export const SHIPMENT_LABEL: Record<ShipmentStatus, string> = {
+  INFORECEIVED: "Awaiting Pickup",
+  PICKED_UP: "Picked Up",
   IN_TRANSIT: "In Transit",
   OUT_FOR_DELIVERY: "Out for Delivery",
   DELIVERED: "Delivered",

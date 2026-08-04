@@ -12,6 +12,8 @@ import type { ShipmentStatus, TrackingCheckpoint } from "../types";
 
 export type EshipzBehaviour =
   | "pickup_pending"
+  | "inforeceived"
+  | "picked_up"
   | "in_transit"
   | "ofd"
   | "delivered"
@@ -21,12 +23,19 @@ export type EshipzBehaviour =
   | "ignore";
 
 const TAG_BEHAVIOUR: Record<string, EshipzBehaviour> = {
-  INFORECEIVED: "pickup_pending",
+  // Own rung now (was "pickup_pending", i.e. no status at all): the carrier has
+  // acknowledged the label. Still NOT collected — rollupOverall keeps this
+  // order Pickup Pending.
+  INFORECEIVED: "inforeceived",
+  // Genuinely stateless — the carrier has told us nothing yet, so unlike
+  // INFORECEIVED these still write no shipmentStatus.
   PENDING: "pickup_pending",
   // Snowflake distribution_analytics human-form statuses (same enum space —
   // its STATUS column is fed by the same eShipz pipeline).
   PICKUPPENDING: "pickup_pending",
-  PICKEDUP: "in_transit",
+  // Own rung now (was collapsed into IN_TRANSIT): the parcel is physically
+  // collected but has no transit scan yet.
+  PICKEDUP: "picked_up",
   INTRANSIT: "in_transit",
   OUTFORDELIVERY: "ofd",
   DELIVERED: "delivered",
@@ -91,6 +100,10 @@ export function behaviourFor(tag?: string, subtag?: string): EshipzBehaviour {
  */
 export function statusForTag(tag?: string, subtag?: string): ShipmentStatus | undefined {
   switch (behaviourFor(tag, subtag)) {
+    case "inforeceived":
+      return "INFORECEIVED";
+    case "picked_up":
+      return "PICKED_UP";
     case "in_transit":
     case "transit_exception":
       return "IN_TRANSIT";
@@ -121,7 +134,13 @@ export function statusForTag(tag?: string, subtag?: string): ShipmentStatus | un
 export function pickupTsFromCheckpoints(checkpoints: TrackingCheckpoint[]): string | undefined {
   let pickupTs: string | undefined;
   for (const c of checkpoints) {
-    if (c.date && behaviourFor(c.tag, c.subtag) === "in_transit") pickupTs = c.date;
+    // "picked_up" MUST be counted here. It used to be folded into "in_transit",
+    // and splitting it onto its own rung would otherwise have quietly dropped
+    // the PickedUp scan out of this scan — which is the very scan this function
+    // exists to find. Dropping it would push the pickup anchor forward to the
+    // first transit scan and shorten every measured handover leg.
+    const b = behaviourFor(c.tag, c.subtag);
+    if (c.date && (b === "in_transit" || b === "picked_up")) pickupTs = c.date;
   }
   return pickupTs;
 }

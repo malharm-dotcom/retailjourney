@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
-import { ShipmentDialog } from "@/components/shipment-dialog";
 import { StatusPill } from "@/components/ui/pill";
 import { Chip, Input } from "@/components/ui/primitives";
 import { ageingBucket } from "@/lib/sla";
@@ -70,11 +69,9 @@ function MobileLabel({ children }: { children: React.ReactNode }) {
 
 export function TransitBoard({
   rows,
-  canEdit,
   scopeLabel,
 }: {
   rows: TransitRow[];
-  canEdit: boolean;
   scopeLabel: string;
 }) {
   const router = useRouter();
@@ -306,25 +303,12 @@ export function TransitBoard({
                       <Icon name="routing-2-linear" size={17} />
                     </a>
                   ) : null}
+                  {/* No edit control. In-Transit is the visibility lens —
+                      "where is it, when does it land". Every shipment edit
+                      lives on Logistics, so there is exactly one place a
+                      status can be changed and one place to look for who
+                      changed it. */}
                   <JourneyLink so={r.so} />
-                  {canEdit && r.overall !== "DELIVERED" ? (
-                    <ShipmentDialog
-                      soNumber={r.so}
-                      current={r.shipment}
-                      self={r.self}
-                      store={r.store}
-                      lr={r.lr}
-                      courier={r.courier}
-                    >
-                      <button
-                        type="button"
-                        aria-label={`Update shipment status for ${r.so}`}
-                        className={ROW_ACTION}
-                      >
-                        <Icon name="pen-new-square-linear" size={17} />
-                      </button>
-                    </ShipmentDialog>
-                  ) : null}
                 </div>
               </div>
             );

@@ -107,7 +107,14 @@ export default async function AdminPage() {
           lastSeenAt: u.lastSeenAt.toISOString(),
           sampleSoNumbers: u.sampleSoNumbers,
         }))}
-        stores={stores.map((s) => ({ id: s.id, label: `${s.finalStore} (${s.facility})` }))}
+        // Codes travel with the label so the picker can be searched by either.
+        // An operator staring at a raw unmatched channel string is holding a
+        // code, not a store name.
+        stores={stores.map((s) => ({
+          id: s.id,
+          label: `${s.finalStore} (${s.facility})`,
+          codes: [s.channelCode, s.branchCode].filter((c): c is string => Boolean(c)),
+        }))}
       />
 
       <div className="mb-6 rounded-card bg-card p-5 shadow-card">

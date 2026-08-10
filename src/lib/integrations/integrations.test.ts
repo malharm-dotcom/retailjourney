@@ -1,9 +1,9 @@
 // Unit tests for the integration mapping layer — the logic we must trust
 // before real eShipz payloads flow (no live calls here).
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { behaviourFor, pickupTsFromCheckpoints } from "./eshipz-map";
-import { mapShipment } from "./eshipz-source";
+import { EshipzTrackingSource, mapShipment } from "./eshipz-source";
 
 describe("eshipz-map behaviourFor", () => {
   it("maps the primary tags", () => {
@@ -122,5 +122,110 @@ describe("pickupTsFromCheckpoints", () => {
       pickupTsFromCheckpoints([{ date: "2026-07-01T09:00:00.000Z", tag: "InfoReceived", subtag: "PickupRegistered" }]),
     ).toBeUndefined();
     expect(pickupTsFromCheckpoints([])).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Chunk resilience. Regression cover for 2026-08-10, when eShipz's gateway
+// returned 504 on 50-AWB batches and one bad chunk threw away the whole run's
+// writes (120 fetched / 0 upserted, three runs straight).
+
+describe("EshipzTrackingSource.fetchTracking chunk resilience", () => {
+  const AWB_TOKEN = "test-token";
+  let originalToken: string | undefined;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    originalToken = process.env.ESHIPZ_API_TOKEN;
+    originalFetch = globalThis.fetch;
+    process.env.ESHIPZ_API_TOKEN = AWB_TOKEN;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    if (originalToken === undefined) delete process.env.ESHIPZ_API_TOKEN;
+    else process.env.ESHIPZ_API_TOKEN = originalToken;
+  });
+
+  /** One shipment per requested AWB, so a chunk's yield is countable. */
+  const okBody = (trackIds: string[]) => ({
+    data: trackIds.map((id) => ({ tag: "InTransit", tracking_number: id, checkpoints: [] })),
+  });
+
+  const gatewayTimeout = () =>
+    new Response("<html><head><title>504 Gateway Time-out</title></head></html>", { status: 504 });
+
+  /** track_id values from a stubbed fetch call's request body. */
+  const trackIdsOf = (init: RequestInit): string[] =>
+    (JSON.parse(String(init.body)) as { track_id: string }).track_id.split(",");
+
+  const awbs = (n: number) => Array.from({ length: n }, (_, i) => `LR${String(i).padStart(3, "0")}`);
+
+  it("keeps the surviving chunks' updates when one chunk fails", async () => {
+    // 30 AWBs at CHUNK_SIZE 20 = two chunks. The first 504s, the second is fine.
+    let call = 0;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      call += 1;
+      if (call === 1) return gatewayTimeout();
+      return Response.json(okBody(trackIdsOf(init)));
+    }) as unknown as typeof globalThis.fetch;
+
+    const errors: string[] = [];
+    const updates = await new EshipzTrackingSource().fetchTracking(awbs(30), (m) => errors.push(m));
+
+    // The critical assertion: the good chunk's 10 shipments SURVIVE the bad
+    // chunk. Before the fix this was 0 — the throw discarded everything.
+    expect(updates.length).toBe(10);
+    expect(updates.map((u) => u.trackingNumber)).toContain("LR020");
+    expect(errors).toHaveLength(1);
+    // The error names the chunk's size and AWB range, not just the status.
+    expect(errors[0]).toContain("20 AWBs, LR000..LR019");
+    expect(errors[0]).toContain("HTTP 504");
+  });
+
+  it("throws when every chunk fails", async () => {
+    globalThis.fetch = (async () => gatewayTimeout()) as unknown as typeof globalThis.fetch;
+
+    const errors: string[] = [];
+    await expect(
+      new EshipzTrackingSource().fetchTracking(awbs(30), (m) => errors.push(m)),
+    ).rejects.toThrow(/all 2 chunk\(s\) failed/);
+    // Each failure is still reported individually before the hard throw.
+    expect(errors).toHaveLength(2);
+  });
+
+  it("does not throw on an empty candidate set (zero chunks is not 'all failed')", async () => {
+    let called = false;
+    globalThis.fetch = (async () => {
+      called = true;
+      return Response.json(okBody([]));
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(new EshipzTrackingSource().fetchTracking([])).resolves.toEqual([]);
+    expect(called).toBe(false);
+  });
+
+  it("batches in 20s so a request stays under the upstream 60s gateway timeout", async () => {
+    const sizes: number[] = [];
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      const ids = trackIdsOf(init);
+      sizes.push(ids.length);
+      return Response.json(okBody(ids));
+    }) as unknown as typeof globalThis.fetch;
+
+    await new EshipzTrackingSource().fetchTracking(awbs(45));
+    expect(sizes).toEqual([20, 20, 5]);
+  });
+
+  it("bounds each request with a client-side timeout signal", async () => {
+    let signal: AbortSignal | undefined;
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      signal = init.signal ?? undefined;
+      return Response.json(okBody(trackIdsOf(init)));
+    }) as unknown as typeof globalThis.fetch;
+
+    await new EshipzTrackingSource().fetchTracking(awbs(1));
+    // We bound ourselves rather than trusting their edge to time us out.
+    expect(signal).toBeInstanceOf(AbortSignal);
   });
 });

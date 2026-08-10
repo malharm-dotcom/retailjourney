@@ -424,7 +424,9 @@ export async function runEshipzSync(): Promise<SyncSummary> {
 
     if (orders.length) {
       const source = new EshipzTrackingSource();
-      const updates = await source.fetchTracking(awbs);
+      // A failed chunk lands in summary.errors (so the run reads ok:false and
+      // the Admin card goes red) WITHOUT discarding the chunks that succeeded.
+      const updates = await source.fetchTracking(awbs, (m) => summary.errors.push(m));
 
       // v1 enrichment ONLY for matched orders still missing trackingLink.
       let meta = new Map<string, { trackingLink?: string }>();

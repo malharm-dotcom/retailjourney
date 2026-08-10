@@ -26,5 +26,11 @@ export interface TrackingUpdate {
 }
 
 export interface TrackingSource {
-  fetchTracking(lrNumbers: string[]): Promise<TrackingUpdate[]>;
+  /** onChunkError reports a batch that failed while the rest of the sweep
+   *  continues — partial results are returned, not discarded. Implementations
+   *  throw only when every attempted batch failed. */
+  fetchTracking(
+    lrNumbers: string[],
+    onChunkError?: (message: string) => void,
+  ): Promise<TrackingUpdate[]>;
 }

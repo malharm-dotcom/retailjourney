@@ -8,7 +8,15 @@ import type { TrackingCheckpoint } from "../types";
 import { behaviourFor, pickupTsFromCheckpoints, statusForTag } from "./eshipz-map";
 import type { TrackingSource, TrackingUpdate } from "./types";
 
-const CHUNK_SIZE = 50;
+// 20, not 50. eShipz's tracking endpoint costs roughly 1.4s per AWB under load,
+// so a 50-AWB batch takes ~70s and trips THEIR nginx 60s gateway timeout — the
+// 504 that failed every run on 2026-08-10. 20 keeps a batch near ~28s (measured
+// live: 21 AWBs in 29s) with margin under that ceiling.
+const CHUNK_SIZE = 20;
+// Client-side ceiling, just above their 60s gateway timeout: we bound our own
+// request rather than trusting their edge to do it. Without this a hung eShipz
+// stalls the whole 15-min tick indefinitely.
+const REQUEST_TIMEOUT_MS = 70_000;
 const MAX_CHECKPOINTS = 20;
 
 export function eshipzConfigured(): boolean {
@@ -103,30 +111,69 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
 }
 
 export class EshipzTrackingSource implements TrackingSource {
-  async fetchTracking(lrNumbers: string[]): Promise<TrackingUpdate[]> {
+  /**
+   * Fetch tracking for every AWB, in batches.
+   *
+   * PARTIAL SUCCESS IS THE POINT. A chunk that fails no longer discards the
+   * chunks that succeeded — it is reported through onChunkError and the sweep
+   * continues. Before this, one transient 504 on any single chunk threw out of
+   * the loop and zeroed the entire run (live on 2026-08-10: chunk 3 returned 21
+   * good shipments that were thrown away with the two that timed out).
+   *
+   * A total outage still fails hard: if EVERY attempted chunk failed we throw,
+   * so the run is recorded failed exactly as before. Zero chunks (no candidate
+   * AWBs) is NOT "all failed" — it is simply nothing to do, and returns [].
+   */
+  async fetchTracking(
+    lrNumbers: string[],
+    onChunkError?: (message: string) => void,
+  ): Promise<TrackingUpdate[]> {
     const token = process.env.ESHIPZ_API_TOKEN;
     if (!token) throw new Error("ESHIPZ_API_TOKEN is not set");
 
     const updates: TrackingUpdate[] = [];
+    let attempted = 0;
+    let failed = 0;
+    let lastError = "";
+
     for (let i = 0; i < lrNumbers.length; i += CHUNK_SIZE) {
       const chunk = lrNumbers.slice(i, i + CHUNK_SIZE);
-      // Body is track_id ONLY (comma-separated batch) — verified live 2026-07-08:
-      // adding include_split/include_child_accounts makes the API return [].
-      const res = await fetch(`${baseUrl()}/api/v2/trackings`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-TOKEN": token },
-        body: JSON.stringify({ track_id: chunk.join(",") }),
-      });
-      if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        throw new Error(`eShipz trackings failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+      attempted += 1;
+      // Identify the chunk by size and AWB range so a recurring failure can be
+      // pinned to specific shipments, not just "a chunk failed".
+      const where = `chunk ${attempted} (${chunk.length} AWBs, ${chunk[0]}..${chunk[chunk.length - 1]})`;
+      try {
+        // Body is track_id ONLY (comma-separated batch) — verified live 2026-07-08:
+        // adding include_split/include_child_accounts makes the API return [].
+        const res = await fetch(`${baseUrl()}/api/v2/trackings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-API-TOKEN": token },
+          body: JSON.stringify({ track_id: chunk.join(",") }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => "");
+          throw new Error(`HTTP ${res.status} ${text.slice(0, 300)}`);
+        }
+        const body = (await res.json()) as EshipzResponse | EshipzShipment[];
+        const shipments = Array.isArray(body) ? body : (body.data ?? body.trackings ?? []);
+        for (const s of shipments) {
+          const u = mapShipment(s);
+          if (u) updates.push(u);
+        }
+      } catch (e) {
+        failed += 1;
+        lastError = e instanceof Error ? e.message : String(e);
+        const message = `eShipz trackings failed: ${where}: ${lastError}`;
+        if (onChunkError) onChunkError(message);
+        else console.error(`[eshipz] ${message}`);
       }
-      const body = (await res.json()) as EshipzResponse | EshipzShipment[];
-      const shipments = Array.isArray(body) ? body : (body.data ?? body.trackings ?? []);
-      for (const s of shipments) {
-        const u = mapShipment(s);
-        if (u) updates.push(u);
-      }
+    }
+
+    if (attempted > 0 && failed === attempted) {
+      throw new Error(
+        `eShipz trackings failed: all ${attempted} chunk(s) failed, last error: ${lastError}`,
+      );
     }
     return updates;
   }

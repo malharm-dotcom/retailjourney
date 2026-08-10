@@ -142,17 +142,28 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         </div>
       </div>
 
-      {/* No overflow-hidden here: it becomes the sticky thead's containing
-          block for scroll purposes, which breaks its sticky offset entirely
-          (the header stops tracking real page scroll and overlaps the first
-          row instead of clearing it). Corners are rounded on the edge cells
-          directly instead. */}
+      {/* The scroll container IS the sticky header's scrollport, and that is
+          deliberate. `overflow-x-auto` cannot be scoped to one axis — CSS
+          computes the `visible` cross-axis to `auto`, so this div is a
+          scrollport whether we want it or not. While it had no height limit it
+          never scrolled vertically, so the thead could not stick to anything:
+          it simply sat 82px (--bar-h) below its own slot, leaving that slot
+          showing bare `bg-card` (the "white band") and painting the header
+          across the first row. Bounding the height makes the container scroll
+          for real, which is what a sticky offset needs to resolve against.
+
+          The height cap also keeps the card's top edge below the fixed top bar
+          at full page scroll, so the pinned header parks in open space instead
+          of tucking under the chrome. */}
       <div className="rounded-card bg-card shadow-card">
-        <div className="overflow-x-auto">
+        <div className="max-h-[calc(100dvh-var(--bar-h)-8rem)] overflow-auto rounded-card">
           <table className="w-full min-w-[980px] border-collapse text-left">
             {/* Sticky: this table runs to hundreds of rows and the column
-                meaning used to scroll away on every surface except Reports. */}
-            <thead className="sticky top-[var(--bar-h)] z-10">
+                meaning used to scroll away on every surface except Reports.
+                `top-0` — the offset is relative to the scrollport above, which
+                already starts below the bar. Any --bar-h offset here would
+                re-open the exact gap this replaced. */}
+            <thead className="sticky top-0 z-10">
               <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
                 <th className="rounded-tl-card px-5 py-3 font-semibold">Store · SO</th>
                 <th className="px-3 py-3 font-semibold">DC · LR</th>

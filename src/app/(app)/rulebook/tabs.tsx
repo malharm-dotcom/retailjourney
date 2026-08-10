@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
 import { Chip } from "@/components/ui/primitives";
 import { normStoreKey } from "@/lib/qc-tat";
-import type { RulebookOrderType, RulebookViewRow } from "@/lib/rulebook-map";
+import { facilityWhGroup, type RulebookOrderType, type RulebookViewRow } from "@/lib/rulebook-map";
 import { WEEKDAYS, type Store, type Weekday } from "@/lib/types";
 import { cn } from "@/lib/ui";
 
@@ -29,7 +29,20 @@ const LEGS = [
 
 // The source rulebook carries only FRESH and RPL — there is no OTHER schedule.
 const TYPES: RulebookOrderType[] = ["FRESH", "RPL"];
-type Tab = "grid" | "stores" | "lanes";
+type Tab = "timeline" | "grid" | "stores" | "lanes";
+
+/** The four legs in the order they actually happen, paired with the cutoff the
+ *  source carries for each. Only O and H have times: the rulebook's PICKUP and
+ *  DELIVERY columns are bare weekdays, so those two stops legitimately show a
+ *  day and nothing else rather than a missing value. */
+function legsOf(r: RulebookViewRow) {
+  return [
+    { ...LEGS[0], day: r.targetOrderDay, time: r.targetOrderCutoff },
+    { ...LEGS[1], day: r.targetHandoverDay, time: r.targetHandoverCutoff },
+    { ...LEGS[2], day: r.targetPickupDay, time: undefined },
+    { ...LEGS[3], day: r.targetDeliveryDay, time: undefined },
+  ];
+}
 
 /** A store row paired with the rulebook line for the active order type + WH.
  *  A store served from both WHs yields two lines; a store with no rulebook row
@@ -50,7 +63,11 @@ export function RulebookTabs({
   snapshots: string[];
   version: string | null;
 }) {
-  const [tab, setTab] = useState<Tab>("grid");
+  // Timeline is the default read. The weekly grid answers "what happens on
+  // Wednesday"; the far more common question on this screen is "what is THIS
+  // store's schedule", and the grid made you reassemble that from markers
+  // scattered across seven columns and two rows.
+  const [tab, setTab] = useState<Tab>("timeline");
   const [type, setType] = useState<RulebookOrderType>("FRESH");
 
   // Rulebook rows grouped by normalized store key for the store-joined views.
@@ -79,6 +96,24 @@ export function RulebookTabs({
     return lines;
   }, [stores, byStoreKey, type]);
 
+  // Same join as gridLines, but kept GROUPED by store instead of flattened —
+  // the two WH rows for one store belong under one heading, not adrift as two
+  // near-identical rows you have to notice are the same shop.
+  const timelineGroups = useMemo(
+    () =>
+      stores.map((store) => ({
+        store,
+        rules: (byStoreKey.get(normStoreKey(store.finalStore)) ?? [])
+          .filter((r) => r.orderType === type)
+          // Serving WH first: it is the leg that actually applies here.
+          .sort((a, b) => {
+            const serving = facilityWhGroup(store.facility);
+            return Number(b.whGroup === serving) - Number(a.whGroup === serving);
+          }),
+      })),
+    [stores, byStoreKey, type],
+  );
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-2.5">
@@ -92,6 +127,7 @@ export function RulebookTabs({
         >
           {(
             [
+              ["timeline", "Timeline"],
               ["grid", "Weekly grid"],
               ["stores", "Stores"],
               ["lanes", "Lanes & zones"],
@@ -118,7 +154,7 @@ export function RulebookTabs({
             </button>
           ))}
         </div>
-        {tab === "grid" ? (
+        {tab === "grid" || tab === "timeline" ? (
           <div className="flex gap-2">
             {TYPES.map((t) => (
               <Chip key={t} active={type === t} onClick={() => setType(t)}>
@@ -135,6 +171,8 @@ export function RulebookTabs({
           wait 180ms to read it — on a reference screen whose whole job is
           looking something up. Switching is now instant. */}
       <div id="rulebook-panel" role="tabpanel" aria-labelledby={`rulebook-tab-${tab}`}>
+      {tab === "timeline" ? <TimelineView groups={timelineGroups} type={type} /> : null}
+
       {tab === "grid" ? (
         <>
           {/* The legend is sticky. It used to sit above a table that runs to
@@ -274,6 +312,150 @@ export function RulebookTabs({
       {tab === "lanes" ? <LaneView rules={rules} /> : null}
       </div>
     </>
+  );
+}
+
+/** One stop on a store's chain: the leg badge, the day it lands on, and the
+ *  cutoff time where the source carries one. Fixed width so the four stops line
+ *  up column-for-column between a store's North and South rows — comparing the
+ *  two legs is most of why both are on screen. */
+function Stop({
+  leg,
+  day,
+  time,
+}: {
+  leg: (typeof LEGS)[number];
+  day?: Weekday;
+  time?: string;
+}) {
+  return (
+    <div className="flex w-[104px] shrink-0 items-start gap-2">
+      <span
+        aria-hidden
+        className={cn("mt-px grid h-[22px] w-[22px] shrink-0 place-items-center rounded-md text-meta font-bold", leg.cell)}
+      >
+        {leg.short}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-dense font-semibold text-ink">
+          {day ?? <span className="font-normal text-mute">—</span>}
+          <span className="sr-only"> — {leg.label}</span>
+        </span>
+        {time ? <span className="mono block text-meta text-mute">{time}</span> : null}
+      </span>
+    </div>
+  );
+}
+
+/** The O → H → P → D chain for ONE store × WH, read left to right. */
+function Chain({ rule }: { rule: RulebookViewRow }) {
+  const legs = legsOf(rule);
+  return (
+    <div className="flex flex-wrap items-start gap-y-3">
+      {legs.map((l, i) => (
+        <div key={l.key} className="flex items-start">
+          {i > 0 ? (
+            <span aria-hidden className="mx-2 mt-[11px] h-px w-6 shrink-0 bg-line-strong sm:w-10" />
+          ) : null}
+          <Stop leg={l} day={l.day} time={l.time} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * Per-store timeline — the readable answer to "what is this store's schedule".
+ *
+ * The weekly grid put four markers somewhere across seven columns and made the
+ * reader reassemble the sequence; here the sequence IS the layout, always in
+ * the same four positions, with the cutoff under the stop it belongs to.
+ */
+function TimelineView({
+  groups,
+  type,
+}: {
+  groups: { store: Store; rules: RulebookViewRow[] }[];
+  type: RulebookOrderType;
+}) {
+  const covered = groups.filter((g) => g.rules.length > 0).length;
+
+  return (
+    <div className="overflow-hidden rounded-card bg-card shadow-card">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-paper px-5 py-3 text-cap text-mute">
+        {LEGS.map((l) => (
+          <span key={l.key} className="flex items-center gap-1.5">
+            <span className={cn("grid h-[18px] w-[18px] place-items-center rounded-md text-meta font-bold", l.cell)}>
+              {l.short}
+            </span>
+            {l.label}
+          </span>
+        ))}
+        <span className="sm:ml-auto">
+          {covered} of {groups.length} stores carry a {type} rulebook row
+        </span>
+      </div>
+
+      <div className="divide-y divide-line">
+        {groups.map(({ store: s, rules }) => {
+          const serving = facilityWhGroup(s.facility);
+          return (
+            <div key={s.id} className="px-5 py-4">
+              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h3 className="text-row font-semibold text-ink">{s.storeName}</h3>
+                <span className="mono text-meta text-mute">{s.branchCode}</span>
+                <span className="text-cap text-mute">
+                  {s.storeCity} · {s.zone} · serving {s.facility}
+                </span>
+              </div>
+
+              {rules.length === 0 ? (
+                // Advisory, never a breach: a store with no row simply has no
+                // suggested dates. It is not late and it is not blocked.
+                <p className="mt-2.5 text-dense text-mute">
+                  No {type} rulebook row — this store has no suggested timeline in this version.
+                </p>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  {rules.map((r, i) => (
+                    <div
+                      key={`${r.wh || "wh"}:${i}`}
+                      className="flex flex-col gap-2 lg:flex-row lg:items-start lg:gap-5"
+                    >
+                      {/* Always two lines — badge, then lane/TAT. Letting these
+                          share a line and wrap only when long made a store's
+                          North and South rows different heights, so their
+                          chains stopped lining up with each other. */}
+                      <div className="w-[190px] shrink-0">
+                        <span
+                          className={cn(
+                            "inline-block rounded-full px-2.5 py-0.5 text-meta font-bold",
+                            // The row that actually applies to this store is
+                            // the one whose WH serves it. Both are shown —
+                            // never collapsed — but only one is in force.
+                            r.whGroup === serving
+                              ? "bg-sage-soft text-sage"
+                              : "bg-paper text-mute",
+                          )}
+                        >
+                          {r.wh || "WH —"}
+                          {r.whGroup === serving ? " · serves" : ""}
+                        </span>
+                        <span className="mt-1 block text-meta text-mute">
+                          {r.laneClassification ?? "—"}
+                          {r.bestTatDays != null ? ` · best ${r.bestTatDays}d` : ""}
+                        </span>
+                      </div>
+                      <Chain rule={r} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

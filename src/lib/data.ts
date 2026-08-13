@@ -38,9 +38,28 @@ export async function scopedOrders(scope: FacilityScope, user: User): Promise<Or
   });
 }
 
-export async function orderBySo(soNumber: string): Promise<OrderRow | undefined> {
+/**
+ * One order by SO number, scoped exactly as `scopedOrders` scopes a board.
+ *
+ * The scope is a REQUIRED parameter rather than something the caller applies
+ * afterwards: this used to be a bare lookup, so `/orders/<SO>` returned any
+ * order in any facility to any signed-in user — the boards were scoped and the
+ * detail page behind them was not. Taking the scope here means a call site
+ * cannot forget it. Out of scope reads as "no such order" (undefined), never as
+ * a partial or redacted row, so the caller's own notFound() is the whole story.
+ */
+export async function orderBySo(
+  soNumber: string,
+  scope: FacilityScope,
+  user: User,
+): Promise<OrderRow | undefined> {
   const order = await repo.getOrder(soNumber);
   if (!order) return undefined;
+  // Same two predicates listOrders() applies, in the same order, so an order
+  // visible on a board is visible here and nothing else is.
+  if (scope !== "ALL" && order.facility !== scope) return undefined;
+  const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
+  if (am && order.areaManager !== am) return undefined;
   const rule = ruleFor(await repo.listRules(), order.storeId, order.type, order.orderDate);
   const shipments = await repo.listShipments(soNumber);
   const sla = computeOrderSla(order, rule, undefined, shipments);

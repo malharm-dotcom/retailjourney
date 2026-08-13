@@ -63,8 +63,10 @@ function eventTitle(e: OrderEvent): string {
 }
 
 export default async function OrderPage({ params }: { params: { soNumber: string } }) {
-  const { user } = await requireSession();
-  const row = await orderBySo(decodeURIComponent(params.soNumber));
+  const { user, scope } = await requireSession();
+  // Scoped read: an SO outside this user's facility scope (or outside a retail
+  // head's area) is indistinguishable from one that does not exist.
+  const row = await orderBySo(decodeURIComponent(params.soNumber), scope, user);
   if (!row) notFound();
   const { order: o, sla } = row;
   const events = await repo.listEvents(o.id);

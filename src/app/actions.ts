@@ -255,7 +255,12 @@ export async function overrideOrderFields(
     }
     const order = await repo.getOrder(soNumber);
     if (!order) throw new Error(`Order ${soNumber} not found`);
-    if (policy.canEditWarehouse && !policy.isAdmin) assertFacility(user, order.facility);
+    // Every non-admin, not only the warehouse-editing ones. Gating this on
+    // canEditWarehouse let LOGISTICS and MERCHANDISING through with no facility
+    // check at all — the two roles whose fields (couriers, LR/DC numbers, POD
+    // links, campaign tags) are the most useful to write on someone else's
+    // orders. Entitlement is about which orders, not about which fields.
+    if (!policy.isAdmin) assertFacility(user, order.facility);
     await repo.updateFields(soNumber, patch, { id: user.id, name: user.name }, "MANUAL", note);
     revalidatePath("/", "layout");
     return { ok: true };

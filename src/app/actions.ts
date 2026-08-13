@@ -60,6 +60,13 @@ export async function setShipmentStatus(
   try {
     const user = await currentUser();
     assertCan(user, "canEditLogistics");
+    // The right says "may edit logistics"; it does not say "on any facility".
+    // A narrowed entitlement has to bite here as it does on the hand-edit
+    // below — an action is callable directly, without the row ever having been
+    // rendered on the caller's board.
+    const order = await repo.getOrder(soNumber);
+    if (!order) throw new Error(`Order ${soNumber} not found`);
+    assertFacility(user, order.facility);
     await repo.transitionShipment(soNumber, to, { id: user.id, name: user.name }, "MANUAL", note);
     revalidatePath("/", "layout");
     return { ok: true };
@@ -102,6 +109,9 @@ export async function recordNdr(soNumber: string, note?: string): Promise<Action
   try {
     const user = await currentUser();
     assertCan(user, "canEditLogistics");
+    const order = await repo.getOrder(soNumber);
+    if (!order) throw new Error(`Order ${soNumber} not found`);
+    assertFacility(user, order.facility);
     await repo.recordNdrAttempt(soNumber, { id: user.id, name: user.name }, note);
     revalidatePath("/", "layout");
     return { ok: true };

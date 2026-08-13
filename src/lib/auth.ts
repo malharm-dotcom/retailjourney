@@ -17,7 +17,10 @@ import type { Facility, Role } from "./types";
 
 declare module "next-auth" {
   interface Session {
-    user: {
+    /** Optional on purpose: the session callback drops it entirely when the
+     *  backing User row is gone or deactivated, so a consumer that forgets to
+     *  check cannot compile its way past a revoked account. */
+    user?: {
       id: string;
       name: string;
       email: string;
@@ -156,14 +159,24 @@ export function buildAuthOptions(): NextAuthOptions {
       },
       async session({ session, token }) {
         const u = token.uid ? await findUserById(token.uid) : undefined;
+        // Revocation has to take effect on the next request, not at token
+        // expiry. The row is the authority: the JWT's own copy of role and
+        // entitlements is a cache, and falling back to it — or worse, to
+        // "RETAIL_HEAD" — meant a deleted row still produced a plausible
+        // session and a deactivated one kept whatever role it was minted with.
+        // No row, or an inactive one, now means no user on the session at all.
+        if (!u || !u.active) {
+          session.user = undefined;
+          return session;
+        }
         session.user = {
-          id: u?.id ?? token.uid ?? "unknown",
-          name: u?.name ?? session.user?.name ?? "Unknown",
-          email: u?.email ?? session.user?.email ?? "",
-          role: u?.role ?? token.role ?? "RETAIL_HEAD",
-          facilities: u?.facilities ?? token.facilities ?? [],
-          allView: u?.allView ?? token.allView ?? false,
-          areaManager: u?.areaManager ?? token.areaManager,
+          id: u.id,
+          name: u.name,
+          email: u.email,
+          role: u.role,
+          facilities: u.facilities,
+          allView: u.allView,
+          areaManager: u.areaManager,
         };
         return session;
       },

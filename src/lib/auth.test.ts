@@ -124,8 +124,37 @@ describe("google session shape", () => {
       token,
     } as Parameters<typeof sessionCb>[0])) as Session;
 
-    expect(session.user.id).toBe("usr_1");
-    expect(session.user.role).toBe("ADMIN");
+    expect(session.user?.id).toBe("usr_1");
+    expect(session.user?.role).toBe("ADMIN");
+  });
+
+  it("drops the user from the session when the row is deactivated", async () => {
+    // Revocation must land on the next request. The callback used to fall back
+    // to the JWT's own copy of the role, so a deactivated account kept the
+    // rights its token was minted with until that token expired.
+    byId.mockResolvedValue(userRow({ role: "ADMIN" as Role, active: false }));
+
+    const sessionCb = buildAuthOptions().callbacks!.session!;
+    const session = (await sessionCb({
+      session: { user: {}, expires: "" },
+      token: { uid: "usr_1", role: "ADMIN" as Role } as JWT,
+    } as Parameters<typeof sessionCb>[0])) as Session;
+
+    expect(session.user).toBeUndefined();
+  });
+
+  it("drops the user from the session when the row is gone", async () => {
+    // A deleted row used to yield a usable RETAIL_HEAD session out of the
+    // `?? "RETAIL_HEAD"` fallback — a login for an account that no longer exists.
+    byId.mockResolvedValue(undefined);
+
+    const sessionCb = buildAuthOptions().callbacks!.session!;
+    const session = (await sessionCb({
+      session: { user: {}, expires: "" },
+      token: { uid: "usr_gone", role: "ADMIN" as Role } as JWT,
+    } as Parameters<typeof sessionCb>[0])) as Session;
+
+    expect(session.user).toBeUndefined();
   });
 
   it("blocks a deactivated user on the credentials path too", async () => {
@@ -134,8 +163,9 @@ describe("google session shape", () => {
     byEmail.mockResolvedValue(userRow({ active: false }));
 
     // Credentials never reaches signIn with a bad account: authorize() returns
-    // null first. The deactivation gate that matters for an existing session is
-    // currentUser(), which re-reads `active` on every request.
+    // null first. For an EXISTING session the gate is the session callback,
+    // which re-reads the row and drops the user when it is inactive (covered
+    // above), backed by currentUser()/currentUserOrNull() re-reading `active`.
     const res = await signIn({
       user: { id: "usr_1", email: "malhar.m@snitch.com" } as AuthUser,
       account: { provider: "credentials", type: "credentials", providerAccountId: "usr_1" },

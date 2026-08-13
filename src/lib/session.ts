@@ -12,10 +12,23 @@ import type { FacilityScope, User } from "./types";
 
 export const FACILITY_COOKIE = "retailjourney-facility";
 
-export async function currentUser(): Promise<User> {
+/**
+ * The signed-in AND active user, or undefined — no redirect.
+ *
+ * Route handlers need this shape: bouncing a POST from curl or a fetch() to
+ * the login page answers with a 307 to HTML, which a caller cannot act on. A
+ * page wants the redirect; an API wants a status code. Both read `active` from
+ * the row here, so neither can drift from the other.
+ */
+export async function currentUserOrNull(): Promise<User | undefined> {
   const session = await getServerSession(buildAuthOptions());
   const u = session?.user?.id ? await findUserById(session.user.id) : undefined;
-  if (!u || !u.active) redirect("/login");
+  return u && u.active ? u : undefined;
+}
+
+export async function currentUser(): Promise<User> {
+  const u = await currentUserOrNull();
+  if (!u) redirect("/login");
   return u;
 }
 

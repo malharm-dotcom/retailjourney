@@ -6,15 +6,20 @@
 //     stored watermark and force the full 20-day window (manual reseed)
 
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { buildAuthOptions } from "@/lib/auth";
+import { policyOf } from "@/lib/rbac";
+import { currentUserOrNull } from "@/lib/session";
 import { recordFailedRun, runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSummary } from "@/lib/integrations/sync";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
-  const session = await getServerSession(buildAuthOptions());
-  if (!session?.user || session.user.role !== "ADMIN") {
+  // Was a bare getServerSession + role compare, which was the one protected
+  // route that skipped the `active` re-read every currentUser() call performs —
+  // so a deactivated admin kept sync and full-reseed rights for the life of
+  // their token. Same source of truth as every page now, still a 403 rather
+  // than a redirect because the callers here are curl and fetch().
+  const user = await currentUserOrNull();
+  if (!user || !policyOf(user.role).isAdmin) {
     return NextResponse.json({ error: "admin only" }, { status: 403 });
   }
   let source: string | undefined;

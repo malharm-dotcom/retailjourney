@@ -21,6 +21,30 @@ describe("orderToDb", () => {
   it("skips undefined keys", () => {
     expect(Object.keys(orderToDb({ qty: 5, boxCount: undefined }))).toEqual(["qty"]);
   });
+
+  it("refuses identity and scope columns on a manual patch", () => {
+    // Partial<Order> is erased at runtime, so these arrived as ordinary keys.
+    // Rewriting `facility` is the dangerous one: it would move an order past
+    // the assertFacility() check that already passed on the way in.
+    for (const field of ["id", "soNumber", "facility"]) {
+      expect(() => orderToDb({ [field]: "x" } as never, { manual: true })).toThrow(
+        `Field ${field} cannot be edited`,
+      );
+    }
+  });
+
+  it("still writes those columns for the sync, which passes no manual flag", () => {
+    // sync.ts creates orders through this same mapper; a blanket ban would
+    // break order.create(), which must write soNumber and facility.
+    const row = orderToDb({ soNumber: "SO-1", facility: "SAPL-WH1" } as never);
+    expect(row.soNumber).toBe("SO-1");
+    expect(row.facility).toBe("SAPL-WH1");
+  });
+
+  it("lets a normal manual patch through untouched", () => {
+    const row = orderToDb({ boxCount: 3, lrNumber: "LR-9" }, { manual: true });
+    expect(row).toEqual({ boxCount: 3, lrNumber: "LR-9" });
+  });
 });
 
 describe("orderToDomain <-> orderToDb round trip", () => {

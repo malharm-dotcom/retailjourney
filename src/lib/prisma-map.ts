@@ -89,14 +89,37 @@ export function orderToDomain(r: DbOrder): Order {
 }
 
 /**
- * Domain patch -> Prisma data. Skips undefined keys; converts string
- * timestamps/dates to Date. Pass `full: true` when building a complete row
- * (seed / create) so explicit empty values survive.
+ * Columns that identify an order or place it in the estate. A manual write may
+ * never touch these: `Partial<Order>` is erased at runtime, so without this an
+ * override payload could rewrite the row's identity or move it into a facility
+ * the caller is not entitled to — laundering it past every assertFacility()
+ * check that had already passed on the way in.
+ *
+ * Deliberately a denylist of three, not an allowlist of the ~90 writable
+ * columns: three names cannot drift out of step with the Order type, and the
+ * positive allowlist (which fields which ROLE may write) already lives at the
+ * action boundary in FIELD_RIGHTS / REQUIRED_CAPTURES.
  */
-export function orderToDb(patch: Partial<Order>): Record<string, unknown> {
+export const NEVER_MANUALLY_WRITABLE: ReadonlySet<string> = new Set(["id", "soNumber", "facility"]);
+
+/**
+ * Domain patch -> Prisma data. Skips undefined keys; converts string
+ * timestamps/dates to Date.
+ *
+ * `manual: true` marks a patch that originated in a client request and applies
+ * the guard above. The sync path deliberately passes nothing: it is
+ * server-to-server, and its order.create() must write soNumber and facility.
+ */
+export function orderToDb(
+  patch: Partial<Order>,
+  opts?: { manual?: boolean },
+): Record<string, unknown> {
   const row: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(patch)) {
     if (v === undefined) continue;
+    if (opts?.manual && NEVER_MANUALLY_WRITABLE.has(k)) {
+      throw new Error(`Field ${k} cannot be edited`);
+    }
     if (typeof v === "string" && TS_SET.has(k)) row[k] = new Date(v);
     else if (typeof v === "string" && DATE_SET.has(k)) row[k] = toDay(v);
     else row[k] = v;

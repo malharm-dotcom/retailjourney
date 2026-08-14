@@ -117,9 +117,13 @@ export class PrismaRepo implements OrderRepo {
     return o;
   }
 
-  /** Apply a domain patch + events atomically; returns the updated order. */
+  /** Apply a domain patch + events atomically; returns the updated order.
+   *
+   *  Every mutation reaching this class came from a server action — the sync
+   *  writes through its own db.order.update/create — so the patch is marked
+   *  manual and the identity/scope guard in orderToDb applies to all of it. */
   private async commit(o: Order, patch: Partial<Order>, events: PendingEvent[]): Promise<Order> {
-    const data = orderToDb(patch);
+    const data = orderToDb(patch, { manual: true });
     const [row] = await prisma().$transaction([
       prisma().order.update({ where: { id: o.id }, data }),
       ...(events.length

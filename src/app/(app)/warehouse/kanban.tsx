@@ -2,9 +2,11 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useId, useMemo, useRef, useState, useTransition } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { toast } from "sonner";
 import { advanceOrderStatus } from "@/app/actions";
+import { advanceOrdersBulk } from "@/app/bulk-actions";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -19,12 +21,16 @@ import { Button, Field, Input, Select } from "@/components/ui/primitives";
 import { REQUIRED_CAPTURES, STATUS_LABEL, WH_FLOW, WH_TRANSITIONS } from "@/lib/journey";
 import { LOGISTICS_PARTNERS, type Order, type OrderStatus, type OrderType } from "@/lib/types";
 import { TONE, WH_STATUS_VISUAL, cn, railOf, type Tone } from "@/lib/ui";
+import { BulkBar } from "./bulk-bar";
+import { FilterBar } from "./filter-bar";
+import type { QueueFilters } from "./filters";
 
 export interface KanbanCard {
   so: string;
   store: string;
   qty: number;
   type: OrderType;
+  channel?: string;
   priority?: string;
   campaign?: string;
   status: OrderStatus;
@@ -43,10 +49,6 @@ const LANES: OrderStatus[] = [...WH_FLOW, "ON_HOLD"];
 
 /** Moves that end the order. Separated in the menu and confirmed in red. */
 const TERMINAL_MOVES: OrderStatus[] = ["CANCELLED", "UNFULFILLABLE"];
-
-/** Cards rendered per lane before "Show more" — keeps the DOM bounded at live
- *  volume (hundreds of orders per lane) while the lane header shows the true count. */
-const LANE_PAGE = 25;
 
 /**
  * Within a lane, cards group by how urgent their handover is.
@@ -83,26 +85,33 @@ export function Kanban({
   cards,
   canEdit,
   terminalCount,
+  filters,
+  stores,
+  types,
+  laneTotals,
+  matchedTotal,
+  scopeTotal,
+  laneCap,
 }: {
   cards: KanbanCard[];
   canEdit: boolean;
   terminalCount: number;
+  filters: QueueFilters;
+  stores: string[];
+  types: OrderType[];
+  /** True per-lane totals after filtering — cards[] is capped, these are not. */
+  laneTotals: Record<string, number>;
+  matchedTotal: number;
+  scopeTotal: number;
+  laneCap: number;
 }) {
   const router = useRouter();
+  const reduce = useReducedMotion();
   const [move, setMove] = useState<PendingMove | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
-  // Live volume is hundreds of cards per lane (RTS-Logic alone carries 150+);
-  // rendering them all is a DOM/layout problem, so lanes page in increments.
-  const [laneShown, setLaneShown] = useState<Record<string, number>>({});
-  // Finding one order was the worst job on this board: no search, no filter, no
-  // sort, against lanes that run past 150 cards behind a "Show more" button —
-  // while the two sibling boards both have a search field. A supervisor holding
-  // an SO from a pick list had to hold it in their head and scan seven lanes.
-  const [q, setQ] = useState("");
-  const searchId = useId();
   // Comfortable shows the whole card; compact drops the meta a supervisor
   // already knows and tightens the rhythm, so roughly twice as many orders fit
   // in a lane's viewport. Same board, same actions — just less air.
@@ -110,22 +119,19 @@ export function Kanban({
   // Collapse state per lane+group. Keyed rather than nested so a lane with no
   // cards in a group never allocates anything.
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  // Cards mid-departure: still drawn in their OLD lane, playing the exit. Without
-  // this the card vanished from one lane and reappeared in another with nothing
-  // connecting the two, so the eye could not follow the baton across the board.
-  const [leaving, setLeaving] = useState<Record<string, OrderStatus>>({});
   // What just happened, for screen readers. The board's only feedback was a
   // toast in the far corner and an in-place animation, neither of which is
   // announced.
   const [announcement, setAnnouncement] = useState("");
-  // Optimistic lane placement: the server action has succeeded but the router
-  // refresh has not landed yet. The card moves the moment the write is
-  // confirmed rather than after a full re-render, so the board never feels
-  // like it stalled on a click.
+  // Optimistic lane placement: the server has agreed but the router refresh has
+  // not landed yet. For a bulk run this is applied to every order the server
+  // said "ok" to, and pointedly NOT to the ones it skipped.
   const [optimistic, setOptimistic] = useState<Record<string, OrderStatus>>({});
-  // Cards that just arrived somewhere new, so they can play the landing cue.
-  const [landed, setLanded] = useState<Record<string, number>>({});
-  const landTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Orders the server refused in a bulk run — they shake back into place.
+  const [rejected, setRejected] = useState<Record<string, true>>({});
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  // Anchor for shift-click range select, per lane.
+  const lastPicked = useRef<{ lane: OrderStatus; index: number } | null>(null);
 
   // Drop an optimistic placement once the server agrees (or the order has left
   // this board entirely, e.g. cancelled). Anything else would pin a card to a
@@ -146,39 +152,59 @@ export function Kanban({
     });
   }, [cards]);
 
-  useEffect(() => {
-    const timers = landTimers.current;
-    return () => {
-      for (const t of timers.values()) clearTimeout(t);
-      timers.clear();
-    };
-  }, []);
-
-  const laneOf = (c: KanbanCard): OrderStatus => optimistic[c.so] ?? c.status;
-
-  /** Matched against SO, store and campaign — the three things a floor lead has
-   *  in hand when they come to this board looking for one order. */
-  const matches = useMemo(() => {
-    const needle = q.trim().toLowerCase();
-    if (!needle) return null;
-    return (c: KanbanCard) =>
-      [c.so, c.store, c.campaign].filter(Boolean).some((v) => v!.toLowerCase().includes(needle));
-  }, [q]);
+  const laneOf = useCallback((c: KanbanCard): OrderStatus => optimistic[c.so] ?? c.status, [optimistic]);
 
   const byLane = useMemo(() => {
     const m = new Map<OrderStatus, KanbanCard[]>();
     for (const lane of LANES) m.set(lane, []);
-    for (const c of cards) {
-      if (matches && !matches(c)) continue;
-      m.get(optimistic[c.so] ?? c.status)?.push(c);
-    }
+    for (const c of cards) m.get(laneOf(c))?.push(c);
     for (const lane of LANES)
       m.get(lane)!.sort((a, b) => (a.due === "overdue" ? -1 : 0) - (b.due === "overdue" ? -1 : 0) || b.ageDays - a.ageDays);
     return m;
-  }, [cards, optimistic, matches]);
+  }, [cards, laneOf]);
 
-  /** Cards in scope after the search, for the result count. */
-  const matchedTotal = useMemo(() => (matches ? cards.filter(matches).length : cards.length), [cards, matches]);
+  const cardBySo = useMemo(() => new Map(cards.map((c) => [c.so, c])), [cards]);
+  const selectedStatuses = useMemo(
+    () => [...selected].map((so) => cardBySo.get(so)).filter(Boolean).map((c) => laneOf(c!)),
+    [selected, cardBySo, laneOf],
+  );
+
+  const clearSelection = () => {
+    setSelected(new Set());
+    lastPicked.current = null;
+  };
+
+  /** Click, or shift-click for a range within the same lane. */
+  const pick = (lane: OrderStatus, index: number, so: string, shift: boolean) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const list = byLane.get(lane)!;
+      if (shift && lastPicked.current?.lane === lane) {
+        const [a, b] = [lastPicked.current.index, index].sort((x, y) => x - y);
+        for (let i = a; i <= b; i++) next.add(list[i].so);
+      } else if (next.has(so)) {
+        next.delete(so);
+      } else {
+        next.add(so);
+      }
+      return next;
+    });
+    lastPicked.current = { lane, index };
+  };
+
+  const selectLane = (lane: OrderStatus) => {
+    const list = byLane.get(lane)!;
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allOn = list.every((c) => next.has(c.so));
+      for (const c of list) (allOn ? next.delete(c.so) : next.add(c.so));
+      return next;
+    });
+  };
+
+  const selectAllShown = () => {
+    setSelected((prev) => (prev.size === cards.length ? new Set() : new Set(cards.map((c) => c.so))));
+  };
 
   const requestMove = (card: KanbanCard, to: OrderStatus) => {
     const fields = REQUIRED_CAPTURES[to] ?? [];
@@ -215,31 +241,52 @@ export function Kanban({
       toast.success(`${card.so} → ${STATUS_LABEL[to]}`);
       setMove(null);
       setAnnouncement(`${card.so} moved to ${STATUS_LABEL[to]}`);
-
-      // The hand-off, in two beats. The card first plays its exit in the lane it
-      // is leaving (~170ms), then lands in the new one. Both beats are optimistic
-      // but only run after the server confirmed, so a card never moves on an
-      // unsaved change; the refresh below merely reconciles.
-      setLeaving((l) => ({ ...l, [card.so]: to }));
-      const prevTimer = landTimers.current.get(card.so);
-      if (prevTimer) clearTimeout(prevTimer);
-      landTimers.current.set(
-        card.so,
-        setTimeout(() => {
-          setLeaving(({ [card.so]: _gone, ...rest }) => rest);
-          setOptimistic((o) => ({ ...o, [card.so]: to }));
-          setLanded((l) => ({ ...l, [card.so]: Date.now() }));
-          landTimers.current.set(
-            card.so,
-            setTimeout(() => {
-              setLanded(({ [card.so]: _drop, ...rest }) => rest);
-              landTimers.current.delete(card.so);
-            }, 600),
-          );
-          router.refresh();
-        }, 170),
-      );
+      // Optimistic, but only after the server confirmed: the card never moves
+      // on an unsaved change. AnimatePresence plays it out of the old lane and
+      // the `layout` prop reflows what is left behind.
+      setOptimistic((o) => ({ ...o, [card.so]: to }));
+      router.refresh();
     });
+
+  /** The bulk path. Selected cards move the moment the server answers, then
+   *  reconcile: anything skipped or failed stays put and shakes. */
+  const bulkAdvance = (to: OrderStatus, sharedCaptures?: Partial<Order>) => {
+    const ids = [...selected];
+    startTransition(async () => {
+      const res = await advanceOrdersBulk({ orderIds: ids, toStatus: to, sharedCaptures });
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+
+      const okIds = res.results.filter((r) => r.outcome === "ok").map((r) => r.soNumber);
+      const refused = res.results.filter((r) => r.outcome !== "ok");
+
+      if (okIds.length) {
+        setOptimistic((o) => ({ ...o, ...Object.fromEntries(okIds.map((so) => [so, to])) }));
+      }
+      if (refused.length) {
+        setRejected(Object.fromEntries(refused.map((r) => [r.soNumber, true as const])));
+        setTimeout(() => setRejected({}), 700);
+      }
+
+      // One toast for the run, counts first — a per-order toast storm for a
+      // forty-order dispatch is noise, not feedback.
+      const parts = [`${res.advanced} moved to ${STATUS_LABEL[to]}`];
+      if (res.skipped) parts.push(`${res.skipped} skipped`);
+      if (res.failed) parts.push(`${res.failed} failed`);
+      const summary = parts.join(" · ");
+      if (res.failed) toast.error(summary, { description: refused[0]?.reason });
+      else if (res.skipped) toast(summary, { description: refused[0]?.reason });
+      else toast.success(summary);
+
+      setAnnouncement(summary);
+      // Keep the refused ones selected so they can be dealt with; drop the rest.
+      setSelected(new Set(refused.map((r) => r.soNumber)));
+      lastPicked.current = null;
+      router.refresh();
+    });
+  };
 
   const submitDialog = () => {
     if (!move) return;
@@ -269,32 +316,30 @@ export function Kanban({
 
   return (
     <>
+      <FilterBar
+        filters={filters}
+        stores={stores}
+        types={types}
+        matchedTotal={matchedTotal}
+        scopeTotal={scopeTotal}
+      />
+
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
-        <div className="flex min-w-[250px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:max-w-[380px] sm:flex-none">
-          <Icon name="magnifer-linear" size={15} />
-          <label htmlFor={searchId} className="sr-only">
-            Find an order on this board by SO, store or campaign
-          </label>
-          <Input
-            id={searchId}
-            type="search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Find SO · store · campaign"
-            className="border-0 bg-transparent px-0 py-2 focus:border-0"
-          />
-        </div>
-        {q.trim() ? (
-          <p aria-live="polite" className="text-dense text-mute">
-            <b className="font-semibold text-ink-soft">{matchedTotal}</b> of {cards.length} orders match — lane counts
-            below show matches only.
-          </p>
+        {canEdit && cards.length ? (
+          <Button variant="ghost" onClick={selectAllShown}>
+            <Icon name="check-square-bold-duotone" size={15} />
+            {selected.size === cards.length ? "Deselect all" : `Select all ${cards.length} shown`}
+          </Button>
         ) : null}
 
         {/* Density. A floor lead working a lane wants the whole card; a
             supervisor sweeping seven lanes for what is late wants twice as many
             rows on screen. Same board, two reading distances. */}
-        <div className="ml-auto flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]" role="group" aria-label="Card density">
+        <div
+          className="ml-auto flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]"
+          role="group"
+          aria-label="Card density"
+        >
           {(["comfortable", "compact"] as Density[]).map((d) => (
             <button
               key={d}
@@ -322,18 +367,19 @@ export function Kanban({
       {/* Lanes are a horizontally scrolling row of FIXED-width columns. Forcing
           all seven into the viewport gave ~185px lanes at 1280px, which clipped
           lane titles, store names and the overdue tag; a comfortable lane that
-          you scroll to is worth more than a cramped one you can see. Cards still
-          scroll inside their lane and still page via LANE_PAGE. Empty lanes keep
-          full width — the old rotated slim rail read as broken layout.
+          you scroll to is worth more than a cramped one you can see. Empty lanes
+          keep full width — the old rotated slim rail read as broken layout.
           Phone width stacks the lanes vertically. */}
       <div className="mb-4 flex flex-col gap-2.5 lg:h-[calc(100dvh-var(--chrome-h))] lg:snap-x lg:snap-proximity lg:flex-row lg:gap-3 lg:overflow-x-auto lg:overflow-y-hidden lg:pb-2">
         {LANES.map((lane) => {
           const v = WH_STATUS_VISUAL[lane];
-          const list = byLane.get(lane)!;
-          const shown = laneShown[lane] ?? LANE_PAGE;
-          const visible = list.slice(0, shown);
-          const hidden = list.length - visible.length;
-          const empty = list.length === 0;
+          const visible = byLane.get(lane)!;
+          // The TRUE filtered total from the server, which may exceed what was
+          // sent. A lane that is holding cards back has to say so.
+          const total = laneTotals[lane] ?? visible.length;
+          const capped = total > visible.length;
+          const empty = visible.length === 0;
+          const allSelected = !empty && visible.every((c) => selected.has(c.so));
           return (
             <section
               key={lane}
@@ -343,12 +389,29 @@ export function Kanban({
                 className="sticky top-0 z-10 mb-2.5 flex items-center gap-2 rounded-control border-t-[3px] bg-card px-3 py-2.5 shadow-card"
                 style={{ borderTopColor: railOf(v) }}
               >
+                {canEdit && !empty ? (
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    onChange={() => selectLane(lane)}
+                    className="h-3.5 w-3.5 shrink-0 accent-ink"
+                    aria-label={`Select all ${visible.length} in ${STATUS_LABEL[lane]}`}
+                    title={`Select all in ${STATUS_LABEL[lane]}`}
+                  />
+                ) : null}
                 <Icon name={v.icon} size={15} className="shrink-0 text-ink-soft" />
                 {/* No truncation: the lane is sized to its title, not the reverse. */}
                 <span className="whitespace-nowrap text-dense font-bold">{STATUS_LABEL[lane]}</span>
-                <span className="mono ml-auto shrink-0 rounded-md bg-ground px-1.5 py-0.5 font-display text-xs font-bold text-ink-soft">
-                  {list.length}
-                </span>
+                <motion.span
+                  key={total}
+                  initial={reduce ? false : { scale: 0.8, opacity: 0.5 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                  className="mono ml-auto shrink-0 rounded-md bg-ground px-1.5 py-0.5 font-display text-xs font-bold text-ink-soft"
+                  title={capped ? `${visible.length} of ${total} loaded` : undefined}
+                >
+                  {total}
+                </motion.span>
               </header>
 
               {empty ? (
@@ -363,13 +426,10 @@ export function Kanban({
                   )}
                 >
                   {DUE_GROUPS.map((g) => {
-                    // Counts are the TRUE per-group totals, not the paged slice:
-                    // a collapsed group has to be able to say how much it hides.
-                    const total = list.filter((c) => dueGroupOf(c) === g.key).length;
-                    if (total === 0) return null;
+                    const inGroup = visible.filter((c) => dueGroupOf(c) === g.key);
+                    if (inGroup.length === 0) return null;
                     const key = `${lane}:${g.key}`;
                     const open = collapsed[key] ?? OPEN_BY_DEFAULT[g.key];
-                    const inGroup = visible.filter((c) => dueGroupOf(c) === g.key);
                     return (
                       <div key={g.key} className="flex flex-col">
                         <button
@@ -388,156 +448,186 @@ export function Kanban({
                           />
                           <Icon name={g.icon} size={12} className="shrink-0" />
                           <span className="truncate">{g.label}</span>
-                          <span className="mono ml-auto shrink-0 tracking-normal text-ink-soft">{total}</span>
+                          <span className="mono ml-auto shrink-0 tracking-normal text-ink-soft">{inGroup.length}</span>
                         </button>
                         {open ? (
                           <div className={cn("flex flex-col pt-1.5", density === "compact" ? "gap-1" : "gap-2")}>
-                            {inGroup.map((c) => {
-                    // The effective status: an optimistically advanced card
-                    // must offer its NEW lane's transitions, not the stale ones.
-                    const status = laneOf(c);
-                    const nexts = WH_TRANSITIONS[status].filter((s) => WH_FLOW.includes(s) && WH_FLOW.indexOf(s) > WH_FLOW.indexOf(status));
-                    const primaryNext = nexts[0];
-                    const others = WH_TRANSITIONS[status].filter((s) => s !== primaryNext);
-                    return (
-                      <article
-                        key={c.so}
-                        className={cn(
-                          // No left accent bar and no due badge: the card sits
-                          // inside a group whose sticky header already states
-                          // the due state, in its colour, with its count. The
-                          // rail repeated on every card in the group what one
-                          // heading says once.
-                          //
-                          // No hover lift either. The card is not the click
-                          // target — the button inside it is — so lifting the
-                          // whole card on hover advertised an affordance that
-                          // does not exist, on a surface built for scanning.
-                          "group flex flex-col rounded-control bg-card shadow-card transition-[box-shadow,border-color] duration-150 ease-ui hover:shadow-lift",
-                          density === "compact" ? "p-2.5" : "p-3",
-                          leaving[c.so] ? "animate-cardLeave" : landed[c.so] ? "animate-cardLand" : null,
-                        )}
-                      >
-                        {/* Order number owns its line. */}
-                        <JourneyLink
-                          so={c.so}
-                          variant="text"
-                          className="mono block font-display text-ui font-bold text-ink"
-                        />
-                        {/* A FLAG, not a breach: this order simply has no
-                            rulebook target, so it runs on a fallback EDD.
-                            Neutral pending token — never the breach red. It
-                            survives compact because it is the one thing on the
-                            card a supervisor cannot infer from the group. */}
-                        {c.outOfRulebook ? (
-                          <div className="mt-1 flex flex-wrap items-center gap-1">
-                            <span
-                              className="rounded-md bg-pending-bg px-1.5 py-0.5 text-meta font-bold text-pending"
-                              title="No rulebook target for this store/order type — delivery target falls back to the eShipz EDD"
-                            >
-                              out of rulebook
-                            </span>
-                          </div>
-                        ) : null}
-                        {/* One clean truncation, full name on hover. */}
-                        <div className="mt-1 truncate text-ui font-semibold text-ink" title={c.store}>
-                          {c.store}
-                        </div>
-                        {/* The campaign tag used to sit in its own tinted band and
-                            the invoice on its own line below it, which put up to
-                            eight stacked bands in a 264px column. Both are meta
-                            about this order, so they read as meta. */}
-                        <div className="mt-0.5 text-cap text-mute">
-                          {c.type} · {c.qty} pcs · {c.ageDays}d old
-                          {c.priority ? " · HIGH" : ""}
-                          {status === "RTS_LOGIC" && c.invoice ? <span className="mono"> · inv {c.invoice}</span> : null}
-                        </div>
-                        {/* Campaign is the first thing to go in compact: it is
-                            context, not a decision input. */}
-                        {c.campaign && density === "comfortable" ? (
-                          <div className="mt-1 truncate text-cap font-medium text-ink-soft" title={c.campaign}>
-                            {c.campaign}
-                          </div>
-                        ) : null}
-                        {canEdit && (primaryNext || others.length) ? (
-                          // mt-auto pins the action to the bottom so cards in a
-                          // lane share one rhythm even when the meta wraps.
-                          <div className="mt-auto flex items-center gap-1.5 border-t border-line pt-2.5 [&:not(:first-child)]:mt-2.5">
-                            {primaryNext ? (
-                              <button
-                                type="button"
-                                disabled={pending}
-                                onClick={() => requestMove(c, primaryNext)}
-                                // Was `hover:bg-sage`: the primary action changed
-                                // colour into the chrome accent on hover, which
-                                // read as a different button. It darkens instead.
-                                className="flex min-h-[34px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control bg-ink px-2 py-1.5 text-cap font-semibold text-paper transition-[transform,background-color] duration-150 ease-ui active:scale-[0.97] hover:bg-ink/85 disabled:opacity-50"
-                              >
-                                <span className="truncate">{STATUS_LABEL[primaryNext]}</span>
-                                <Icon name="arrow-right-linear" size={13} className="shrink-0" />
-                              </button>
-                            ) : null}
-                            {others.length ? (
-                              <Dropdown>
-                                <DropdownTrigger asChild>
-                                  <button
-                                    type="button"
-                                    className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-control border border-line-control text-ink-soft transition-[transform,border-color,color] duration-150 ease-ui active:scale-[0.97] hover:border-sage hover:text-sage"
-                                    aria-label={`More transitions for ${c.so}`}
+                            <AnimatePresence mode="popLayout" initial={false}>
+                              {inGroup.map((c) => {
+                                // The effective status: an optimistically advanced
+                                // card must offer its NEW lane's transitions.
+                                const status = laneOf(c);
+                                const nexts = WH_TRANSITIONS[status].filter(
+                                  (s) => WH_FLOW.includes(s) && WH_FLOW.indexOf(s) > WH_FLOW.indexOf(status),
+                                );
+                                const primaryNext = nexts[0];
+                                const others = WH_TRANSITIONS[status].filter((s) => s !== primaryNext);
+                                const isSel = selected.has(c.so);
+                                const index = visible.indexOf(c);
+                                return (
+                                  <motion.article
+                                    key={c.so}
+                                    layout={reduce ? false : "position"}
+                                    initial={reduce ? false : { opacity: 0, scale: 0.96 }}
+                                    animate={
+                                      rejected[c.so] && !reduce
+                                        ? { opacity: 1, scale: 1, x: [0, -5, 5, -3, 3, 0] }
+                                        : { opacity: 1, scale: 1, x: 0 }
+                                    }
+                                    exit={reduce ? { opacity: 0 } : { opacity: 0, scale: 0.94, y: -6 }}
+                                    transition={
+                                      reduce
+                                        ? { duration: 0.12 }
+                                        : rejected[c.so]
+                                          ? { duration: 0.4 }
+                                          : { type: "spring", stiffness: 480, damping: 36 }
+                                    }
+                                    className={cn(
+                                      // No left accent bar and no due badge: the
+                                      // card sits inside a group whose sticky
+                                      // header already states the due state, in
+                                      // its colour, with its count.
+                                      "group relative flex flex-col rounded-control bg-card shadow-card transition-[box-shadow,border-color] duration-150 ease-ui hover:shadow-lift",
+                                      density === "compact" ? "p-2.5" : "p-3",
+                                      isSel && "ring-2 ring-ink",
+                                      rejected[c.so] && "ring-2 ring-breach",
+                                    )}
                                   >
-                                    <Icon name="menu-dots-bold" size={14} />
-                                  </button>
-                                </DropdownTrigger>
-                                <DropdownContent align="end">
-                                  {/* Reversals first, then a separator, then the
-                                      three that END the order. All seven used to
-                                      sit in one flat list, so "Cancel order" was
-                                      one mis-aimed click from "Back to Picking". */}
-                                  {others
-                                    .filter((s) => !TERMINAL_MOVES.includes(s))
-                                    .map((s) => (
-                                      <DropdownItem key={s} onSelect={() => requestMove(c, s)}>
-                                        <Icon name={WH_STATUS_VISUAL[s].icon} size={15} />
-                                        {s === "ON_HOLD" ? "Put on hold" : `Back to ${STATUS_LABEL[s]}`}
-                                      </DropdownItem>
-                                    ))}
-                                  <DropdownSeparator />
-                                  <DropdownItem asChild>
-                                    <Link href={`/orders/${c.so}`}>Open journey</Link>
-                                  </DropdownItem>
-                                  {others.some((s) => TERMINAL_MOVES.includes(s)) ? (
-                                    <>
-                                      <DropdownSeparator />
-                                      {others
-                                        .filter((s) => TERMINAL_MOVES.includes(s))
-                                        .map((s) => (
-                                          <DropdownItem key={s} destructive onSelect={() => requestMove(c, s)}>
-                                            <Icon name={WH_STATUS_VISUAL[s].icon} size={15} />
-                                            {s === "CANCELLED" ? "Cancel order" : "Mark unfulfillable"}
-                                          </DropdownItem>
-                                        ))}
-                                    </>
-                                  ) : null}
-                                </DropdownContent>
-                              </Dropdown>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </article>
-                              );
-                            })}
+                                    {canEdit ? (
+                                      // Checkbox appears on hover / focus, and
+                                      // stays put once it is carrying a
+                                      // selection — a control that vanishes
+                                      // under the pointer while you are picking
+                                      // a range is worse than no control.
+                                      <input
+                                        type="checkbox"
+                                        checked={isSel}
+                                        onChange={(e) =>
+                                          pick(lane, index, c.so, (e.nativeEvent as MouseEvent).shiftKey)
+                                        }
+                                        onClick={(e) => e.stopPropagation()}
+                                        aria-label={`Select ${c.so}`}
+                                        className={cn(
+                                          "absolute right-2 top-2 h-4 w-4 accent-ink transition-opacity duration-150 ease-ui",
+                                          isSel ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus:opacity-100",
+                                        )}
+                                      />
+                                    ) : null}
+                                    {/* Order number owns its line. */}
+                                    <JourneyLink
+                                      so={c.so}
+                                      variant="text"
+                                      className="mono block pr-6 font-display text-ui font-bold text-ink"
+                                    />
+                                    {/* A FLAG, not a breach: this order simply has
+                                        no rulebook target, so it runs on a
+                                        fallback EDD. Neutral pending token. */}
+                                    {c.outOfRulebook ? (
+                                      <div className="mt-1 flex flex-wrap items-center gap-1">
+                                        <span
+                                          className="rounded-md bg-pending-bg px-1.5 py-0.5 text-meta font-bold text-pending"
+                                          title="No rulebook target for this store/order type — delivery target falls back to the eShipz EDD"
+                                        >
+                                          out of rulebook
+                                        </span>
+                                      </div>
+                                    ) : null}
+                                    {/* One clean truncation, full name on hover. */}
+                                    <div className="mt-1 truncate text-ui font-semibold text-ink" title={c.store}>
+                                      {c.store}
+                                    </div>
+                                    <div className="mt-0.5 text-cap text-mute">
+                                      {c.type} · {c.qty} pcs · {c.ageDays}d old
+                                      {c.priority ? " · HIGH" : ""}
+                                      {status === "RTS_LOGIC" && c.invoice ? (
+                                        <span className="mono"> · inv {c.invoice}</span>
+                                      ) : null}
+                                    </div>
+                                    {/* Campaign is the first thing to go in
+                                        compact: it is context, not a decision
+                                        input. */}
+                                    {c.campaign && density === "comfortable" ? (
+                                      <div className="mt-1 truncate text-cap font-medium text-ink-soft" title={c.campaign}>
+                                        {c.campaign}
+                                      </div>
+                                    ) : null}
+                                    {canEdit && (primaryNext || others.length) ? (
+                                      // mt-auto pins the action to the bottom so
+                                      // cards in a lane share one rhythm even
+                                      // when the meta wraps.
+                                      <div className="mt-auto flex items-center gap-1.5 border-t border-line pt-2.5 [&:not(:first-child)]:mt-2.5">
+                                        {primaryNext ? (
+                                          <button
+                                            type="button"
+                                            disabled={pending}
+                                            onClick={() => requestMove(c, primaryNext)}
+                                            className="flex min-h-[34px] min-w-0 flex-1 items-center justify-center gap-1.5 rounded-control bg-ink px-2 py-1.5 text-cap font-semibold text-paper transition-[transform,background-color] duration-150 ease-ui active:scale-[0.97] hover:bg-ink/85 disabled:opacity-50"
+                                          >
+                                            <span className="truncate">{STATUS_LABEL[primaryNext]}</span>
+                                            <Icon name="arrow-right-linear" size={13} className="shrink-0" />
+                                          </button>
+                                        ) : null}
+                                        {others.length ? (
+                                          <Dropdown>
+                                            <DropdownTrigger asChild>
+                                              <button
+                                                type="button"
+                                                className="grid h-[34px] w-[34px] shrink-0 place-items-center rounded-control border border-line-control text-ink-soft transition-[transform,border-color,color] duration-150 ease-ui active:scale-[0.97] hover:border-sage hover:text-sage"
+                                                aria-label={`More transitions for ${c.so}`}
+                                              >
+                                                <Icon name="menu-dots-bold" size={14} />
+                                              </button>
+                                            </DropdownTrigger>
+                                            <DropdownContent align="end">
+                                              {/* Reversals first, then a separator,
+                                                  then the ones that END the order. */}
+                                              {others
+                                                .filter((s) => !TERMINAL_MOVES.includes(s))
+                                                .map((s) => (
+                                                  <DropdownItem key={s} onSelect={() => requestMove(c, s)}>
+                                                    <Icon name={WH_STATUS_VISUAL[s].icon} size={15} />
+                                                    {s === "ON_HOLD" ? "Put on hold" : `Back to ${STATUS_LABEL[s]}`}
+                                                  </DropdownItem>
+                                                ))}
+                                              <DropdownSeparator />
+                                              <DropdownItem asChild>
+                                                <Link href={`/orders/${c.so}`}>Open journey</Link>
+                                              </DropdownItem>
+                                              {others.some((s) => TERMINAL_MOVES.includes(s)) ? (
+                                                <>
+                                                  <DropdownSeparator />
+                                                  {others
+                                                    .filter((s) => TERMINAL_MOVES.includes(s))
+                                                    .map((s) => (
+                                                      <DropdownItem
+                                                        key={s}
+                                                        destructive
+                                                        onSelect={() => requestMove(c, s)}
+                                                      >
+                                                        <Icon name={WH_STATUS_VISUAL[s].icon} size={15} />
+                                                        {s === "CANCELLED" ? "Cancel order" : "Mark unfulfillable"}
+                                                      </DropdownItem>
+                                                    ))}
+                                                </>
+                                              ) : null}
+                                            </DropdownContent>
+                                          </Dropdown>
+                                        ) : null}
+                                      </div>
+                                    ) : null}
+                                  </motion.article>
+                                );
+                              })}
+                            </AnimatePresence>
                           </div>
                         ) : null}
                       </div>
                     );
                   })}
-                  {hidden > 0 ? (
-                    <button
-                      onClick={() => setLaneShown((s) => ({ ...s, [lane]: shown + LANE_PAGE * 2 }))}
-                      className="rounded-xl border border-dashed border-line-control px-3 py-2.5 text-cap font-semibold text-ink-soft transition-[transform,border-color,color] duration-150 ease-ui active:scale-[0.985] hover:border-sage hover:text-sage"
-                    >
-                      Show more — {hidden} hidden
-                    </button>
+                  {capped ? (
+                    <p className="rounded-xl border border-dashed border-line-control px-3 py-2.5 text-center text-cap text-mute">
+                      Showing {visible.length} of {total} — filter to narrow this lane.
+                    </p>
                   ) : null}
                 </div>
               )}
@@ -549,6 +639,16 @@ export function Kanban({
       <div className="pb-8 text-dense text-mute">
         {terminalCount} cancelled / unfulfillable orders in this scope — see Reports for the full funnel.
       </div>
+
+      {canEdit ? (
+        <BulkBar
+          count={selected.size}
+          statuses={selectedStatuses}
+          pending={pending}
+          onClear={clearSelection}
+          onAdvance={bulkAdvance}
+        />
+      ) : null}
 
       <Dialog open={move !== null} onOpenChange={(o) => !o && setMove(null)}>
         {move ? (

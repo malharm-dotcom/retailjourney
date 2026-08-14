@@ -6,13 +6,23 @@
 
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
+import { hash } from "bcryptjs";
+import type { Prisma } from "@/generated/prisma/client";
 import { databaseConfigured, prisma } from "@/lib/db";
 import { REQUIRED_CAPTURES } from "@/lib/journey";
 import { runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { FACILITY_COOKIE, currentUser } from "@/lib/session";
-import { assertUserAccessPatch, type UserAccessPatch } from "@/lib/user-admin";
+import {
+  assertCredentialPolicy,
+  assertUserAccessPatch,
+  assertUserCreate,
+  diffAccess,
+  normaliseEmail,
+  type UserAccessPatch,
+  type UserCreateInput,
+} from "@/lib/user-admin";
 import type { Order, OrderStatus, ShipmentStatus } from "@/lib/types";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
@@ -226,22 +236,63 @@ export async function mapChannelToStore(channel: string, storeId: string): Promi
   }
 }
 
-/** Admin: set another account's role, facility entitlements and active flag.
- *  Grants and revokes both land here — see lib/user-admin.ts for the lockout
- *  rules, which are enforced server-side because this action is callable
- *  without ever rendering the screen that would have warned about them. */
-export async function updateUserAccess(userId: string, patch: UserAccessPatch): Promise<ActionResult> {
-  try {
-    const actor = await currentUser();
-    if (policyOf(actor.role).isAdmin !== true) throw new Error("Admin only");
-    if (!databaseConfigured()) throw new Error("User management requires the database");
+/** BCrypt cost, kept in step with scripts/seed-admin.mts so a credential set
+ *  from the console and one seeded from the box are equally expensive. */
+const BCRYPT_ROUNDS = 12;
 
-    const all = await repo.listUsers();
-    const target = all.find((u) => u.id === userId);
-    if (!target) throw new Error("User not found");
-    assertUserAccessPatch({ actor, target, patch, all });
+type AuditAction = "create" | "update" | "deactivate" | "reactivate" | "cred-reset";
 
-    await prisma().user.update({
+/** Every Admin → Users mutation leaves a row. Written inside the caller's
+ *  transaction where there is one, so a mutation can never land without its
+ *  trail. `diff` carries changed access fields only — never a credential. */
+async function auditUserAccess(
+  tx: Prisma.TransactionClient,
+  entry: {
+    actor: { id: string; email: string };
+    target: { id: string; email: string };
+    action: AuditAction;
+    diff?: Record<string, unknown>;
+  },
+): Promise<void> {
+  await tx.userAccessAudit.create({
+    data: {
+      actorId: entry.actor.id,
+      actorEmail: entry.actor.email,
+      targetUserId: entry.target.id,
+      targetEmail: entry.target.email,
+      action: entry.action,
+      // Cast at the boundary: the diff is built from plain scalars, arrays and
+      // nulls, which Prisma's structural Json input type cannot infer from a
+      // Record signature.
+      diff:
+        entry.diff && Object.keys(entry.diff).length ? (entry.diff as Prisma.InputJsonObject) : undefined,
+    },
+  });
+}
+
+/** The shared preamble for every user-management action: admin right, a real
+ *  database, and the full user list the lockout floor is counted against. */
+async function requireUserAdmin() {
+  const actor = await currentUser();
+  if (policyOf(actor.role).isAdmin !== true) throw new Error("Admin only");
+  if (!databaseConfigured()) throw new Error("User management requires the database");
+  return { actor, all: await repo.listUsers() };
+}
+
+/**
+ * The one write path for an access change. updateUserAccess, deactivateUser and
+ * reactivateUser all land here, so the lockout rules and the audit row cannot
+ * be reached around by adding another entry point later.
+ */
+async function applyAccessPatch(userId: string, patch: UserAccessPatch, action: AuditAction): Promise<ActionResult> {
+  const { actor, all } = await requireUserAdmin();
+  const target = all.find((u) => u.id === userId);
+  if (!target) throw new Error("User not found");
+  assertUserAccessPatch({ actor, target, patch, all });
+
+  const diff = diffAccess(target, patch);
+  await prisma().$transaction(async (tx) => {
+    await tx.user.update({
       where: { id: userId },
       data: {
         role: patch.role,
@@ -254,9 +305,138 @@ export async function updateUserAccess(userId: string, patch: UserAccessPatch): 
         active: patch.active,
       },
     });
-    // The sidebar, facility switcher and every board read off the session's
-    // role, so a revoke has to invalidate the whole layout, not just /admin.
+    await auditUserAccess(tx, { actor, target, action, diff });
+  });
+  // The sidebar, facility switcher and every board read off the session's
+  // role, so a revoke has to invalidate the whole layout, not just /admin.
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** Admin: set another account's role, facility entitlements and active flag.
+ *  Grants and revokes both land here — see lib/user-admin.ts for the lockout
+ *  rules, which are enforced server-side because this action is callable
+ *  without ever rendering the screen that would have warned about them. */
+export async function updateUserAccess(userId: string, patch: UserAccessPatch): Promise<ActionResult> {
+  try {
+    return await applyAccessPatch(userId, patch, "update");
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/**
+ * Admin: provision a new account. This IS the SSO allowlist entry — auth.ts
+ * refuses any Google sign-in whose address has no active User row — so an
+ * active row created here is what lets someone log in for the first time. No
+ * credential is set: that is a separate, deliberate act (setUserCredential).
+ */
+export async function createUser(input: UserCreateInput): Promise<ActionResult & { id?: string }> {
+  try {
+    const { actor, all } = await requireUserAdmin();
+    assertUserCreate({ input, all });
+
+    const email = normaliseEmail(input.email);
+    // areaManager only means anything for RETAIL_HEAD (lib/data.ts reads it for
+    // that role alone); storing it on any other role is dead data that would
+    // start scoping the day someone's role changed.
+    const areaManager = input.role === "RETAIL_HEAD" ? input.areaManager?.trim() || null : null;
+
+    const created = await prisma().$transaction(async (tx) => {
+      const row = await tx.user.create({
+        data: {
+          name: input.name.trim(),
+          email,
+          role: input.role,
+          facilities: input.facilities,
+          allView: input.allView,
+          areaManager,
+          active: input.active,
+        },
+      });
+      await auditUserAccess(tx, {
+        actor,
+        target: row,
+        action: "create",
+        // The whole initial grant, not a delta — there is no "before".
+        diff: {
+          role: row.role,
+          facilities: row.facilities,
+          allView: row.allView,
+          areaManager,
+          active: row.active,
+        },
+      });
+      return row;
+    });
+
     revalidatePath("/", "layout");
+    return { ok: true, id: created.id };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Admin: revoke access. There is no hard-delete anywhere in this surface —
+ *  deactivation is reversible, keeps the audit trail attached to a real row,
+ *  and takes effect on the next request (the session callback fails closed on
+ *  an inactive user). Subject to the same self / last-active-admin lockouts. */
+export async function deactivateUser(userId: string): Promise<ActionResult> {
+  try {
+    return await setActive(userId, false);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+export async function reactivateUser(userId: string): Promise<ActionResult> {
+  try {
+    return await setActive(userId, true);
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Flip `active` while carrying every other field through unchanged — built
+ *  from the stored row, never from client input, so this cannot be used as a
+ *  back door to edit a role. */
+async function setActive(userId: string, active: boolean): Promise<ActionResult> {
+  const target = (await repo.listUsers()).find((u) => u.id === userId);
+  if (!target) throw new Error("User not found");
+  return applyAccessPatch(
+    userId,
+    {
+      role: target.role,
+      facilities: target.facilities,
+      allView: target.allView,
+      areaManager: target.areaManager,
+      active,
+    },
+    active ? "reactivate" : "deactivate",
+  );
+}
+
+/**
+ * Admin: set or reset the break-glass credential. Only the bcrypt hash is
+ * persisted — the plaintext is never returned, never logged, and never enters
+ * the domain User type (lib/users.ts keeps the hash out of it deliberately).
+ * The audit row records that a reset happened, never what was set.
+ */
+export async function setUserCredential(userId: string, password: string): Promise<ActionResult> {
+  try {
+    const { actor, all } = await requireUserAdmin();
+    const target = all.find((u) => u.id === userId);
+    if (!target) throw new Error("User not found");
+    // Length floor is the TARGET's role, not the actor's: the credential
+    // protects the target's rights.
+    assertCredentialPolicy(target.role, password);
+
+    const passwordHash = await hash(password, BCRYPT_ROUNDS);
+    await prisma().$transaction(async (tx) => {
+      await tx.user.update({ where: { id: userId }, data: { passwordHash } });
+      await auditUserAccess(tx, { actor, target, action: "cred-reset" });
+    });
+    revalidatePath("/admin");
     return { ok: true };
   } catch (e) {
     return fail(e);

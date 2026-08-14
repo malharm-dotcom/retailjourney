@@ -373,6 +373,29 @@ model User {
   createdAt   DateTime @default(now())
 }
 
+/// Append-only trail of every Admin → Users mutation (create, access edit,
+/// deactivate, reactivate, credential reset). Deliberately NOT a relation to
+/// User: an audit row has to outlive and stand apart from the row it describes,
+/// and a foreign key would let a future cascade quietly rewrite history.
+/// Actor/target email are denormalised for the same reason — the trail must
+/// still read correctly after an address changes.
+model UserAccessAudit {
+  id           String   @id @default(cuid())
+  actorId      String
+  actorEmail   String
+  targetUserId String
+  targetEmail  String
+  /// "create" | "update" | "deactivate" | "reactivate" | "cred-reset"
+  action       String
+  /// Changed fields only, as { field: { from, to } }. NEVER the credential
+  /// value — a cred-reset records that one happened, never what was set.
+  diff         Json?
+  createdAt    DateTime @default(now())
+
+  @@index([targetUserId, createdAt])
+  @@index([createdAt])
+}
+
 /// One row per sync execution — powers the Admin sync-health cards.
 model SyncRun {
   id           String    @id @default(cuid())

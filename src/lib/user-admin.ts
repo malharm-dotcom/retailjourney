@@ -18,7 +18,107 @@ export interface UserAccessPatch {
   active: boolean;
 }
 
+export interface UserCreateInput extends UserAccessPatch {
+  name: string;
+  email: string;
+}
+
 const ROLES = Object.keys(ROLE_POLICY) as Role[];
+
+/** The only address space that can ever sign in — Google SSO enforces the same
+ *  suffix on the verified claim (auth.ts), so provisioning anything else
+ *  creates a row that no provider will ever authenticate. */
+const EMAIL_DOMAIN = "@snitch.com";
+
+/**
+ * Roles whose entire purpose is being pinned to specific warehouses. An empty
+ * facilities list does NOT mean "no access" — entitledFacilities() reads it as
+ * the full set — so accepting [] here would provision a floor operator onto
+ * every facility, which is the exact opposite of what the admin just tried to
+ * do. The broad roles keep [] because all-facilities is their intended scope.
+ */
+const FACILITY_SCOPED_ROLES: Role[] = ["WH_OPERATOR", "WH_SUPERVISOR"];
+
+/** Minimum credential length. Longer for ADMIN: the blast radius of that one
+ *  account is every other account, and a break-glass credential is registered
+ *  in production, so it is the one password worth making unwieldy. */
+export function minCredentialLength(role: Role): number {
+  return role === "ADMIN" ? 16 : 12;
+}
+
+export function assertCredentialPolicy(role: Role, password: string): void {
+  const min = minCredentialLength(role);
+  if (password.length < min) {
+    throw new Error(
+      role === "ADMIN"
+        ? `An admin credential needs at least ${min} characters.`
+        : `Use at least ${min} characters.`,
+    );
+  }
+}
+
+export function normaliseEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
+/**
+ * Validation for a brand-new account. Creating an ACTIVE row is what puts an
+ * address on the SSO allowlist (auth.ts signIn refuses anyone without one), so
+ * this is an access grant and is validated like one.
+ */
+export function assertUserCreate(opts: {
+  input: UserCreateInput;
+  /** Every existing user, for the uniqueness check. */
+  all: Pick<User, "email">[];
+}): void {
+  const { input, all } = opts;
+  const email = normaliseEmail(input.email);
+
+  if (!input.name.trim()) throw new Error("A name is required.");
+  if (!email.endsWith(EMAIL_DOMAIN)) throw new Error(`Email must be a ${EMAIL_DOMAIN} address.`);
+  // Guard the local part too: "@snitch.com" alone clears the suffix check.
+  if (email.length <= EMAIL_DOMAIN.length) throw new Error("A valid email is required.");
+  if (all.some((u) => normaliseEmail(u.email) === email)) {
+    throw new Error(`${email} already has an account — edit that row instead.`);
+  }
+
+  assertRoleAndFacilities(input.role, input.facilities);
+
+  if (FACILITY_SCOPED_ROLES.includes(input.role) && input.facilities.length === 0) {
+    throw new Error(
+      `${ROLE_POLICY[input.role].label} needs at least one facility — an empty list grants all of them.`,
+    );
+  }
+  if (input.role === "RETAIL_HEAD" && !input.areaManager?.trim()) {
+    throw new Error("A Retail Head / AM needs an AM scope — without one they see every store.");
+  }
+}
+
+function assertRoleAndFacilities(role: Role, facilities: Facility[]): void {
+  if (!ROLES.includes(role)) throw new Error(`Unknown role ${role}`);
+  for (const f of facilities) {
+    if (!(FACILITIES as readonly string[]).includes(f)) throw new Error(`Unknown facility ${f}`);
+  }
+}
+
+/** The audit `diff`: changed access fields only, as { field: { from, to } }.
+ *  Credential values never reach this function — a reset is recorded by its
+ *  action name alone. */
+export function diffAccess(
+  before: Pick<User, "role" | "facilities" | "allView" | "areaManager" | "active">,
+  after: UserAccessPatch,
+): Record<string, { from: unknown; to: unknown }> {
+  const out: Record<string, { from: unknown; to: unknown }> = {};
+  const put = (k: string, from: unknown, to: unknown) => {
+    if (JSON.stringify(from ?? null) !== JSON.stringify(to ?? null)) out[k] = { from: from ?? null, to: to ?? null };
+  };
+  put("role", before.role, after.role);
+  put("facilities", [...before.facilities].sort(), [...after.facilities].sort());
+  put("allView", before.allView, after.allView);
+  put("areaManager", before.areaManager, after.areaManager?.trim() || null);
+  put("active", before.active, after.active);
+  return out;
+}
 
 export function assertUserAccessPatch(opts: {
   actor: Pick<User, "id" | "role">;
@@ -29,10 +129,7 @@ export function assertUserAccessPatch(opts: {
 }): void {
   const { actor, target, patch, all } = opts;
 
-  if (!ROLES.includes(patch.role)) throw new Error(`Unknown role ${patch.role}`);
-  for (const f of patch.facilities) {
-    if (!(FACILITIES as readonly string[]).includes(f)) throw new Error(`Unknown facility ${f}`);
-  }
+  assertRoleAndFacilities(patch.role, patch.facilities);
 
   const losesAdmin = target.role === "ADMIN" && (patch.role !== "ADMIN" || !patch.active);
 

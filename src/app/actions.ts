@@ -8,8 +8,8 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { hash } from "bcryptjs";
 import type { Prisma } from "@/generated/prisma/client";
+import { advanceOne } from "@/lib/advance";
 import { databaseConfigured, prisma } from "@/lib/db";
-import { REQUIRED_CAPTURES } from "@/lib/journey";
 import { runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
@@ -43,34 +43,10 @@ export async function setFacilityScope(requested: string): Promise<ActionResult>
   }
 }
 
-/**
- * The capture keys a given transition may carry — the transition's own prompt
- * list, nothing else.
- *
- * `captures` is typed `Partial<Order>`, and types are erased at runtime, so
- * every key the caller sent used to be written verbatim: a WH_OPERATOR holding
- * one warehouse right could set merch, logistics and reconciliation fields, or
- * `facility`, by naming them here. REQUIRED_CAPTURES is the right boundary
- * because those fields are intrinsic to the move the role is already entitled
- * to make — the warehouse legitimately records DC/LR/vehicle as a consignment
- * leaves, which is why FIELD_RIGHTS is NOT layered on top (it would reject
- * every dispatch, since those five fields are logistics-owned).
- *
- * STATUS_TIMESTAMPS are deliberately absent: transitionStatus writes them from
- * the server clock. Accepting them here would let a caller forge the very
- * anchors the SLA legs are measured from.
- */
-function allowedCaptures(to: OrderStatus, captures: Partial<Order>): Partial<Order> {
-  const allowed = new Set<string>((REQUIRED_CAPTURES[to] ?? []).map((f) => String(f.field)));
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(captures)) {
-    if (v === undefined) continue;
-    if (!allowed.has(k)) throw new Error(`Field ${k} is not captured on this transition`);
-    out[k] = v;
-  }
-  return out as Partial<Order>;
-}
-
+/** The capture allowlist and the per-order guarded write both live in
+ *  lib/advance.ts now, so the bulk action reuses this exact path rather than
+ *  growing a second copy of it. See that module for why it is not itself a
+ *  "use server" file. */
 export async function advanceOrderStatus(
   soNumber: string,
   to: OrderStatus,
@@ -80,10 +56,7 @@ export async function advanceOrderStatus(
   try {
     const user = await currentUser();
     assertCan(user, "canEditWarehouse");
-    const order = await repo.getOrder(soNumber);
-    if (!order) throw new Error(`Order ${soNumber} not found`);
-    assertFacility(user, order.facility);
-    await repo.transitionStatus(soNumber, to, { id: user.id, name: user.name }, allowedCaptures(to, captures), note);
+    await advanceOne(user, soNumber, to, captures, note);
     revalidatePath("/", "layout");
     return { ok: true };
   } catch (e) {

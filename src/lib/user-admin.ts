@@ -39,6 +39,16 @@ const EMAIL_DOMAIN = "@snitch.com";
  */
 const FACILITY_SCOPED_ROLES: Role[] = ["WH_OPERATOR", "WH_SUPERVISOR"];
 
+/** Exported so the create form can mirror the server rule rather than restate
+ *  it — a form that disagrees with the validator is a form that lies. */
+export function roleNeedsFacilities(role: Role): boolean {
+  return FACILITY_SCOPED_ROLES.includes(role);
+}
+
+export function roleNeedsAreaManager(role: Role): boolean {
+  return role === "RETAIL_HEAD";
+}
+
 /** Minimum credential length. Longer for ADMIN: the blast radius of that one
  *  account is every other account, and a break-glass credential is registered
  *  in production, so it is the one password worth making unwieldy. */

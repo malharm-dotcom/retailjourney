@@ -108,6 +108,34 @@ export function transitAnchor(
 }
 
 /**
+ * The date the transit clock STOPS.
+ *
+ * A terminal order's age is frozen at the moment it ended; only a live one
+ * ages to today. Without this, an order that stopped moving weeks ago kept
+ * accruing "days in transit" against now() forever — which is what made the
+ * misclassified population read as 30-48 day pendency when the real figure
+ * was under 10.
+ *
+ * CLOSED stops at the last delivery attempt, the closest thing to a terminal
+ * moment the feed gives us. An RTO carries no timestamp of its own anywhere in
+ * the spine, so a returned label with no recorded attempt falls back to today
+ * — a known gap, and a visible one only if a CLOSED order is ever put back on
+ * a board (nothing shows one today).
+ */
+export function transitEndDate(
+  order: Pick<Order, "overallStatus" | "deliveredDate" | "deliveredTs" | "latestOfdDate">,
+  today: string,
+): string {
+  if (order.overallStatus === "DELIVERED" || order.overallStatus === "INWARDED") {
+    return order.deliveredDate ?? (order.deliveredTs ? istDateOf(order.deliveredTs) : today);
+  }
+  if (order.overallStatus === "CLOSED") {
+    return order.latestOfdDate ? istDateOf(order.latestOfdDate) : today;
+  }
+  return today;
+}
+
+/**
  * Transit age in days against `endDate` (delivered date, else today).
  * `undefined` when no anchor exists — distinct from a real 0, so callers can
  * fall back rather than print a misleading "0d".

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { transitAgeDays, transitAnchor, type AnchorShipment } from "./transit-anchor";
+import { transitAgeDays, transitAnchor, transitEndDate, type AnchorShipment } from "./transit-anchor";
+import type { Order } from "./types";
 
 // Minimal order shapes — transitAnchor only reads the three dispatch fields.
 type O = Parameters<typeof transitAnchor>[0];
@@ -90,5 +91,37 @@ describe("transit age against the reported symptom", () => {
     // Spine shape: no dispatch fields at all, manifest present, delivered later.
     const o = order({ manifestedTs: "2026-07-20T04:00:00.000Z" });
     expect(transitAgeDays(o, [], "2026-07-24")).toBe(4);
+  });
+});
+
+describe("transitEndDate — the clock stops when the order does", () => {
+  const TODAY = "2026-08-18";
+  const at = (o: Partial<Order>) =>
+    transitEndDate(o as Parameters<typeof transitEndDate>[0], TODAY);
+
+  it("a live order still ages to today", () => {
+    expect(at({ overallStatus: "IN_TRANSIT" })).toBe(TODAY);
+    expect(at({ overallStatus: "PICKUP_PENDING" })).toBe(TODAY);
+  });
+
+  it("a delivered order freezes on its delivered date", () => {
+    expect(at({ overallStatus: "DELIVERED", deliveredDate: "2026-08-13" })).toBe("2026-08-13");
+    // Falls back to the timestamp when only that was captured.
+    expect(at({ overallStatus: "DELIVERED", deliveredTs: "2026-08-13T13:35:40.000Z" })).toBe("2026-08-13");
+  });
+
+  it("an inwarded order is still frozen at delivery, not at inwarding", () => {
+    expect(at({ overallStatus: "INWARDED", deliveredDate: "2026-08-13" })).toBe("2026-08-13");
+  });
+
+  it("a closed order freezes at its last delivery attempt", () => {
+    // Without this a dead label kept accruing days against now() forever —
+    // the effect that made the misclassified population read as 30-48 day
+    // pendency when real pendency was under 10.
+    expect(at({ overallStatus: "CLOSED", latestOfdDate: "2026-07-02T09:00:00.000Z" })).toBe("2026-07-02");
+  });
+
+  it("a closed order with no recorded attempt falls back to today — the known RTO gap", () => {
+    expect(at({ overallStatus: "CLOSED" })).toBe(TODAY);
   });
 });

@@ -4,7 +4,9 @@
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
 import { istToday, daysBetween } from "@/lib/ist";
+import { isDeadShipment } from "@/lib/journey";
 import { requireSession } from "@/lib/session";
+import { transitEndDate } from "@/lib/transit-anchor";
 import { TONE, type Tone } from "@/lib/ui";
 import { TransitBoard, type TransitRow } from "./board";
 
@@ -50,14 +52,22 @@ export default async function InTransitPage() {
     : null;
 
   // Board rows: everything dispatched-not-delivered, plus recent deliveries.
+  //
+  // Dead labels are excluded twice over, on purpose. rollupOverall now rolls
+  // RETURN / DELIVERY_FAILED up to CLOSED, which the overallStatus test below
+  // already drops — but that only takes effect once a sync has recomputed the
+  // order. The explicit shipmentStatus guard catches rows whose rollup has not
+  // been recomputed yet, so a dead label cannot linger on the board in the
+  // meantime. It costs one comparison and closes the whole window.
   const board: TransitRow[] = rows
     .filter(
       (r) =>
-        r.order.overallStatus === "PICKUP_PENDING" ||
-        r.order.overallStatus === "IN_TRANSIT" ||
-        (r.order.overallStatus === "DELIVERED" &&
-          r.order.deliveredDate &&
-          daysBetween(r.order.deliveredDate, today) <= 2),
+        !isDeadShipment(r.order.shipmentStatus) &&
+        (r.order.overallStatus === "PICKUP_PENDING" ||
+          r.order.overallStatus === "IN_TRANSIT" ||
+          (r.order.overallStatus === "DELIVERED" &&
+            r.order.deliveredDate &&
+            daysBetween(r.order.deliveredDate, today) <= 2)),
     )
     .map((r) => {
       const o = r.order;
@@ -66,7 +76,7 @@ export default async function InTransitPage() {
       // straight through to order ageing overstated the road time. Only an
       // order with no anchor at all keeps the old order-age behaviour.
       const transitAge = r.anchor.date
-        ? Math.max(0, daysBetween(r.anchor.date, o.deliveredDate ?? today))
+        ? Math.max(0, daysBetween(r.anchor.date, transitEndDate(o, today)))
         : r.sla.ageing;
       return {
         so: o.soNumber,

@@ -46,7 +46,12 @@ export const SHIPMENT_TRANSITIONS: Record<ShipmentStatus, ShipmentStatus[]> = {
   PICKED_UP: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED", "RETURN"],
   IN_TRANSIT: ["OUT_FOR_DELIVERY", "DELIVERY_FAILED", "DELIVERED", "RETURN"],
   OUT_FOR_DELIVERY: ["DELIVERED", "DELIVERY_FAILED", "RETURN"],
-  DELIVERY_FAILED: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "RETURN"],
+  // DELIVERED is a legal target: the overwhelmingly common end of an NDR is a
+  // successful re-attempt. Omitting it stranded every re-delivered shipment on
+  // DELIVERY_FAILED permanently — the poller re-read the Delivered scan every
+  // 15 minutes and discarded it every time (live: 35 orders, up to 48 days,
+  // several with a POD already on file).
+  DELIVERY_FAILED: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED", "RETURN"],
   // A returned label occasionally resumes (re-forward) — sync may move it on.
   RETURN: ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERED"],
   DELIVERED: [],

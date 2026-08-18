@@ -95,6 +95,19 @@ describe("the sync map is left alone", () => {
     expect(canTransitionShipment(undefined, "DELIVERED")).toBe(true);
   });
 
+  it("lets an NDR'd shipment reach DELIVERED on a successful re-attempt", () => {
+    // The bucket-A root cause: DELIVERED was missing from DELIVERY_FAILED's
+    // targets, so a re-delivered parcel could never leave the failed state.
+    expect(canTransitionShipment("DELIVERY_FAILED", "DELIVERED")).toBe(true);
+    expect(canTransitionShipment("RETURN", "DELIVERED")).toBe(true);
+  });
+
+  it("keeps DELIVERED terminal — nothing moves off it", () => {
+    for (const to of ["IN_TRANSIT", "OUT_FOR_DELIVERY", "DELIVERY_FAILED", "RETURN"] as const) {
+      expect(canTransitionShipment("DELIVERED", to)).toBe(false);
+    }
+  });
+
   it("routes the new rungs onward without letting anything regress into them", () => {
     expect(canTransitionShipment("INFORECEIVED", "PICKED_UP")).toBe(true);
     expect(canTransitionShipment("PICKED_UP", "IN_TRANSIT")).toBe(true);

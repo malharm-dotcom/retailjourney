@@ -308,11 +308,23 @@ describe("normalizers", () => {
 });
 
 describe("rollupShipments", () => {
-  it("least-progressed ACTIVE child wins; DELIVERY_FAILED needs attention", () => {
+  it("least-progressed ACTIVE child wins", () => {
     expect(rollupShipments([])).toBeUndefined();
     expect(rollupShipments(["DELIVERED", "DELIVERED"])).toBe("DELIVERED");
     expect(rollupShipments(["DELIVERED", "IN_TRANSIT"])).toBe("IN_TRANSIT");
-    expect(rollupShipments(["OUT_FOR_DELIVERY", "DELIVERY_FAILED"])).toBe("DELIVERY_FAILED");
+  });
+
+  it("a live sibling outranks a dead one — CONTRACT CHANGE", () => {
+    // This used to assert DELIVERY_FAILED, on the reasoning that a failed child
+    // "needs attention" and should speak for the order. That inverted once dead
+    // labels started closing orders: DELIVERY_FAILED ranks lowest, so it won
+    // the least-progressed contest and would have marked the order CLOSED while
+    // its sibling was literally out for delivery.
+    //
+    // The attention is not lost, it moves: the order stays OPEN and on the
+    // board (via the live child), and the failed AWB is still visible on the
+    // shipment list and the journey timeline.
+    expect(rollupShipments(["OUT_FOR_DELIVERY", "DELIVERY_FAILED"])).toBe("OUT_FOR_DELIVERY");
   });
 
   it("a delivered AWB beats an unscanned sibling (dead label)", () => {

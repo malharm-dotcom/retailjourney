@@ -37,7 +37,17 @@ export type OverallStatus =
   | "PICKUP_PENDING"
   | "IN_TRANSIT"
   | "DELIVERED"
-  | "INWARDED";
+  | "INWARDED"
+  /**
+   * OFF-LADDER TERMINAL: the shipment stopped without delivering (RTO'd label,
+   * or a delivery that failed and was not re-attempted). Not a stage on the
+   * happy path and never a step towards one — it exists so a dead label can
+   * leave the open population instead of ageing forever as "In Transit",
+   * which is what RETURN and DELIVERY_FAILED both used to render as.
+   * Every open-set filter in the app tests for explicit values, so nothing
+   * counts a CLOSED order without opting in.
+   */
+  | "CLOSED";
 
 /** Spine STORE_CHANNEL — how the receiving store is operated. */
 export type StoreChannel = "OWN" | "FRANCHISE";

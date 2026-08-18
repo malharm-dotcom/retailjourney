@@ -196,8 +196,28 @@ export const STATUS_TIMESTAMPS: Partial<Record<OrderStatus, (keyof Order)[]>> = 
  * Roll the granular statuses up to the four-stage `overallStatus` (PRD §4).
  * PICKUP_PENDING = dispatched from WH but no courier movement scan yet.
  */
+/** Off-ladder terminals: the shipment stopped without delivering. These are
+ *  DEAD LABELS — they must leave the open population rather than age forever.
+ *  Exported so the boards and the transit clock agree on one definition. */
+export const DEAD_SHIPMENT_STATUSES: ShipmentStatus[] = ["RETURN", "DELIVERY_FAILED"];
+
+export function isDeadShipment(s: ShipmentStatus | undefined): boolean {
+  return s !== undefined && DEAD_SHIPMENT_STATUSES.includes(s);
+}
+
 export function rollupOverall(o: Pick<Order, "status" | "shipmentStatus">): OverallStatus {
   if (o.shipmentStatus === "DELIVERED") return "DELIVERED";
+  // Dead label → off the board. Both of these used to fall through to the bare
+  // `if (o.shipmentStatus)` below and render as In Transit, so an RTO'd or
+  // permanently-failed shipment accrued transit age indefinitely (live: 48
+  // days on "SHIPPER INSTRUCTED TO RTO THE SHIPMENT").
+  //
+  // This is the ORDER-level rollup, so on a split dispatch it only ever sees
+  // the verdict rollupShipments already reached — and that function drops
+  // every dead child before choosing. A dead label therefore reaches here only
+  // when NO sibling is still alive, which is exactly when closing the order is
+  // right: a delivered replacement AWB still wins.
+  if (isDeadShipment(o.shipmentStatus)) return "CLOSED";
   // INFORECEIVED means the label exists but nothing has been collected — that
   // is still pickup-pending, NOT in transit. Before this rung existed the same
   // shipment carried a null shipmentStatus and fell through to the
@@ -230,20 +250,31 @@ const SHIPMENT_RANK: Record<ShipmentStatus, number> = {
 };
 
 /**
- * Split-dispatch rollup across an order's shipments. RETURN children are dead
- * labels (cancelled / RTO'd) and are excluded — observed live: an AWB is
- * returned, its replacement delivers, and the order IS delivered. Likewise a
- * sibling with no scan yet is ignored once any sibling is moving (one AWB
- * delivered + one never picked up → Delivered, not Pickup Pending). Among the
- * active shipments the least-progressed state wins (one delivered + one in
- * transit is still In Transit). undefined = no courier movement anywhere.
+ * Split-dispatch rollup across an order's shipments. DEAD children (RETURN and
+ * DELIVERY_FAILED) are excluded — observed live: an AWB is returned, its
+ * replacement delivers, and the order IS delivered. Likewise a sibling with no
+ * scan yet is ignored once any sibling is moving (one AWB delivered + one never
+ * picked up → Delivered, not Pickup Pending). Among the active shipments the
+ * least-progressed state wins (one delivered + one in transit is still In
+ * Transit). undefined = no courier movement anywhere.
+ *
+ * DELIVERY_FAILED joined RETURN in that exclusion deliberately. It carries the
+ * LOWEST rank below, so while it was still counted as active it won the
+ * least-progressed contest outright: a single failed box dragged the whole
+ * order down, and once dead labels started closing orders that would have
+ * closed an order whose other box was still in the air. Excluding it keeps
+ * both halves of the contract — a delivered replacement wins, and a genuinely
+ * in-flight sibling still holds the order open.
  */
 export function rollupShipments(
   states: (ShipmentStatus | undefined)[],
 ): ShipmentStatus | undefined {
   if (states.length === 0) return undefined;
-  const live: (ShipmentStatus | undefined)[] = states.filter((s) => s !== "RETURN");
-  if (live.length === 0) return "RETURN"; // everything RTO'd
+  const live: (ShipmentStatus | undefined)[] = states.filter((s) => !isDeadShipment(s));
+  // Everything is dead: the order closes. RETURN is reported ahead of
+  // DELIVERY_FAILED so an RTO'd order still reads as returned, not failed —
+  // both roll up to CLOSED, but the shipment-level fact stays honest.
+  if (live.length === 0) return states.includes("RETURN") ? "RETURN" : "DELIVERY_FAILED";
   const active = live.filter((s): s is ShipmentStatus => s !== undefined);
   if (active.length === 0) return undefined; // nothing scanned yet
   let worst: ShipmentStatus = active[0];
@@ -271,6 +302,7 @@ export const OVERALL_LABEL: Record<OverallStatus, string> = {
   IN_TRANSIT: "In Transit",
   DELIVERED: "Delivered",
   INWARDED: "Inwarded",
+  CLOSED: "Closed — not delivered",
 };
 
 export const SHIPMENT_LABEL: Record<ShipmentStatus, string> = {

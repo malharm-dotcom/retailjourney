@@ -15,6 +15,7 @@ import {
   isLadderStatus,
   ladderOrdinal,
   rollupOverall,
+  rollupShipments,
 } from "./journey";
 import type { Order, ShipmentStatus } from "./types";
 
@@ -134,5 +135,39 @@ describe("rollupOverall keeps INFORECEIVED pickup-pending", () => {
     expect(at("PICKED_UP")).toBe("IN_TRANSIT");
     expect(at("IN_TRANSIT")).toBe("IN_TRANSIT");
     expect(at("DELIVERED")).toBe("DELIVERED");
+  });
+
+  it("takes dead labels off the open set instead of ageing them as In Transit", () => {
+    // Live: an RTO'd label read "In Transit" for 48 days because both of these
+    // fell through to the bare `if (shipmentStatus)` branch.
+    expect(at("RETURN")).toBe("CLOSED");
+    expect(at("DELIVERY_FAILED")).toBe("CLOSED");
+  });
+});
+
+describe("rollupShipments — dead children never speak for a live order", () => {
+  it("a delivered replacement wins over its dead sibling", () => {
+    expect(rollupShipments(["RETURN", "DELIVERED"])).toBe("DELIVERED");
+    expect(rollupShipments(["DELIVERY_FAILED", "DELIVERED"])).toBe("DELIVERED");
+  });
+
+  it("an in-flight sibling STILL holds the order open", () => {
+    // The regression this guards: DELIVERY_FAILED ranks lowest, so while it
+    // counted as active it won the least-progressed contest and would have
+    // closed an order whose other box was still in the air.
+    expect(rollupShipments(["DELIVERY_FAILED", "IN_TRANSIT"])).toBe("IN_TRANSIT");
+    expect(rollupShipments(["DELIVERED", "IN_TRANSIT"])).toBe("IN_TRANSIT");
+  });
+
+  it("closes only when every label is dead, and keeps the RTO fact", () => {
+    expect(rollupShipments(["RETURN", "DELIVERY_FAILED"])).toBe("RETURN");
+    expect(rollupShipments(["DELIVERY_FAILED"])).toBe("DELIVERY_FAILED");
+    expect(rollupShipments(["RETURN"])).toBe("RETURN");
+  });
+
+  it("is unchanged for the ordinary cases", () => {
+    expect(rollupShipments([])).toBeUndefined();
+    expect(rollupShipments([undefined])).toBeUndefined();
+    expect(rollupShipments([undefined, "DELIVERED"])).toBe("DELIVERED");
   });
 });

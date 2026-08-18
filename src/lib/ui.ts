@@ -158,6 +158,10 @@ export const OVERALL_VISUAL: Record<OverallStatus, StatusVisual> = {
   // Beyond delivered: the store has booked the stock in. Same "good, finished"
   // family, one step further.
   INWARDED: { icon: "archive-check-bold", label: "Inwarded", tone: "done" },
+  // Off-ladder terminal, NOT a success: an RTO'd label or a delivery that
+  // failed and was never re-attempted. The "failed" tone keeps it visually
+  // apart from the two done states — this order stopped, it did not finish.
+  CLOSED: { icon: "close-circle-bold", label: "Closed", tone: "failed" },
 };
 
 export const SHIPMENT_VISUAL: Record<ShipmentStatus, StatusVisual> = {

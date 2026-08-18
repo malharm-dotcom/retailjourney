@@ -45,6 +45,11 @@ enum OverallStatus {
   // never emits it, so no delivered order is reclassified. Last = most
   // progressed, matching this enum's ascending convention.
   INWARDED
+  // OFF-LADDER TERMINAL — a dead label (RTO'd, or a delivery that failed and
+  // was never re-attempted). Deliberately last: it is not a rung above
+  // INWARDED, it is off the ladder entirely, and ALTER TYPE ADD VALUE can only
+  // append. Nothing reads it as progress.
+  CLOSED
 }
 
 // Linear ladder: INFORECEIVED → PICKED_UP → IN_TRANSIT → OUT_FOR_DELIVERY →

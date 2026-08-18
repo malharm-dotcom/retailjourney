@@ -6,7 +6,7 @@
 import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
 import { prisma, databaseConfigured } from "../db";
 import { isoFromEpochMs, isoFromIstNtz, istDateOf, nowIso, istToday } from "../ist";
-import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, rollupOverall, rollupShipments } from "../journey";
+import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, isDeadShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
 import { flattenRulebook, rulebookTemplateFor, type RulebookOrderType, type RulebookViewRow } from "../rulebook-map";
@@ -562,6 +562,22 @@ export function transitPatchFromChild(o: Order, s: OrderShipment): Partial<Order
   return patch;
 }
 
+/**
+ * The child that speaks for the order when the SPINE itself has reached a
+ * terminal verdict — DELIVERED, or a dead label — and `undefined` while any
+ * sibling is still alive.
+ *
+ * Gated on the ROLLUP rather than on any single child on purpose: that is what
+ * keeps "a delivered replacement wins" and "an in-flight sibling holds the
+ * order open" true at the same time.
+ * (Exported for the precedence tests only.)
+ */
+export function spineTerminalChild(children: OrderShipment[]): OrderShipment | undefined {
+  const rollup = rollupShipments(children.map((c) => c.shipmentStatus));
+  if (rollup !== "DELIVERED" && !isDeadShipment(rollup)) return undefined;
+  return children.find((c) => c.shipmentStatus === rollup);
+}
+
 /** Recompute the Phase-A SLA verdicts against actuals (Snowflake only seeds). */
 function phaseASla(patch: Partial<Order>, existing?: Order): Partial<Order> {
   const out: Partial<Order> = {};
@@ -788,6 +804,8 @@ async function syncSnowflakeOrder(
 
   const hasPollable = children.some((c) => c.isPollable);
   let overallOverride: OverallStatus | undefined;
+  /** Set when a TERMINAL spine verdict was reconciled onto the order below. */
+  let spineTerminal: ShipmentStatus | undefined;
 
   if (frozen) {
     for (const f of ORDER_TRANSIT_FIELDS) delete patch[f];
@@ -804,6 +822,27 @@ async function syncSnowflakeOrder(
         patch.trackingNumber = p.awb;
         if (!existing.courierPartner) patch.courierPartner = p.courier;
       }
+
+      // ...EXCEPT when the spine has reached a TERMINAL verdict. Furthest
+      // forward wins across sources, and a terminal STATUS is as far forward
+      // as it goes — so here the spine outranks the poller even on a pollable
+      // AWB. That is not a tie being broken arbitrarily: this is exactly the
+      // case where the poller has nothing to say, because the AWB reached the
+      // spine and was never linked here, so it was never polled at all. Live:
+      // 985 open orders against a terminal spine row, 833 of them with no
+      // shipment child whatsoever (ANSAPL16017 — spine DELIVERED with a POD
+      // on 2026-08-13 while the app still read Pickup Pending).
+      //
+      // Gated on the ROLLUP, not on any single child, so a delivered
+      // replacement wins while a genuinely in-flight sibling still holds the
+      // order open.
+      const authoritative = spineTerminalChild(children);
+      // transitPatchFromChild carries the guards with it: manual still wins,
+      // and canTransitionShipment still refuses anything that would regress.
+      if (authoritative) {
+        Object.assign(patch, transitPatchFromChild(existing, authoritative));
+        spineTerminal = patch.shipmentStatus;
+      }
     }
     // Split-dispatch rollup: least-progressed child wins; the poller-tracked
     // AWB uses the fresher order-level state.
@@ -814,7 +853,11 @@ async function syncSnowflakeOrder(
     );
     overallOverride = rollupOverall({
       status: patch.status ?? existing.status,
-      shipmentStatus: rollupShipments(states),
+      // A reconciled terminal verdict speaks for the order directly. The
+      // blended `states` above deliberately prefers the ORDER-level status for
+      // the poller-tracked AWB, which is the stale value we just overrode —
+      // feeding it back in would undo the reconciliation we just made.
+      shipmentStatus: spineTerminal ?? rollupShipments(states),
     });
   } else if (m.overallStatusSeed) {
     // Zero children: Snowflake's OVERALL_STATUS is used verbatim (seed only).

@@ -8,7 +8,14 @@
 import { describe, expect, it } from "vitest";
 import { isPollableAwb } from "../distribution-map";
 import type { DistributionRow } from "../snowflake";
-import { ORDER_TRANSIT_FIELDS, guardedStatus, maxLastUpdated, resolveOverallStatus, transitPatchFromChild } from "./sync";
+import {
+  ORDER_TRANSIT_FIELDS,
+  guardedStatus,
+  maxLastUpdated,
+  resolveOverallStatus,
+  spineTerminalChild,
+  transitPatchFromChild,
+} from "./sync";
 import type { Order, OrderShipment } from "../types";
 
 function row(lastUpdated: string | null): DistributionRow {
@@ -94,6 +101,78 @@ describe("terminal-freeze surface", () => {
     for (const f of ["shipmentStatus", "deliveredTs", "deliveredDate", "trackingStatus", "podLink", "expectedDate"]) {
       expect(ORDER_TRANSIT_FIELDS).toContain(f);
     }
+  });
+});
+
+describe("spineTerminalChild — a terminal spine verdict outranks the poller", () => {
+  const kid = (awb: string, s?: OrderShipment["shipmentStatus"]) =>
+    child({ awb, isPollable: true, shipmentStatus: s });
+
+  it("hands back the delivered child when the spine has resolved it", () => {
+    // ANSAPL16017's shape: the spine resolved eShipz and got DELIVERED; the
+    // app never linked the AWB, so the poller has nothing to contribute.
+    const c = spineTerminalChild([kid("90642894", "DELIVERED")]);
+    expect(c?.awb).toBe("90642894");
+  });
+
+  it("stays silent while a sibling is still MOVING", () => {
+    // The order must NOT be reconciled shut just because one box landed.
+    expect(spineTerminalChild([kid("A", "DELIVERED"), kid("B", "IN_TRANSIT")])).toBeUndefined();
+    expect(spineTerminalChild([kid("A", "DELIVERED"), kid("B", "OUT_FOR_DELIVERY")])).toBeUndefined();
+  });
+
+  it("an UNSCANNED sibling does not hold the order open — the long-standing rule", () => {
+    // Deliberately different from a moving sibling: a label that never got a
+    // scan is a label that was never used, so one AWB delivered + one never
+    // picked up is Delivered. rollupShipments has worked this way since the
+    // split-dispatch rollup landed; the reconciliation inherits it rather
+    // than inventing a second answer.
+    expect(spineTerminalChild([kid("A", "DELIVERED"), kid("B", undefined)])?.awb).toBe("A");
+  });
+
+  it("a delivered replacement still speaks for the order over its dead sibling", () => {
+    const c = spineTerminalChild([kid("A", "RETURN"), kid("B", "DELIVERED")]);
+    expect(c?.awb).toBe("B");
+  });
+
+  it("reconciles a wholly dead order too", () => {
+    expect(spineTerminalChild([kid("A", "RETURN")])?.shipmentStatus).toBe("RETURN");
+    expect(spineTerminalChild([kid("A", "DELIVERY_FAILED")])?.shipmentStatus).toBe("DELIVERY_FAILED");
+  });
+
+  it("stays silent on an ordinary in-flight order", () => {
+    expect(spineTerminalChild([kid("A", "IN_TRANSIT")])).toBeUndefined();
+    expect(spineTerminalChild([])).toBeUndefined();
+  });
+
+  it("the reconciliation still refuses to regress a delivered order", () => {
+    // The guard lives in transitPatchFromChild, which the reconciliation
+    // routes through — DELIVERED is terminal from every source.
+    const patch = transitPatchFromChild(
+      order({ shipmentStatus: "DELIVERED" }),
+      child({ shipmentStatus: "RETURN" }),
+    );
+    expect(patch.shipmentStatus).toBeUndefined();
+  });
+
+  it("the reconciliation still loses to a manual override", () => {
+    const patch = transitPatchFromChild(
+      order({ shipmentStatus: "IN_TRANSIT", manualFields: ["shipmentStatus"] }),
+      child({ shipmentStatus: "DELIVERED" }),
+    );
+    expect(patch.shipmentStatus).toBeUndefined();
+  });
+
+  it("reconciling does NOT depend on the manual DISPATCHED_TO_STORE gate", () => {
+    // A spine-delivered order whose warehouse rung still lags at RTS_LOGIC
+    // must still light up as delivered. The gate at repo-prisma.ts:185/218
+    // guards the MANUAL path only; sync writes through applySyncPatch.
+    const patch = transitPatchFromChild(
+      order({ status: "RTS_LOGIC", shipmentStatus: undefined }),
+      child({ shipmentStatus: "DELIVERED", deliveredTs: "2026-08-13T13:35:40.000Z" }),
+    );
+    expect(patch.shipmentStatus).toBe("DELIVERED");
+    expect(patch.deliveredDate).toBe("2026-08-13");
   });
 });
 

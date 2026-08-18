@@ -2,7 +2,7 @@
 // before real eShipz payloads flow (no live calls here).
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { behaviourFor, pickupTsFromCheckpoints } from "./eshipz-map";
+import { behaviourFor, pickupTsFromCheckpoints, statusForShipment } from "./eshipz-map";
 import { EshipzTrackingSource, mapShipment } from "./eshipz-source";
 
 describe("eshipz-map behaviourFor", () => {
@@ -39,6 +39,74 @@ describe("eshipz-map behaviourFor", () => {
   it("ignores unknown tags", () => {
     expect(behaviourFor("Whatever")).toBe("ignore");
     expect(behaviourFor(undefined)).toBe("ignore");
+  });
+});
+
+describe("statusForShipment — POD and delivered scans outrank a later exception", () => {
+  const cp = (tag: string, subtag?: string, remark?: string, date = "2026-07-05T09:30:00.000Z") =>
+    ({ date, tag, subtag, remark });
+
+  it("a pod_link is DELIVERED whatever the top-level tag says", () => {
+    // The live shape behind 38 stuck orders: the carrier's latest tag is an
+    // exception, but a signed POD already exists.
+    expect(
+      statusForShipment({ tag: "Exception", subtag: "Undelivered", podLink: "https://pod/1" }),
+    ).toBe("DELIVERED");
+  });
+
+  it("a Delivered checkpoint beats a later Exception scan", () => {
+    expect(
+      statusForShipment({
+        tag: "Exception",
+        subtag: "Undelivered",
+        checkpoints: [cp("Exception", "Undelivered", "Rejected"), cp("Delivered", "Delivered", "Delivered")],
+      }),
+    ).toBe("DELIVERED");
+  });
+
+  it("a bare PODDC remark is proof of delivery even without a Delivered tag", () => {
+    expect(
+      statusForShipment({ tag: "Exception", checkpoints: [cp("InTransit", undefined, "PODDC IMAGE ")] }),
+    ).toBe("DELIVERED");
+  });
+
+  it("an RTO'd label is RETURN, not in-transit", () => {
+    expect(statusForShipment({ tag: "Return", subtag: "RTOInitiated" })).toBe("RETURN");
+  });
+
+  it("failed attempts with no POD and no delivered scan stay DELIVERY_FAILED", () => {
+    expect(
+      statusForShipment({ tag: "Exception", subtag: "Undelivered", checkpoints: [cp("Exception", "Undelivered", "Rejected")] }),
+    ).toBe("DELIVERY_FAILED");
+  });
+
+  it("a pickup exception is still stateless — a parcel never collected is NOT a delivery failure", () => {
+    expect(
+      statusForShipment({ tag: "Exception", subtag: "PickupException", checkpoints: [cp("Exception", "PickupException", "Order not Picked")] }),
+    ).toBeUndefined();
+  });
+
+  it("a understood-but-stateless tag is NOT overridden by an older checkpoint", () => {
+    // Regression: the checkpoint fallback must not promote a pickup exception
+    // onto INFORECEIVED just because an older PickupRegistered scan exists.
+    expect(
+      statusForShipment({
+        tag: "Exception",
+        subtag: "PickupException",
+        checkpoints: [cp("Exception", "PickupException", "PICKUP CANCELLED BY CALL"), cp("InfoReceived", "PickupRegistered")],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("falls back to the newest checkpoint carrying a verdict when the top level says nothing", () => {
+    expect(
+      statusForShipment({ tag: "SomethingUnmapped", checkpoints: [cp("OutForDelivery"), cp("InTransit")] }),
+    ).toBe("OUT_FOR_DELIVERY");
+  });
+
+  it("says nothing when there is nothing to say", () => {
+    expect(statusForShipment({})).toBeUndefined();
+    expect(statusForShipment({ podLink: "   " })).toBeUndefined();
   });
 });
 

@@ -5,7 +5,7 @@
 
 import { isoFromRfc1123, istDateOf } from "../ist";
 import type { TrackingCheckpoint } from "../types";
-import { behaviourFor, pickupTsFromCheckpoints, statusForTag } from "./eshipz-map";
+import { behaviourFor, pickupTsFromCheckpoints, statusForShipment } from "./eshipz-map";
 import type { TrackingSource, TrackingUpdate } from "./types";
 
 // 20, not 50. eShipz's tracking endpoint costs roughly 1.4s per AWB under load,
@@ -88,7 +88,9 @@ export function mapShipment(s: EshipzShipment): TrackingUpdate | undefined {
 
   return {
     trackingNumber,
-    status: statusForTag(s.tag, subtag), // pickup_pending / ignore → undefined
+    // Full evidence, not just the tag: a pod_link or a Delivered checkpoint
+    // outranks whatever the top-level tag currently says.
+    status: statusForShipment({ tag: s.tag, subtag, podLink: s.pod_link ?? undefined, checkpoints }),
     tag: s.tag,
     subtag,
     checkpoints,

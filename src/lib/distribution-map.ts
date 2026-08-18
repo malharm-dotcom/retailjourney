@@ -7,7 +7,7 @@
 // second mapping table. All timestamps are TIMESTAMP_NTZ in IST → ist.ts.
 
 import { isoFromIstNtz, istDateFromNtz } from "./ist";
-import { statusForTag } from "./integrations/eshipz-map";
+import { statusForShipment } from "./integrations/eshipz-map";
 import type { DistributionRow } from "./snowflake";
 import type {
   Facility,
@@ -142,11 +142,28 @@ function mapShipmentRow(r: DistributionRow): MappedShipment | undefined {
   const courier = str(r.COURIER_PARTNER);
 
   // One normalizer for every source. STATUS carries the eShipz tag vocabulary
-  // (DELIVERED / INTRANSIT / EXCEPTION …, verified live); ESHIP_STATUS is an
-  // internal state (cancelled / pickup_schedule / success) kept as provenance.
-  const shipmentStatus: ShipmentStatus | undefined =
-    statusForTag(str(r.STATUS)) ??
-    statusForTag(str(r.LAST_CHECKPOINT_TAG), str(r.LAST_CHECKPOINT_SUBTAG));
+  // (DELIVERED / INTRANSIT / EXCEPTION …, verified live); ESHIP_STATUS is the
+  // BOOKING state (success / pickup_schedule only — no cancellation ever
+  // reaches the spine, they are filtered out upstream at order_base) and is
+  // kept as provenance, never as a status input.
+  //
+  // POD_LINK is passed as evidence for the same reason the poller does it: a
+  // spine row carrying a POD is delivered whatever STATUS says.
+  const shipmentStatus: ShipmentStatus | undefined = statusForShipment({
+    tag: str(r.STATUS),
+    podLink: str(r.POD_LINK),
+    // The spine exposes only its LATEST checkpoint, never a history. Passing it
+    // as a one-entry array keeps the original fallback chain intact: STATUS
+    // first, the checkpoint tag/subtag behind it when STATUS says nothing.
+    checkpoints: [
+      {
+        date: "",
+        tag: str(r.LAST_CHECKPOINT_TAG),
+        subtag: str(r.LAST_CHECKPOINT_SUBTAG),
+        remark: str(r.LAST_CHECKPOINT_REMARK),
+      },
+    ],
+  });
 
   return {
     awb,

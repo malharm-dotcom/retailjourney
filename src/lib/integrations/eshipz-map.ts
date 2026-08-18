@@ -121,6 +121,77 @@ export function statusForTag(tag?: string, subtag?: string): ShipmentStatus | un
 }
 
 /**
+ * A proof-of-delivery marker in free text. Carriers surface the POD on the
+ * checkpoint rather than the tag on some lanes (live: Bluedart remark
+ * "PODDC IMAGE " under tag Delivered, and PODDC alone on others).
+ */
+const POD_TEXT = /\bPODDC\b|\bPOD\s*(IMAGE|LINK|UPLOAD)/i;
+
+/** Every input the status decision is allowed to read, from ANY source. */
+export interface ShipmentEvidence {
+  /** Top-level carrier tag (eShipz `tag`, spine `STATUS`). */
+  tag?: string;
+  subtag?: string;
+  /** Presence alone is proof of delivery — see statusForShipment. */
+  podLink?: string;
+  /** Newest-first, as every source delivers them. */
+  checkpoints?: TrackingCheckpoint[];
+}
+
+/** TRUE when this checkpoint is itself proof the parcel landed. */
+function isDeliveredCheckpoint(c: TrackingCheckpoint): boolean {
+  return (
+    behaviourFor(c.tag, c.subtag) === "delivered" ||
+    POD_TEXT.test(c.remark ?? "") ||
+    POD_TEXT.test(c.subtag ?? "")
+  );
+}
+
+/**
+ * THE status decision for a shipment, from the full evidence set — used by
+ * every source (eShipz polling, eShipz webhook, spine STATUS) so all three
+ * land in one enum space and cannot disagree.
+ *
+ * Precedence, strongest first:
+ *
+ *  1. DELIVERED — a `pod_link`, or ANY delivered checkpoint (incl. a bare
+ *     PODDC remark). A POD is a signed physical receipt: it cannot be undone
+ *     by a later exception scan, and carriers demonstrably emit one (live:
+ *     "Delivery Failed" sitting on top of a Delivered checkpoint, 38 orders
+ *     stuck In Transit for up to 48 days). Deliberately scans the WHOLE
+ *     history rather than the latest scan.
+ *  2. The carrier's own top-level verdict (RETURN / OFD / NDR / in transit),
+ *     via statusForTag — which already resolves Exception per subtag.
+ *  3. Only when the top level is UNKNOWN to us ("ignore" — a missing tag, or
+ *     a carrier vocabulary we have not mapped yet): the newest checkpoint
+ *     that does carry a verdict. This rescues a payload whose top-level tag
+ *     is absent but whose scans are perfectly clear.
+ *
+ *     A tag we DO understand is never second-guessed here, even when it
+ *     yields no status. A pickup exception ("PICKUP CANCELLED BY CALL") is a
+ *     deliberate no-transition, not an absence of information — falling
+ *     through to its older InfoReceived scan would quietly promote every
+ *     awaiting-pickup exception onto a rung the carrier never claimed.
+ *
+ * undefined = no transition (still pickup-pending / nothing known).
+ */
+export function statusForShipment(e: ShipmentEvidence): ShipmentStatus | undefined {
+  const checkpoints = e.checkpoints ?? [];
+  if (e.podLink?.trim()) return "DELIVERED";
+  if (checkpoints.some(isDeliveredCheckpoint)) return "DELIVERED";
+
+  const top = statusForTag(e.tag, e.subtag);
+  if (top) return top;
+  if (behaviourFor(e.tag, e.subtag) !== "ignore") return undefined;
+
+  for (const c of checkpoints) {
+    const s = statusForTag(c.tag, c.subtag);
+    if (s) return s;
+  }
+  return undefined;
+}
+
+/**
  * The pickup moment = the EARLIEST checkpoint that put the shipment in transit
  * (tag PickedUp / InTransit → behaviour "in_transit"). This scans the FULL scan
  * history, not just the latest scan, so a DELIVERED AWB still yields its pickup

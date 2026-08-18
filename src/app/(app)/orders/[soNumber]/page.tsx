@@ -73,8 +73,14 @@ export default async function OrderPage({ params }: { params: { soNumber: string
   const shipments = await repo.listShipments(o.soNumber);
   const policy = policyOf(user.role);
 
-  const stageIdx = STAGES.indexOf(o.overallStatus);
-  const terminal = ["CANCELLED", "UNFULFILLABLE"].includes(o.status);
+  // CLOSED is an OFF-LADDER terminal, so it is deliberately absent from STAGES
+  // — but a bare indexOf would return -1 and blank the whole track, the exact
+  // bug the comment above documents for INWARDED. A closed order did travel as
+  // far as In Transit before its label died, so the track shows that progress
+  // and the `terminal` dimming marks it stopped rather than still moving.
+  const stageIdx =
+    o.overallStatus === "CLOSED" ? STAGES.indexOf("IN_TRANSIT") : STAGES.indexOf(o.overallStatus);
+  const terminal = ["CANCELLED", "UNFULFILLABLE"].includes(o.status) || o.overallStatus === "CLOSED";
 
   // Per-field provenance: the last event wins; untouched fields read as synced.
   const lastSource = new Map<string, Source>();

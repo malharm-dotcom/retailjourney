@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { isPollableAwb } from "../distribution-map";
 import type { DistributionRow } from "../snowflake";
-import { ORDER_TRANSIT_FIELDS, guardedStatus, maxLastUpdated, transitPatchFromChild } from "./sync";
+import { ORDER_TRANSIT_FIELDS, guardedStatus, maxLastUpdated, resolveOverallStatus, transitPatchFromChild } from "./sync";
 import type { Order, OrderShipment } from "../types";
 
 function row(lastUpdated: string | null): DistributionRow {
@@ -94,6 +94,35 @@ describe("terminal-freeze surface", () => {
     for (const f of ["shipmentStatus", "deliveredTs", "deliveredDate", "trackingStatus", "podLink", "expectedDate"]) {
       expect(ORDER_TRANSIT_FIELDS).toContain(f);
     }
+  });
+});
+
+describe("resolveOverallStatus — an override alone is a real change", () => {
+  it("reports a MOVE when the override differs, even with an empty field patch", () => {
+    // The live defect: applySyncPatch computed the rollup after its no-op
+    // early return, so this case wrote nothing and the order kept rendering
+    // In Transit while its spine row said DELIVERED.
+    const o = order({ overallStatus: "IN_TRANSIT" });
+    const r = resolveOverallStatus(o, {}, "DELIVERED");
+    expect(r.next).toBe("DELIVERED");
+    expect(r.changed).toBe(true);
+  });
+
+  it("reports NO move when the override matches what the order already has", () => {
+    const o = order({ overallStatus: "DELIVERED" });
+    expect(resolveOverallStatus(o, {}, "DELIVERED").changed).toBe(false);
+  });
+
+  it("falls back to the rollup of the merged patch when no override is given", () => {
+    const o = order({ overallStatus: "PICKUP_PENDING", status: "DISPATCHED_TO_STORE" });
+    const r = resolveOverallStatus(o, { shipmentStatus: "IN_TRANSIT" });
+    expect(r.next).toBe("IN_TRANSIT");
+    expect(r.changed).toBe(true);
+  });
+
+  it("an override beats the rollup — the split-dispatch verdict is not recomputed away", () => {
+    const o = order({ overallStatus: "PICKUP_PENDING", status: "DISPATCHED_TO_STORE" });
+    expect(resolveOverallStatus(o, { shipmentStatus: "IN_TRANSIT" }, "DELIVERED").next).toBe("DELIVERED");
   });
 });
 

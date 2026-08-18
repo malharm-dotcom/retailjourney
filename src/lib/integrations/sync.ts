@@ -113,6 +113,26 @@ function eq(a: unknown, b: unknown): boolean {
 }
 
 /**
+ * The overallStatus a synced patch resolves to, and whether that is a MOVE.
+ *
+ * Extracted from applySyncPatch because the rollup used to be computed AFTER
+ * that function's no-op early return: a patch whose only effect was a changed
+ * overallStatus (an `overallStatusOverride` from the split-dispatch rollup,
+ * with every scalar field already equal) returned `changed: false` and wrote
+ * NOTHING. Live consequence — spine rows that had resolved to DELIVERED kept
+ * rendering In Transit because the override never reached the database.
+ * (Exported for the precedence tests only.)
+ */
+export function resolveOverallStatus(
+  o: Order,
+  data: Partial<Order>,
+  override?: OverallStatus,
+): { next: OverallStatus; changed: boolean } {
+  const next = override ?? rollupOverall({ ...o, ...data });
+  return { next, changed: next !== o.overallStatus };
+}
+
+/**
  * Write a SYNCED patch to an existing order: manual fields are skipped (with
  * a conflict OrderEvent when the values differ), unchanged fields are no-ops
  * (idempotent), meaningful changes get OrderEvents.
@@ -153,10 +173,13 @@ async function applySyncPatch(
     }
   }
 
-  if (Object.keys(data).length === 0 && events.length === 0) return { changed: false, conflicts };
-
-  const merged = { ...o, ...(data as Partial<Order>) };
-  data.overallStatus = overallStatusOverride ?? rollupOverall(merged);
+  // Resolved BEFORE the no-op check: a moved overallStatus is itself a change
+  // worth writing, even when no other field differs.
+  const overall = resolveOverallStatus(o, data as Partial<Order>, overallStatusOverride);
+  if (Object.keys(data).length === 0 && events.length === 0 && !overall.changed) {
+    return { changed: false, conflicts };
+  }
+  data.overallStatus = overall.next;
 
   const db = prisma();
   await db.$transaction([

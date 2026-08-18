@@ -11,7 +11,14 @@ import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
 import { flattenRulebook, rulebookTemplateFor, type RulebookOrderType, type RulebookViewRow } from "../rulebook-map";
 import { slaState } from "../sla";
-import { queryRetailJourneySpine, snowflakeConfigured, type DistributionRow } from "../snowflake";
+import {
+  SPINE_SWEEP_DAYS,
+  ntzValue,
+  queryRetailJourneySpine,
+  snowflakeConfigured,
+  spineHasEventTs,
+  type DistributionRow,
+} from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
@@ -867,19 +874,30 @@ async function syncSnowflakeOrder(
   return applySyncPatch(existing, patch, events, "SYNCED_SNOWFLAKE", overallOverride);
 }
 
-/** The watermark carried forward is the newest LAST_UPDATED among rows this
- *  run saw, compared as true instants (not string sort) so a differing
- *  fractional-seconds width can never misorder two rows. Rows without
- *  LAST_UPDATED (new, not yet stamped upstream) don't move it.
- *  (Exported for the watermark regression tests only.) */
-export function maxLastUpdated(rows: DistributionRow[]): string | undefined {
+/**
+ * The watermark carried forward is the newest event stamp among the rows this
+ * run saw, compared as true instants (not string sort) so a differing
+ * fractional-seconds width can never misorder two rows.
+ *
+ * Reads SPINE_LAST_EVENT_TS, falling back to LAST_UPDATED only while the spine
+ * has yet to expose it. The fallback direction is the safe one: the event
+ * stamp is a GREATEST over a set that includes LAST_UPDATED, so it is always
+ * >= it — a watermark stored from the old column is therefore always behind
+ * the new one and can only cause rows to be RE-read, never skipped.
+ *
+ * Rows with no stamp at all don't move it. Every value goes through ntzValue
+ * first: Snowflake hands back a NULL timestamp as the literal string "NULL"
+ * under fetchAsString, which is truthy.
+ * (Exported for the watermark regression tests only.) */
+export function maxSpineEventTs(rows: DistributionRow[]): string | undefined {
   let best: { raw: string; instant: number } | undefined;
   for (const r of rows) {
-    if (!r.LAST_UPDATED) continue;
-    const iso = isoFromIstNtz(r.LAST_UPDATED);
+    const raw = ntzValue(r.SPINE_LAST_EVENT_TS) ?? ntzValue(r.LAST_UPDATED);
+    if (!raw) continue;
+    const iso = isoFromIstNtz(raw);
     if (!iso) continue;
     const instant = Date.parse(iso);
-    if (!best || instant > best.instant) best = { raw: r.LAST_UPDATED, instant };
+    if (!best || instant > best.instant) best = { raw, instant };
   }
   return best?.raw;
 }
@@ -906,7 +924,24 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
   const priorWatermark = opts.reseed ? undefined : await getSnowflakeWatermark();
 
   try {
-    const rows = await queryRetailJourneySpine(priorWatermark);
+    // Probed per run: the app starts riding the event stamp the hour it
+    // appears upstream, with no redeploy. Until then it reads with the dated
+    // sweep alone, which is a BACKSTOP and not the fix — anything older than
+    // the sweep stays unreachable — so the degraded mode is recorded on the
+    // run rather than passing silently as health.
+    const hasEventTs = await spineHasEventTs();
+    // Reported through the run NOTE, not errors: a missing column is a
+    // degraded read, not a failed one. Pushing it to errors would flip the run
+    // to ok:false, which in turn freezes the watermark — punishing the
+    // transitional state by degrading it further.
+    const degradedNote = hasEventTs
+      ? undefined
+      : `spine is missing SPINE_LAST_EVENT_TS — reading with the ${SPINE_SWEEP_DAYS}-day sweep ONLY. ` +
+        `That is a backstop, not the incremental fix: rows older than the sweep whose LAST_UPDATED ` +
+        `never moved stay unreachable until the column lands.`;
+    if (degradedNote) console.error(`[sync:snowflake] ${degradedNote}`);
+
+    const rows = await queryRetailJourneySpine(priorWatermark, hasEventTs);
     summary.fetched = rows.length;
     const mapped = mapDistributionRows(rows);
 
@@ -984,14 +1019,16 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
     summary.ok = summary.errors.length === 0;
     // Advance only on a fully successful batch — a run with errors leaves the
     // stored watermark untouched so the failed slice is retried next time.
-    const newWatermark = summary.ok ? (maxLastUpdated(rows) ?? priorWatermark) : undefined;
+    const newWatermark = summary.ok ? (maxSpineEventTs(rows) ?? priorWatermark) : undefined;
     console.log(
-      `[sync:snowflake] mode=${priorWatermark ? "incremental" : "full"} fetched=${summary.fetched} upserted=${summary.upserted} watermark ${priorWatermark ?? "∅"} → ${(summary.ok ? newWatermark : priorWatermark) ?? "∅"}`,
+      `[sync:snowflake] mode=${priorWatermark ? "incremental" : "full"}${hasEventTs ? "" : " DEGRADED(sweep-only)"} fetched=${summary.fetched} upserted=${summary.upserted} watermark ${priorWatermark ?? "∅"} → ${(summary.ok ? newWatermark : priorWatermark) ?? "∅"}`,
     );
     await finishRun(
       run.id,
       summary,
-      qcNotes.size ? [...qcNotes].join(" | ") : undefined,
+      // The degraded-read warning leads the note so it is the first thing an
+      // operator sees on the Admin card, ahead of routine QC chatter.
+      [...(degradedNote ? [degradedNote] : []), ...qcNotes].join(" | ") || undefined,
       newWatermark,
     );
     return summary;

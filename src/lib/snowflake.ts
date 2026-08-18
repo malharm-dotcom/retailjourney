@@ -109,8 +109,41 @@ export interface DistributionRow {
    *  ever stamps whole seconds, and does so in per-job batches — many rows
    *  share one exact value). NULL on rows upstream hasn't touched with its own
    *  update job yet (freshly created orders sit NULL until then), so an
-   *  incremental filter must always admit NULL rows or new orders vanish. */
+   *  incremental filter must always admit NULL rows or new orders vanish.
+   *
+   *  NOT a change-data-capture column for the LOGISTICS half of the row. It is
+   *  stamped on order/manifest-side events and never bumped again: measured
+   *  over the live spine, LAST_UPDATED equalled MANIFESTED_TIMESTAMP on 3,098
+   *  of 6,149 AWB rows, equalled the AWB's own creation on 0, equalled the
+   *  delivery timestamp on 0, and PREDATED the AWB's creation on 6,081. Using
+   *  it alone as the incremental watermark made every AWB, every
+   *  STATUS→DELIVERED and every POD structurally unreachable once a row had
+   *  been ingested. See SPINE_LAST_EVENT_TS. */
   LAST_UPDATED: string | null;
+  /**
+   * The row's newest event across BOTH halves — order-side and logistics-side:
+   *   GREATEST_IGNORE_NULLS(last_updated, logistics_created_timestamp,
+   *     tracking_pick_date, first_ofd_date, latest_ofd_date,
+   *     logistics_delivery_timestamp, inwarded_date)
+   *
+   * This is the column the watermark rides on. Optional in the type because
+   * the app tolerates a spine that does not expose it yet — see
+   * spineHasEventTs: the reader degrades to the dated sweep alone and says so
+   * loudly rather than failing the whole run.
+   */
+  SPINE_LAST_EVENT_TS?: string | null;
+}
+
+/**
+ * Snowflake returns a NULL TIMESTAMP_NTZ as the literal string "NULL" under
+ * `fetchAsString: ["Date"]`, NOT as null. Every truthiness test, comparison or
+ * max over a spine timestamp must normalise through this first — a raw
+ * `if (row.SOME_TS)` is always true and silently wrong.
+ */
+export function ntzValue(v: string | null | undefined): string | undefined {
+  if (v == null) return undefined;
+  const s = String(v).trim();
+  return s === "" || s === "NULL" ? undefined : s;
 }
 
 /**
@@ -146,7 +179,13 @@ SELECT
   LAST_CHECKPOINT_CITY, LAST_CHECKPOINT_STATE, POD_LINK, PACKAGE_COUNT,
   PICKUP_SLA, DELIVERY_SLA, LOGISTICS_DELIVERY_SLA, PERFECT_ORDER_SLA,
   SHIPMENT_BILL, STORE_CHANNEL, RULEBOOK_COVERED, DELIVERY_TARGET_EDD,
-  INWARDED_DATE, STI_QTY, EX_SHORT, LAST_UPDATED
+  INWARDED_DATE, STI_QTY, EX_SHORT, LAST_UPDATED`;
+
+/** Appended only when the spine exposes the column (see spineHasEventTs). */
+const EVENT_TS_SELECT = `,
+  SPINE_LAST_EVENT_TS`;
+
+const FROM_SPINE = `
 FROM ${SPINE_TABLE}`;
 
 // Stable order across runs. The parent rollup no longer depends on row order
@@ -154,10 +193,32 @@ FROM ${SPINE_TABLE}`;
 // sync diffs and OrderEvent noise reproducible.
 const SPINE_ORDER_BY = `ORDER BY ORDER_NAME, SHIPMENT_BILL NULLS FIRST, TRACKING_NUMBER NULLS FIRST`;
 
-/** Full 20-day window — the only mode before a watermark exists, and the
- *  explicit manual-reseed fallback thereafter. */
-export const SPINE_QUERY = `${SPINE_SELECT}
-WHERE ORDER_DATE >= DATEADD(day, -20, CURRENT_DATE)
+/**
+ * The dated sweep, in days. Every row this recent is re-read on EVERY run
+ * regardless of the watermark — the backstop that guarantees an in-flight
+ * order is revisited even if its event stamp never moves.
+ *
+ * It is a BACKSTOP, not the fix: SPINE_LAST_EVENT_TS is what actually makes
+ * the incremental pull correct. Read alone, a dated sweep would leave anything
+ * older than the window permanently unreachable.
+ *
+ * 45 days: the live spine holds ~60 days and the oldest genuinely-open orders
+ * observed were 48 days, so this covers the real pendency tail with margin
+ * while still reading far less than a full scan.
+ */
+export const SPINE_SWEEP_DAYS = 45;
+
+/** The dated sweep clause. Carries NO status filter on purpose — DELIVERED
+ *  rows must be swept in, since "it delivered" is exactly the transition the
+ *  app is missing on the orders this exists to rescue. */
+const SWEEP_CLAUSE = `ORDER_DATE >= DATEADD(day, -${SPINE_SWEEP_DAYS}, CURRENT_DATE)`;
+
+/** Full window — the only mode before a watermark exists, and the explicit
+ *  manual-reseed fallback thereafter. Deliberately the SAME window as the
+ *  sweep: a reseed is the recover-everything button, so it must never read
+ *  less than routine operation already does. */
+export const SPINE_QUERY = `${SPINE_SELECT}${EVENT_TS_SELECT}${FROM_SPINE}
+WHERE ${SWEEP_CLAUSE}
 ${SPINE_ORDER_BY}`;
 
 /** IST wall-clock NTZ string as Snowflake itself renders it
@@ -166,24 +227,48 @@ ${SPINE_ORDER_BY}`;
 const NTZ_TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/;
 
 /**
- * Build the spine query for a given watermark. No watermark → full 20-day
- * window (first run / manual reseed). With a watermark, pull only rows
- * touched since then — `>=`, not `>`: LAST_UPDATED is batch-stamped to
- * whole-second precision and many rows share one exact value, so a strict
- * `>` risks dropping siblings of the row that set the watermark. Re-fetching
- * the boundary is safe because applySyncPatch/upsertShipments are no-ops on
- * unchanged data. NULL LAST_UPDATED rows are always included: upstream only
- * stamps a row once its own update job has touched it, so freshly-created
- * orders sit at NULL until then — excluding them would silently hide new
- * orders from the incremental pull indefinitely.
+ * Build the spine query for a given watermark. No watermark → the full window
+ * (first run / manual reseed).
+ *
+ * With a watermark, a row is pulled when ANY of these hold:
+ *
+ *   SPINE_LAST_EVENT_TS >= watermark   the incremental pull proper. This
+ *       column maxes the order-side stamp with every logistics timestamp, so
+ *       unlike LAST_UPDATED it actually moves when an AWB is issued, picked,
+ *       delivered or inwarded.
+ *   SPINE_LAST_EVENT_TS IS NULL        a row with no event of any kind yet.
+ *   LAST_UPDATED IS NULL               the original guard, kept verbatim.
+ *       Upstream leaves freshly-created orders unstamped until its own job
+ *       touches them; excluding those would hide new orders indefinitely.
+ *       (Strictly redundant now — SPINE_LAST_EVENT_TS is NULL whenever
+ *       LAST_UPDATED is, since it is a GREATEST over a set including it — but
+ *       it is kept so this predicate is provably no narrower than the one it
+ *       replaces.)
+ *   ORDER_DATE >= now - SPINE_SWEEP_DAYS   the dated backstop.
+ *
+ * `>=`, not `>`: these stamps are batch-written to whole-second precision and
+ * many rows share one exact value, so a strict `>` risks dropping siblings of
+ * the row that set the watermark. Re-fetching the boundary is free —
+ * applySyncPatch and upsertShipments are both no-ops on unchanged data.
+ *
+ * `hasEventTs: false` degrades to the previous LAST_UPDATED predicate plus the
+ * sweep, for the window between deploying this code and the spine gaining the
+ * column. That mode is NOT the fix — anything older than the sweep stays
+ * unreachable — and runSnowflakeSync records it loudly on the run.
  */
-export function spineQueryFor(watermark?: string): string {
-  if (!watermark) return SPINE_QUERY;
+export function spineQueryFor(watermark?: string, hasEventTs = true): string {
+  if (!watermark) return hasEventTs ? SPINE_QUERY : `${SPINE_SELECT}${FROM_SPINE}
+WHERE ${SWEEP_CLAUSE}
+${SPINE_ORDER_BY}`;
   if (!NTZ_TS_RE.test(watermark)) {
     throw new Error(`invalid Snowflake watermark format: ${JSON.stringify(watermark)}`);
   }
-  return `${SPINE_SELECT}
-WHERE (LAST_UPDATED >= TO_TIMESTAMP_NTZ('${watermark}') OR LAST_UPDATED IS NULL)
+  const select = `${SPINE_SELECT}${hasEventTs ? EVENT_TS_SELECT : ""}${FROM_SPINE}`;
+  const incremental = hasEventTs
+    ? `SPINE_LAST_EVENT_TS >= TO_TIMESTAMP_NTZ('${watermark}') OR SPINE_LAST_EVENT_TS IS NULL`
+    : `LAST_UPDATED >= TO_TIMESTAMP_NTZ('${watermark}')`;
+  return `${select}
+WHERE (${incremental} OR LAST_UPDATED IS NULL OR ${SWEEP_CLAUSE})
 ${SPINE_ORDER_BY}`;
 }
 
@@ -294,10 +379,37 @@ export async function querySnowflake<T>(sqlText: string): Promise<T[]> {
   }
 }
 
-/** The hourly reader: one row per (order, bill, AWB). Full 20-day window when
- *  `watermark` is omitted (first run / manual reseed); otherwise only rows
- *  changed since it (see spineQueryFor). Throws on failure — the caller (sync
- *  run) records the error in SyncRun and the scheduler survives. */
-export async function queryRetailJourneySpine(watermark?: string): Promise<DistributionRow[]> {
-  return querySnowflake<DistributionRow>(spineQueryFor(watermark));
+/**
+ * Does the spine expose SPINE_LAST_EVENT_TS yet?
+ *
+ * Probed per run rather than cached, so the app picks the column up the hour
+ * it appears upstream instead of at the next restart — and, equally, degrades
+ * on its own if it is ever dropped. One cheap INFORMATION_SCHEMA read per
+ * hourly sync.
+ *
+ * Deliberately NOT a hard dependency: shipping a SELECT for a column that does
+ * not exist yet would fail the entire run and take the order spine down with
+ * it, which is a far worse outcome than reading with the sweep alone for an
+ * hour. The caller reports the degraded mode on the SyncRun.
+ */
+export async function spineHasEventTs(): Promise<boolean> {
+  const rows = await querySnowflake<{ N: number }>(
+    `SELECT COUNT(*) AS N FROM SNITCH_DB.INFORMATION_SCHEMA.COLUMNS
+     WHERE TABLE_SCHEMA = 'MAPLEMONK'
+       AND TABLE_NAME = 'RETAIL_JOURNEY_SPINE'
+       AND COLUMN_NAME = 'SPINE_LAST_EVENT_TS'`,
+  );
+  return Number(rows[0]?.N ?? 0) > 0;
+}
+
+/** The hourly reader: one row per (order, bill, AWB). Full window when
+ *  `watermark` is omitted (first run / manual reseed); otherwise the
+ *  incremental predicate plus the dated sweep (see spineQueryFor). Throws on
+ *  failure — the caller (sync run) records the error in SyncRun and the
+ *  scheduler survives. */
+export async function queryRetailJourneySpine(
+  watermark?: string,
+  hasEventTs = true,
+): Promise<DistributionRow[]> {
+  return querySnowflake<DistributionRow>(spineQueryFor(watermark, hasEventTs));
 }

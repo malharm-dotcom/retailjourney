@@ -11,7 +11,7 @@ import type { DistributionRow } from "../snowflake";
 import {
   ORDER_TRANSIT_FIELDS,
   guardedStatus,
-  maxLastUpdated,
+  maxSpineEventTs,
   resolveOverallStatus,
   spineTerminalChild,
   transitPatchFromChild,
@@ -20,6 +20,11 @@ import type { Order, OrderShipment } from "../types";
 
 function row(lastUpdated: string | null): DistributionRow {
   return { LAST_UPDATED: lastUpdated } as DistributionRow;
+}
+
+/** A row as the spine renders it once SPINE_LAST_EVENT_TS exists. */
+function eventRow(eventTs: string | null, lastUpdated: string | null = null): DistributionRow {
+  return { SPINE_LAST_EVENT_TS: eventTs, LAST_UPDATED: lastUpdated } as DistributionRow;
 }
 
 function order(over: Partial<Order>): Order {
@@ -205,24 +210,46 @@ describe("resolveOverallStatus — an override alone is a real change", () => {
   });
 });
 
-describe("maxLastUpdated — the watermark advanced after a Snowflake run", () => {
+describe("maxSpineEventTs — the watermark rides the event stamp", () => {
+  it("prefers SPINE_LAST_EVENT_TS over LAST_UPDATED on the same row", () => {
+    // The whole point of the column: LAST_UPDATED is stamped at manifest and
+    // never moves again, so a row delivered days later still reads stale.
+    // These are ANSAPL16017's real values.
+    expect(maxSpineEventTs([eventRow("2026-08-13 19:05:40.000", "2026-08-05 12:43:31.000")])).toBe(
+      "2026-08-13 19:05:40.000",
+    );
+  });
+
+  it("falls back to LAST_UPDATED only while the spine lacks the column", () => {
+    expect(maxSpineEventTs([eventRow(null, "2026-08-05 12:43:31.000")])).toBe("2026-08-05 12:43:31.000");
+  });
+
+  it('treats Snowflake\'s literal "NULL" string as absent, not as a value', () => {
+    // fetchAsString:["Date"] renders a NULL TIMESTAMP_NTZ as the STRING
+    // "NULL", which is truthy — a raw check would carry it into the watermark.
+    expect(maxSpineEventTs([eventRow("NULL", "NULL")])).toBeUndefined();
+    expect(maxSpineEventTs([eventRow("NULL", "2026-08-05 12:43:31.000")])).toBe("2026-08-05 12:43:31.000");
+  });
+});
+
+describe("maxSpineEventTs — the watermark advanced after a Snowflake run", () => {
   it("picks the newest LAST_UPDATED across the fetched rows", () => {
     const rows = [row("2026-07-28 05:17:09.000"), row("2026-07-30 03:04:07.000"), row("2026-07-13 14:32:57.000")];
-    expect(maxLastUpdated(rows)).toBe("2026-07-30 03:04:07.000");
+    expect(maxSpineEventTs(rows)).toBe("2026-07-30 03:04:07.000");
   });
 
   it("several rows sharing the exact newest instant (batch-stamped upstream) still resolve to one value — the boundary is never duplicated across runs", () => {
     const rows = [row("2026-07-28 05:17:09.000"), row("2026-07-28 05:17:09.000"), row("2026-07-28 05:17:09.000")];
-    expect(maxLastUpdated(rows)).toBe("2026-07-28 05:17:09.000");
+    expect(maxSpineEventTs(rows)).toBe("2026-07-28 05:17:09.000");
   });
 
   it("ignores NULL LAST_UPDATED rows (new orders upstream hasn't stamped yet) rather than treating null as newest", () => {
     const rows = [row("2026-07-28 05:17:09.000"), row(null), row(null)];
-    expect(maxLastUpdated(rows)).toBe("2026-07-28 05:17:09.000");
+    expect(maxSpineEventTs(rows)).toBe("2026-07-28 05:17:09.000");
   });
 
   it("returns undefined when every row is NULL — the watermark stays unset, so the next run still falls back to the full window", () => {
-    expect(maxLastUpdated([row(null), row(null)])).toBeUndefined();
+    expect(maxSpineEventTs([row(null), row(null)])).toBeUndefined();
   });
 
   it("compares true instants, not raw strings — a shorter fractional-seconds suffix never loses to a lexically larger one", () => {
@@ -230,6 +257,6 @@ describe("maxLastUpdated — the watermark advanced after a Snowflake run", () =
     // (since "5" > "0" only past index 0), which is exactly the bug a naive
     // string max would hit here: the .5 row is 500ms later and must win.
     const rows = [row("2026-07-30 03:04:07.000"), row("2026-07-30 03:04:07.5")];
-    expect(maxLastUpdated(rows)).toBe("2026-07-30 03:04:07.5");
+    expect(maxSpineEventTs(rows)).toBe("2026-07-30 03:04:07.5");
   });
 });

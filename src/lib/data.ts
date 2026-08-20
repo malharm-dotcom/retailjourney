@@ -3,7 +3,7 @@
 
 import { repo } from "./repo";
 import { computeOrderSla, isBreaching, ruleFor, type OrderSla } from "./sla";
-import { transitAnchor, type TransitAnchor } from "./transit-anchor";
+import { primaryAwb, transitAnchor, type TransitAnchor } from "./transit-anchor";
 import type { FacilityScope, Order, RulebookEntry, User } from "./types";
 
 export interface OrderRow {
@@ -15,6 +15,11 @@ export interface OrderRow {
    *  manifest or the earliest child's pickup. Empty when nothing is known,
    *  which is a genuine spine gap rather than a zero-day transit. */
   anchor: TransitAnchor;
+  /** The AWB to show for this order — furthest-forward live child, never a
+   *  dead label. Absent when no child carries one (still in WH). */
+  awb?: string;
+  /** How many AWBs the order has, so a board can say "+1 more". */
+  awbCount: number;
 }
 
 export async function scopedOrders(scope: FacilityScope, user: User): Promise<OrderRow[]> {
@@ -28,12 +33,15 @@ export async function scopedOrders(scope: FacilityScope, user: User): Promise<Or
     // leg — same pickup, so the age and the verdict cannot disagree.
     const children = anchorShipments.get(order.soNumber);
     const sla = computeOrderSla(order, rule, undefined, children);
+    const { awb, count } = primaryAwb(children);
     return {
       order,
       rule,
       sla,
       breaching: isBreaching(sla),
       anchor: transitAnchor(order, children),
+      awb,
+      awbCount: count,
     };
   });
 }
@@ -63,11 +71,14 @@ export async function orderBySo(
   const rule = ruleFor(await repo.listRules(), order.storeId, order.type, order.orderDate);
   const shipments = await repo.listShipments(soNumber);
   const sla = computeOrderSla(order, rule, undefined, shipments);
+  const { awb, count } = primaryAwb(shipments);
   return {
     order,
     rule,
     sla,
     breaching: isBreaching(sla),
     anchor: transitAnchor(order, shipments),
+    awb,
+    awbCount: count,
   };
 }

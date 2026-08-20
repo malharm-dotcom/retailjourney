@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { transitAgeDays, transitAnchor, transitEndDate, type AnchorShipment } from "./transit-anchor";
+import {
+  primaryAwb,
+  transitAgeDays,
+  transitAnchor,
+  transitEndDate,
+  type AnchorShipment,
+  type BoardShipment,
+} from "./transit-anchor";
 import type { Order } from "./types";
 
 // Minimal order shapes — transitAnchor only reads the three dispatch fields.
@@ -83,6 +90,47 @@ describe("multi-AWB (split dispatch) grain", () => {
 
   it("never returns a negative age when the anchor post-dates the end date", () => {
     expect(transitAgeDays(order({ manifestedTs: "2026-07-26T06:00:00.000Z" }), [], "2026-07-24")).toBe(0);
+  });
+});
+
+describe("primaryAwb — which label the board shows", () => {
+  // The live shape this exists for: original RTO'd, replacement delivered.
+  const rtoThenReplacement: BoardShipment[] = [
+    { awb: "DEAD1", shipmentStatus: "RETURN" },
+    { awb: "LIVE2", shipmentStatus: "DELIVERED" },
+  ];
+
+  it("shows the delivered replacement, not the returned original", () => {
+    expect(primaryAwb(rtoThenReplacement)).toEqual({ awb: "LIVE2", count: 2 });
+    // Row order must not decide it — the oldest child is first in the query.
+    expect(primaryAwb([...rtoThenReplacement].reverse())).toEqual({ awb: "LIVE2", count: 2 });
+  });
+
+  it("skips a failed original the same way a returned one is skipped", () => {
+    expect(
+      primaryAwb([
+        { awb: "DEAD1", shipmentStatus: "DELIVERY_FAILED" },
+        { awb: "LIVE2", shipmentStatus: "IN_TRANSIT" },
+      ]).awb,
+    ).toBe("LIVE2");
+  });
+
+  it("takes the furthest-forward live child, not the first", () => {
+    expect(
+      primaryAwb([
+        { awb: "A", shipmentStatus: "PICKED_UP" },
+        { awb: "B", shipmentStatus: "OUT_FOR_DELIVERY" },
+        { awb: "C", shipmentStatus: undefined },
+      ]).awb,
+    ).toBe("B");
+  });
+
+  it("falls back to a dead label only when every child is dead", () => {
+    expect(primaryAwb([{ awb: "X", shipmentStatus: "RETURN" }])).toEqual({ awb: "X", count: 1 });
+  });
+
+  it("has nothing to show for an order still in the warehouse", () => {
+    expect(primaryAwb([])).toEqual({ awb: undefined, count: 0 });
   });
 });
 

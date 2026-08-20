@@ -31,6 +31,7 @@
 // box did, and the later AWB must not shorten the measured age.
 
 import { istDateOf, daysBetween } from "./ist";
+import { isDeadShipment, ladderOrdinal } from "./journey";
 import type { Order, OrderShipment } from "./types";
 
 /** Which link of the chain the anchor came from — for provenance in the UI. */
@@ -44,6 +45,32 @@ export interface TransitAnchor {
 
 /** Only the child fields the anchor needs — callers may pass full shipments. */
 export type AnchorShipment = Pick<OrderShipment, "pickedUpTs" | "trackingPickTs">;
+
+/** What a BOARD row needs from the same batched child query: the anchor fields
+ *  plus enough identity and state to name the live AWB. Optional, so the
+ *  anchor's own callers and fixtures are unaffected. */
+export type BoardShipment = AnchorShipment & Partial<Pick<OrderShipment, "awb" | "shipmentStatus">>;
+
+/**
+ * Which AWB to SHOW for an order, and how many it has.
+ *
+ * Multi-AWB is real and by design: an original goes RTO or fails, its
+ * replacement delivers. Showing the first/oldest child would surface the dead
+ * label. So dead children (RETURN / DELIVERY_FAILED) drop out — the same
+ * exclusion rollupShipments() makes — and among the survivors the
+ * FURTHEST-FORWARD one wins, ladder ordinal deciding (no scan yet sits below
+ * every rung). All children dead is the only case that shows a dead label,
+ * because there is nothing else left to show.
+ */
+export function primaryAwb(shipments: BoardShipment[] = []): { awb?: string; count: number } {
+  const withAwb = shipments.filter((s) => s.awb);
+  const live = withAwb.filter((s) => !isDeadShipment(s.shipmentStatus));
+  const pool = live.length ? live : withAwb;
+  const rung = (s: BoardShipment) => ladderOrdinal(s.shipmentStatus) ?? -1;
+  let best = pool[0];
+  for (const s of pool) if (rung(s) > rung(best)) best = s;
+  return { awb: best?.awb, count: withAwb.length };
+}
 
 /** Earliest of a set of ISO timestamps, ignoring blanks. */
 function earliest(values: (string | undefined)[]): string | undefined {

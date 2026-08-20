@@ -19,6 +19,10 @@ export interface TransitRow {
   type: string;
   qty: number;
   lr?: string;
+  /** The live AWB (see page.tsx) — what a floor operator reads off to a courier. */
+  awb?: string;
+  /** Total AWBs on the order, so multi-AWB is visible without opening it. */
+  awbCount: number;
   courier?: string;
   self: boolean;
   overall: OverallStatus;
@@ -157,7 +161,7 @@ export function TransitBoard({
         if (filter !== "all" && filter !== "breach" && r.overall !== filter) return false;
         if (
           needle &&
-          ![r.so, r.lr, r.store, r.am, r.courier]
+          ![r.so, r.lr, r.awb, r.store, r.am, r.courier]
             .filter(Boolean)
             .some((v) => v!.toLowerCase().includes(needle))
         )
@@ -190,14 +194,14 @@ export function TransitBoard({
           {/* The placeholder was doing the label's job, which leaves nothing to
               announce and nothing to read once you have typed. */}
           <label htmlFor={searchId} className="sr-only">
-            Search shipments by SO, LR, store or area manager
+            Search shipments by SO, AWB, LR, store or area manager
           </label>
           <Input
             id={searchId}
             type="search"
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search SO · LR · store · area manager"
+            placeholder="Search SO · AWB · LR · store"
             className="border-0 bg-transparent px-0 py-2 focus:border-0"
           />
         </div>
@@ -218,8 +222,8 @@ export function TransitBoard({
         {/* Sticky so the column meaning survives a long scroll. `top` clears the
             60px bar plus the sync strip that sit above it. */}
         <div className="sticky top-[var(--bar-h)] z-10 hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] rounded-t-card border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid">
-          <div className={CELL}>Store</div>
-          <div className={CELL}>LR · Courier</div>
+          <div className={CELL}>Store · SO</div>
+          <div className={CELL}>AWB · Courier</div>
           <div className={CELL}>Status</div>
           <div className={CELL}>Latest checkpoint</div>
           <div className={CELL}>Transit age</div>
@@ -258,16 +262,28 @@ export function TransitBoard({
                   <Link href={`/orders/${r.so}`} className="text-row font-semibold hover:text-sage">
                     {r.store}
                   </Link>
+                  {/* The SO leads the meta line: the store name says which
+                      shop, only this says WHICH ORDER — and identifying one
+                      without opening it is the whole point of the board. */}
                   <div className="mt-1 text-cap text-mute">
-                    {r.zone} · {r.lane ?? "—"} · {r.type} · {r.qty} pcs
+                    <span className="mono text-ink-soft">{r.so}</span> · {r.zone} · {r.lane ?? "—"} · {r.type} ·{" "}
+                    {r.qty} pcs
                   </div>
                 </div>
                 <div className={cn(CELL, "mono py-1 md:py-4")}>
-                  <MobileLabel>LR</MobileLabel>
-                  <span className="font-display text-ui font-semibold">{r.lr ?? "—"}</span>
+                  <MobileLabel>AWB</MobileLabel>
+                  <span className="font-display text-ui font-semibold">{r.awb ?? "—"}</span>
+                  {/* Multi-AWB is by design here (returned original + delivered
+                      replacement). The one shown is the furthest-forward live
+                      child; this only says there are others to find inside. */}
+                  {r.awbCount > 1 ? (
+                    <span className="ml-1.5 font-sans text-cap text-mute">+{r.awbCount - 1} more</span>
+                  ) : null}
                   <span className="block text-cap text-mute">
                     {(r.courier ?? "—").replace("_", " ")}
                     {r.self ? " · manual lane" : ""}
+                    {/* Usually the same number; shown only when it is not. */}
+                    {r.lr && r.lr !== r.awb ? ` · LR ${r.lr}` : ""}
                   </span>
                 </div>
                 <div className={cn(CELL, "py-1 md:py-4")}>

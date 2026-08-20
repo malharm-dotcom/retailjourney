@@ -35,6 +35,7 @@ function row(order: Partial<Order>, anchor: TransitAnchor, sla: OrderSla = empty
     sla,
     breaching: false,
     anchor,
+    awbCount: 0,
   };
 }
 

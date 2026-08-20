@@ -25,7 +25,7 @@ import {
   userToDomain,
 } from "./prisma-map";
 import type { Actor, ManualShipmentInput, OrderRepo, ShipmentUpsert } from "./repo";
-import type { AnchorShipment } from "./transit-anchor";
+import type { BoardShipment } from "./transit-anchor";
 import type {
   FacilityScope,
   Order,
@@ -318,19 +318,23 @@ export class PrismaRepo implements OrderRepo {
     return rows.map(shipmentToDomain);
   }
 
-  async listAnchorShipments(soNumbers: string[]): Promise<Map<string, AnchorShipment[]>> {
-    const out = new Map<string, AnchorShipment[]>();
+  async listAnchorShipments(soNumbers: string[]): Promise<Map<string, BoardShipment[]>> {
+    const out = new Map<string, BoardShipment[]>();
     if (!soNumbers.length) return out;
-    // Two columns only — the boards fetch this for every row on the page, so
-    // it must stay far cheaper than hydrating whole shipments.
+    // Four columns only — the boards fetch this for every row on the page, so
+    // it must stay far cheaper than hydrating whole shipments. awb +
+    // shipmentStatus ride along because the board names the live AWB, and a
+    // second query for two more columns of the same rows would be worse.
     const rows = await prisma().orderShipment.findMany({
       where: { soNumber: { in: soNumbers } },
-      select: { soNumber: true, pickedUpTs: true, trackingPickTs: true },
+      select: { soNumber: true, pickedUpTs: true, trackingPickTs: true, awb: true, shipmentStatus: true },
     });
     for (const r of rows) {
-      const entry: AnchorShipment = {
+      const entry: BoardShipment = {
         pickedUpTs: r.pickedUpTs?.toISOString(),
         trackingPickTs: r.trackingPickTs?.toISOString(),
+        awb: r.awb,
+        shipmentStatus: r.shipmentStatus ?? undefined,
       };
       const list = out.get(r.soNumber);
       if (list) list.push(entry);

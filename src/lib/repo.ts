@@ -26,7 +26,7 @@ import type {
   Store,
   User,
 } from "./types";
-import type { AnchorShipment } from "./transit-anchor";
+import type { BoardShipment } from "./transit-anchor";
 import { seedData } from "./seed/orders";
 import { STORES } from "./seed/stores";
 import { USERS } from "./seed/users";
@@ -66,10 +66,11 @@ export interface OrderRepo {
   updateFields(soNumber: string, patch: Partial<Order>, actor: Actor, source: Source, note?: string): Promise<Order>;
   /** Child shipments (AWBs) of an order, oldest first. */
   listShipments(soNumber: string): Promise<OrderShipment[]>;
-  /** Only the pickup timestamps, for many orders at once — the transit-age
-   *  anchor needs the earliest child of each order and must not fan out into
-   *  one listShipments call per board row. */
-  listAnchorShipments(soNumbers: string[]): Promise<Map<string, AnchorShipment[]>>;
+  /** Only the board columns (pickup timestamps + AWB identity/state), for many
+   *  orders at once — the transit-age anchor needs the earliest child of each
+   *  order and the board needs its live AWB, and neither may fan out into one
+   *  listShipments call per board row. */
+  listAnchorShipments(soNumbers: string[]): Promise<Map<string, BoardShipment[]>>;
   /** Upsert one shipment by its natural key (soNumber, awb). */
   upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment>;
 }
@@ -326,13 +327,18 @@ class InMemoryRepo implements OrderRepo {
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 
-  async listAnchorShipments(soNumbers: string[]): Promise<Map<string, AnchorShipment[]>> {
+  async listAnchorShipments(soNumbers: string[]): Promise<Map<string, BoardShipment[]>> {
     const want = new Set(soNumbers);
-    const out = new Map<string, AnchorShipment[]>();
+    const out = new Map<string, BoardShipment[]>();
     for (const s of db().shipments.values()) {
       if (!want.has(s.soNumber)) continue;
       const list = out.get(s.soNumber);
-      const entry = { pickedUpTs: s.pickedUpTs, trackingPickTs: s.trackingPickTs };
+      const entry = {
+        pickedUpTs: s.pickedUpTs,
+        trackingPickTs: s.trackingPickTs,
+        awb: s.awb,
+        shipmentStatus: s.shipmentStatus,
+      };
       if (list) list.push(entry);
       else out.set(s.soNumber, [entry]);
     }

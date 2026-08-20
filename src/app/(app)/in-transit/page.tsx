@@ -86,6 +86,11 @@ export default async function InTransitPage() {
         type: o.type,
         qty: o.qty,
         lr: o.lrNumber,
+        // The live AWB, not the oldest: an RTO'd original with a delivered
+        // replacement must show the replacement. Falls back to the order-level
+        // number when no child carries one yet.
+        awb: r.awb ?? o.trackingNumber ?? o.lrNumber,
+        awbCount: r.awbCount,
         courier: o.logisticsPartner,
         self: o.logisticsPartner === "SELF",
         overall: o.overallStatus,

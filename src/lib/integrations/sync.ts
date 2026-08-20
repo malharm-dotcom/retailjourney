@@ -16,7 +16,10 @@ import {
   ntzValue,
   queryRetailJourneySpine,
   snowflakeConfigured,
+  isProbeableOrderName,
   spineHasEventTs,
+  spineOrderDateFloor,
+  spinePresentOrderNames,
   type DistributionRow,
 } from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
@@ -902,6 +905,158 @@ export function maxSpineEventTs(rows: DistributionRow[]): string | undefined {
   return best?.raw;
 }
 
+// ---------------------------------------------------------------------------
+// Cancellation backstop — orders cancelled on Unicommerce after the app had
+// already ingested them.
+//
+// A genuine UC cancellation is NOT a status the app can read. order_base
+// filters cancellations out at the SQL level, so the order's row vanishes from
+// the spine entirely and the app is left holding a stale open order with
+// nothing to reconcile it against. Fixing that upstream — letting cancelled
+// rows through carrying their status — is the real repair and remains the
+// preferred one; RETAIL_JOURNEY_SPINE is a Maplemonk-owned base table this app
+// only reads, so that is a data-team change, not one this repo can make. Until
+// it lands, absence is the only available signal.
+//
+// Absence is a NEGATIVE signal and is treated with the suspicion that deserves.
+// Four conditions must hold together before an order is condemned, and each
+// closes a distinct way absence can lie:
+//
+//   1. The spine floor must be readable. No floor (empty/unreadable spine) =>
+//      nothing is cancelled. Silence is never evidence.
+//   2. The order must be NEWER than that floor. Below it, absence means the
+//      spine aged the row out, not that anyone cancelled it. This doubles as
+//      the blast-radius cap: a truncated or half-rebuilt spine raises the floor
+//      above the population and the backstop stops condemning anything.
+//   3. overallStatus must be WH_PROCESSING. Confirmed with Malhar: UC does not
+//      permit cancelling a completed order, so a real cancellation can only
+//      ever be seen at the warehouse stage. An order that reached pickup or
+//      transit and then went missing is a DATA problem, not a cancellation, and
+//      is deliberately left alone and visible.
+//   4. The order must not already be terminal — nothing to do.
+//
+// Measured on the live spine before shipping: 79 app-open orders had no spine
+// row, and warehouse_sla_performance confirmed all 79 as cancelled upstream
+// (every line CANCELLED, 0 partial), all 79 WH_PROCESSING with no AWB. The
+// other three candidate explanations — aged out, excluded by marketplace/order
+// type rule, name mismatch — scored zero, and no spine row matched those names
+// on any key column.
+
+/** The order fields the backstop's decision reads — nothing else. */
+export interface CancelCandidate {
+  soNumber: string;
+  /** "YYYY-MM-DD" — compared lexically against the spine floor, same shape. */
+  orderDate: string;
+  status: OrderStatus;
+  overallStatus: OverallStatus;
+}
+
+/**
+ * Which candidates an absent spine row condemns as cancelled upstream.
+ *
+ * Pure and total, so the guards above are testable without Snowflake or a
+ * database. `presentInSpine` holds UPPER(TRIM) order names.
+ * (Exported for the cancellation-backstop tests.)
+ */
+export function cancelledUpstream(
+  candidates: CancelCandidate[],
+  presentInSpine: Set<string>,
+  spineFloor: string | undefined,
+): CancelCandidate[] {
+  // Guard 1 — no floor means the spine told us nothing this run.
+  if (!spineFloor) return [];
+  return candidates.filter(
+    (c) =>
+      // 0 — a name the presence probe cannot safely put in a SQL literal is
+      // DROPPED from that query, so it always comes back "absent". Absent for
+      // want of asking is not evidence of cancellation, and without this test
+      // the drop would silently condemn instead of sparing.
+      isProbeableOrderName(c.soNumber) &&
+      !presentInSpine.has(c.soNumber.trim().toUpperCase()) &&
+      c.orderDate >= spineFloor && // 2 — above the retention floor
+      c.overallStatus === "WH_PROCESSING" && // 3 — UC can only cancel here
+      !TERMINAL_STATUSES.includes(c.status), // 4 — not already terminal
+  );
+}
+
+/**
+ * Apply the backstop: mark condemned orders CANCELLED, with an OrderEvent each.
+ *
+ * The write deliberately does NOT go through applySyncPatch, for one reason
+ * that must stay explicit: applySyncPatch honours manual-wins, and this write
+ * must not. Malhar's call — a Unicommerce cancellation OUTRANKS a manual
+ * status, because a warehouse operator marking an order PACKING does not make
+ * it exist to pick. Overriding an operator is a real thing to do quietly, so
+ * every such case is named in its own event note rather than blended in.
+ *
+ * `manualFields` is left intact on purpose: it is the record that a human once
+ * set this field, and CANCELLED is absorbing in guardedStatus anyway, so no
+ * later sync can act on it.
+ */
+export async function reconcileCancelledUpstream(): Promise<{
+  scanned: number;
+  cancelled: number;
+  overrodeManual: number;
+}> {
+  const db = prisma();
+  const rows = await db.order.findMany({
+    where: { overallStatus: "WH_PROCESSING", status: { notIn: TERMINAL_STATUSES } },
+    select: { id: true, soNumber: true, orderDate: true, status: true, overallStatus: true, manualFields: true },
+  });
+  if (!rows.length) return { scanned: 0, cancelled: 0, overrodeManual: 0 };
+
+  // Both reads are independent of the hourly pull on purpose: a row missing
+  // from a WATERMARKED result set is unchanged, not gone, so the incremental
+  // rows can never answer "does this order still exist upstream?".
+  const [floor, present] = await Promise.all([
+    spineOrderDateFloor(),
+    spinePresentOrderNames(rows.map((r) => r.soNumber)),
+  ]);
+
+  const byKey = new Map(rows.map((r) => [r.soNumber, r]));
+  const condemned = cancelledUpstream(
+    rows.map((r) => ({
+      soNumber: r.soNumber,
+      // @db.Date comes back as UTC midnight of the stored calendar date — the
+      // same conversion prisma-map uses, and the shape MIN(ORDER_DATE) returns.
+      orderDate: r.orderDate.toISOString().slice(0, 10),
+      status: r.status as OrderStatus,
+      overallStatus: r.overallStatus as OverallStatus,
+    })),
+    present,
+    floor,
+  );
+
+  let overrodeManual = 0;
+  for (const c of condemned) {
+    const row = byKey.get(c.soNumber)!;
+    const manual = (row.manualFields ?? []).includes("status");
+    if (manual) overrodeManual += 1;
+    await db.$transaction([
+      db.order.update({
+        where: { id: row.id },
+        data: { status: "CANCELLED", statusSource: "SYNCED_SNOWFLAKE", cancelledTs: new Date() },
+      }),
+      db.orderEvent.create({
+        data: {
+          orderId: row.id,
+          field: "status",
+          fromValue: row.status,
+          toValue: "CANCELLED",
+          source: "SYNCED_SNOWFLAKE",
+          actorId: null,
+          // The timestamp records DETECTION, not the upstream cancellation —
+          // the spine keeps no record of an order it has dropped.
+          note: manual
+            ? `Cancelled on Unicommerce — the order left the spine. Overrides the manual status ${row.status}: an upstream cancellation outranks a manual value. Detected by the sync.`
+            : "Cancelled on Unicommerce — the order left the spine. Detected by the sync.",
+        },
+      }),
+    ]);
+  }
+  return { scanned: rows.length, cancelled: condemned.length, overrodeManual };
+}
+
 /** Watermark of the last successful Snowflake run, or undefined for "no
  *  successful run yet" — the caller falls back to the full 20-day window. */
 async function getSnowflakeWatermark(): Promise<string | undefined> {
@@ -1016,6 +1171,31 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
       const k = norm(c);
       return byFinalStore.has(k) || byChannelCode.has(k);
     });
+
+    // Cancellation backstop — only on a CLEAN pull. A run that already hit
+    // errors saw an incomplete picture of the spine, and "incomplete" is
+    // exactly the state in which absence lies.
+    const cancelNotes: string[] = [];
+    if (summary.errors.length === 0) {
+      try {
+        const c = await reconcileCancelledUpstream();
+        if (c.cancelled) {
+          summary.upserted += c.cancelled;
+          cancelNotes.push(
+            `cancelled upstream: ${c.cancelled} of ${c.scanned} WH orders left the spine and were closed as CANCELLED` +
+              (c.overrodeManual ? ` (${c.overrodeManual} overrode a manual status)` : ""),
+          );
+        }
+        console.log(`[sync:snowflake] cancellation backstop scanned=${c.scanned} cancelled=${c.cancelled}`);
+      } catch (e) {
+        // A NOTE, not an error, for the same reason the degraded read is one:
+        // flipping ok:false freezes the watermark, punishing the whole order
+        // sync for a failure in an auxiliary reconciliation.
+        const msg = `cancellation backstop failed (${e instanceof Error ? e.message : String(e)}) — no order was cancelled this run`;
+        cancelNotes.push(msg);
+        console.error(`[sync:snowflake] ${msg}`);
+      }
+    }
     summary.ok = summary.errors.length === 0;
     // Advance only on a fully successful batch — a run with errors leaves the
     // stored watermark untouched so the failed slice is retried next time.
@@ -1028,7 +1208,7 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
       summary,
       // The degraded-read warning leads the note so it is the first thing an
       // operator sees on the Admin card, ahead of routine QC chatter.
-      [...(degradedNote ? [degradedNote] : []), ...qcNotes].join(" | ") || undefined,
+      [...(degradedNote ? [degradedNote] : []), ...cancelNotes, ...qcNotes].join(" | ") || undefined,
       newWatermark,
     );
     return summary;

@@ -413,3 +413,67 @@ export async function queryRetailJourneySpine(
 ): Promise<DistributionRow[]> {
   return querySnowflake<DistributionRow>(spineQueryFor(watermark, hasEventTs));
 }
+
+// ---------------------------------------------------------------------------
+// Presence probe — the cancellation backstop's evidence.
+//
+// A genuine Unicommerce cancellation does not arrive as a status: order_base
+// filters cancellations out at the SQL level (sla_status NOT ILIKE '%cancel%',
+// item_status <> 'CANCELLED'), so the order's row DISAPPEARS from the spine.
+// Absence is therefore the only signal the app can see, and reading it needs a
+// query the INCREMENTAL pull cannot answer — a row missing from a watermarked
+// result set is merely unchanged, not gone. These two reads ask the spine
+// directly instead.
+
+/** Order names are interpolated as literal SQL text, so they are validated the
+ *  same way the watermark is (NTZ_TS_RE) rather than trusted. A name that does
+ *  not match is not escaped and passed anyway — it is dropped by the caller and
+ *  treated as UNVERIFIABLE, which fails SAFE: an order whose presence cannot be
+ *  proven is never condemned as cancelled. */
+const ORDER_NAME_RE = /^[A-Za-z0-9][A-Za-z0-9 ._/-]{0,63}$/;
+
+export function isProbeableOrderName(name: string): boolean {
+  return ORDER_NAME_RE.test(name.trim());
+}
+
+const chunked = <T>(xs: T[], n: number): T[][] =>
+  Array.from({ length: Math.ceil(xs.length / n) }, (_, i) => xs.slice(i * n, i * n + n));
+
+/**
+ * The spine's oldest ORDER_DATE — its live retention floor.
+ *
+ * This is the backstop's own safety limit, and the reason it needs no separate
+ * blast-radius cap. An order older than the floor is absent because the spine
+ * AGED IT OUT, not because anyone cancelled it, so it must never be condemned.
+ * The same test degrades safely in the disaster case: if the spine were ever
+ * emptied or rebuilt short, the floor moves up to meet the surviving rows and
+ * everything below it — i.e. nearly everything — is skipped rather than
+ * mass-cancelled. `undefined` (empty spine / unreadable) cancels nothing at all.
+ */
+export async function spineOrderDateFloor(): Promise<string | undefined> {
+  const rows = await querySnowflake<{ FLOOR: string | null }>(
+    `SELECT MIN(ORDER_DATE) AS FLOOR FROM ${SPINE_TABLE}`,
+  );
+  return ntzValue(rows[0]?.FLOOR);
+}
+
+/**
+ * Which of `names` the spine still carries, as UPPER(TRIM) keys.
+ *
+ * Matched case- and whitespace-insensitively on BOTH sides: the app's soNumber
+ * and the spine's ORDER_NAME drift on casing/padding, and here a false miss
+ * would cancel a live order.
+ */
+export async function spinePresentOrderNames(names: string[]): Promise<Set<string>> {
+  const keys = [...new Set(names.filter(isProbeableOrderName).map((n) => n.trim().toUpperCase()))];
+  const present = new Set<string>();
+  for (const batch of chunked(keys, 800)) {
+    const list = batch.map((k) => `'${k.replace(/'/g, "''")}'`).join(",");
+    const rows = await querySnowflake<{ K: string }>(
+      `SELECT DISTINCT UPPER(TRIM(ORDER_NAME)) AS K FROM ${SPINE_TABLE}
+       WHERE UPPER(TRIM(ORDER_NAME)) IN (${list})`,
+    );
+    for (const r of rows) present.add(r.K);
+  }
+  return present;
+}

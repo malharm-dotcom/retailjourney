@@ -11,7 +11,18 @@ export function LoginPanel({ google }: { google: boolean }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // A refused Google sign-in comes back as ?error= on this page, and nothing
+  // used to read it — the whole panel just re-rendered blank, so someone
+  // bounced for using a personal address saw no reason why. The provider
+  // rejects for exactly two causes now (wrong domain, deactivated account) and
+  // cannot tell the browser which, so say both.
+  const ssoError =
+    params.get("error") && !formError
+      ? "Google sign-in was refused. Use your @snitch.com account — personal addresses cannot sign in, and a deactivated account needs an admin to restore it."
+      : null;
+  const error = formError ?? ssoError;
 
   // Never bounce to an absolute URL an attacker put in the query string.
   const raw = params.get("callbackUrl") ?? "/";
@@ -20,13 +31,13 @@ export function LoginPanel({ google }: { google: boolean }) {
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setBusy(true);
-    setError(null);
+    setFormError(null);
     const res = await signIn("credentials", { email, password, redirect: false });
     setBusy(false);
     if (res?.error || !res?.ok) {
       // One message for every failure mode: a wrong password and an unknown
       // or deactivated account must not be distinguishable.
-      setError("Incorrect email or password, or the account is not active.");
+      setFormError("Incorrect email or password, or the account is not active.");
       setPassword("");
       return;
     }
@@ -38,13 +49,15 @@ export function LoginPanel({ google }: { google: boolean }) {
     <div className="rounded-card bg-card p-6 shadow-card">
       {google ? (
         <>
-          {/* Secondary. The email + password form below it is the provisioned path
-              (there is no self-signup — accounts come from the seed script), so the
-              ink primary belongs to that submit, not to this. */}
+          {/* The ink primary. This inverted when SSO started self-provisioning:
+              Google is now the path every @snitch.com employee takes and needs
+              no account set up first, while the password form below is the
+              leftover for admin-created accounts. One primary per decision, so
+              that submit drops to the outline treatment this used to carry. */}
           <button
             type="button"
             onClick={() => signIn("google", { callbackUrl })}
-            className="flex w-full items-center justify-center gap-2 rounded-control border border-line-control bg-paper py-3 text-ui font-semibold text-ink-soft transition-colors duration-150 ease-ui hover:border-sage hover:bg-sage-soft hover:text-sage"
+            className="flex w-full items-center justify-center gap-2 rounded-control bg-ink py-3 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85"
           >
             Continue with Google — @snitch.com
           </button>
@@ -92,10 +105,13 @@ export function LoginPanel({ google }: { google: boolean }) {
           type="submit"
           disabled={busy}
           className={cn(
-            // Was `bg-sage`, which put a second primary in a 420px panel beside the
-            // ink "Continue with Google" and contradicted `variant="primary"`
-            // (bg-ink) everywhere else in the product. One primary per decision.
-            "mt-1 rounded-control bg-ink py-3 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85",
+            // Outline, not ink: the Google button above is the primary now that
+            // it self-provisions. Only takes the ink when Google is unconfigured
+            // and this is the only way in — a lone button is the primary.
+            "mt-1 rounded-control py-3 text-ui font-semibold transition-colors duration-150 ease-ui",
+            google
+              ? "border border-line-control bg-paper text-ink-soft hover:border-sage hover:bg-sage-soft hover:text-sage"
+              : "bg-ink text-paper hover:bg-ink/85",
             busy && "opacity-60",
           )}
         >

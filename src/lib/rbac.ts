@@ -86,6 +86,21 @@ export const ROLE_POLICY: Record<Role, RolePolicy> = {
     isAdmin: false,
     readOnly: true,
   },
+  // What a @snitch.com Google sign-in lands on before an admin gives it a real
+  // role: every facility, look but do not touch. Every edit right is false, so
+  // the assertCan() guards in actions.ts refuse this role on every mutation
+  // without any of them needing to know it exists.
+  VIEWER: {
+    label: "Viewer (read-only)",
+    canSwitchFacility: true,
+    allView: true,
+    canEditWarehouse: false,
+    canEditLogistics: false,
+    canEditMerch: false,
+    canEditReconciliation: false,
+    isAdmin: false,
+    readOnly: true,
+  },
 };
 
 export function policyOf(role: Role): RolePolicy {

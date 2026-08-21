@@ -1,7 +1,10 @@
-// The Google sign-in gate. Provisioning is an ALLOWLIST: a Google login
-// succeeds only when the *verified* email is @snitch.com AND a matching active
-// User row already exists. There is no auto-create, so every rejection below
-// is the difference between "no account" and "an account" — not a UX detail.
+// The Google sign-in gate. The allowlist is now the DOMAIN, not a table: a
+// login succeeds when the *verified* email is @snitch.com, and an unknown one
+// self-provisions rather than being turned away. So the rejections below are
+// no longer "no account" vs "an account" — the only things that still refuse
+// are the wrong domain, an unverified claim, and a deactivated row. What an
+// auto-provisioned account may DO is a separate guarantee, held by the VIEWER
+// policy in rbac.test.ts and the row shape in auto-provision.test.ts.
 //
 // These tests drive the real callbacks off buildAuthOptions() rather than a
 // re-implementation, so a future edit to auth.ts cannot pass them by accident.
@@ -17,11 +20,15 @@ vi.mock("./users", () => ({
   findPasswordHash: vi.fn(),
 }));
 
+vi.mock("./auto-provision", () => ({ provisionOnFirstSignIn: vi.fn() }));
+
 import { findUserByEmail, findUserById } from "./users";
+import { provisionOnFirstSignIn } from "./auto-provision";
 import { buildAuthOptions } from "./auth";
 
 const byEmail = vi.mocked(findUserByEmail);
 const byId = vi.mocked(findUserById);
+const provision = vi.mocked(provisionOnFirstSignIn);
 
 function userRow(over: Partial<User> = {}): User {
   return {
@@ -78,22 +85,53 @@ describe("google sign-in gate", () => {
     expect(await attemptSignIn("malhar.m@snitch.com", false)).toBe(false);
   });
 
-  it("rejects a snitch.com email absent from the allowlist", async () => {
+  it("does not auto-provision a rejected non-snitch.com address", async () => {
+    // The domain check has to run BEFORE provisioning, or the feature that
+    // creates accounts becomes the feature that lets anyone create one.
     byEmail.mockResolvedValue(undefined);
 
-    expect(await attemptSignIn("stranger@snitch.com")).toBe(false);
+    expect(await attemptSignIn("stranger@gmail.com")).toBe(false);
+    expect(provision).not.toHaveBeenCalled();
   });
 
-  it("rejects a deactivated allowlisted user", async () => {
+  it("does not auto-provision on an unverified snitch.com claim", async () => {
+    byEmail.mockResolvedValue(undefined);
+
+    expect(await attemptSignIn("stranger@snitch.com", false)).toBe(false);
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it("auto-provisions an unknown snitch.com email and admits it", async () => {
+    byEmail.mockResolvedValue(undefined);
+    provision.mockResolvedValue(userRow({ email: "newbie@snitch.com", role: "VIEWER" as Role }));
+
+    expect(await attemptSignIn("newbie@snitch.com")).toBe(true);
+    expect(provision).toHaveBeenCalledWith(expect.objectContaining({ email: "newbie@snitch.com" }));
+  });
+
+  it("refuses sign-in when provisioning cannot persist a row", async () => {
+    // Fail closed. A caller that could not write the account must not be
+    // waved through on a session with no row behind it.
+    byEmail.mockResolvedValue(undefined);
+    provision.mockResolvedValue(undefined);
+
+    expect(await attemptSignIn("newbie@snitch.com")).toBe(false);
+  });
+
+  it("rejects a deactivated user WITHOUT re-provisioning them", async () => {
+    // The one way this feature could quietly undo a revocation: a deactivated
+    // person signs in again and gets a fresh active row. They must not.
     byEmail.mockResolvedValue(userRow({ active: false }));
 
     expect(await attemptSignIn("malhar.m@snitch.com")).toBe(false);
+    expect(provision).not.toHaveBeenCalled();
   });
 
-  it("admits an allowlisted active snitch.com user", async () => {
+  it("admits an existing active snitch.com user without touching provisioning", async () => {
     byEmail.mockResolvedValue(userRow());
 
     expect(await attemptSignIn("malhar.m@snitch.com")).toBe(true);
+    expect(provision).not.toHaveBeenCalled();
   });
 });
 

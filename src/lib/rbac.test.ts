@@ -6,18 +6,41 @@ import { describe, expect, it } from "vitest";
 import { ROLE_POLICY, assertCan, assertFacility, resolveScope } from "./rbac";
 import type { Role } from "./types";
 
-const VIEWER: Role = "RETAIL_HEAD"; // the read-only role
+const READ_ONLY: Role[] = ["RETAIL_HEAD", "VIEWER"];
+const VIEWER: Role = "RETAIL_HEAD"; // the original read-only role
 const EDITORS: Role[] = ["MERCHANDISING", "WH_SUPERVISOR", "WH_OPERATOR", "LOGISTICS"];
 
 describe("role policy", () => {
-  it("the read-only role holds no edit right at all", () => {
-    const p = ROLE_POLICY[VIEWER];
-    expect(p.readOnly).toBe(true);
-    expect(p.canEditWarehouse).toBe(false);
-    expect(p.canEditLogistics).toBe(false);
-    expect(p.canEditMerch).toBe(false);
-    expect(p.canEditReconciliation).toBe(false);
-    expect(p.isAdmin).toBe(false);
+  it("no read-only role holds any edit right at all", () => {
+    for (const role of READ_ONLY) {
+      const p = ROLE_POLICY[role];
+      expect(p.readOnly).toBe(true);
+      expect(p.canEditWarehouse).toBe(false);
+      expect(p.canEditLogistics).toBe(false);
+      expect(p.canEditMerch).toBe(false);
+      expect(p.canEditReconciliation).toBe(false);
+      expect(p.isAdmin).toBe(false);
+    }
+  });
+
+  // VIEWER is what a self-provisioned Google sign-in lands on, so it is the one
+  // role a stranger can reach without an admin. It must never grow a right.
+  it("VIEWER, the self-signup landing role, can do nothing but look", () => {
+    const p = ROLE_POLICY.VIEWER;
+    const rights = ["canEditWarehouse", "canEditLogistics", "canEditMerch", "canEditReconciliation", "isAdmin"] as const;
+    for (const right of rights) {
+      expect(p[right]).toBe(false);
+      expect(() => assertCan({ role: "VIEWER" }, right)).toThrow(/Forbidden/);
+    }
+  });
+
+  it("VIEWER sees every facility, read-only — the intended self-signup scope", () => {
+    // facilities: [] means ALL (entitledFacilities), which is only safe because
+    // the role above cannot write. If that ever changes, this pairing is a hole.
+    const viewer = { role: "VIEWER" as Role, facilities: [], allView: true };
+    expect(resolveScope(viewer, "ALL")).toBe("ALL");
+    expect(resolveScope(viewer, "SAPL-WH2")).toBe("SAPL-WH2");
+    expect(() => assertFacility(viewer, "SAPL-WH1")).not.toThrow();
   });
 
   it("every editor role can edit something, and none is an admin", () => {
@@ -31,7 +54,7 @@ describe("role policy", () => {
 
   it("only ADMIN carries user management", () => {
     expect(ROLE_POLICY.ADMIN.isAdmin).toBe(true);
-    for (const role of [VIEWER, ...EDITORS]) expect(ROLE_POLICY[role].isAdmin).toBe(false);
+    for (const role of [...READ_ONLY, ...EDITORS]) expect(ROLE_POLICY[role].isAdmin).toBe(false);
   });
 
   it("assertCan refuses the viewer and admits the right holder", () => {

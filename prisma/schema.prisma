@@ -90,6 +90,9 @@ enum Role {
   WH_OPERATOR
   LOGISTICS
   RETAIL_HEAD
+  // Landing role for a self-provisioned Google sign-in — read-only, all
+  // facilities, no AM scoping. Appended: ALTER TYPE ADD VALUE can only append.
+  VIEWER
 }
 
 model Order {
@@ -390,7 +393,10 @@ model UserAccessAudit {
   actorEmail   String
   targetUserId String
   targetEmail  String
-  /// "create" | "update" | "deactivate" | "reactivate" | "cred-reset"
+  /// "create" | "update" | "deactivate" | "reactivate" | "cred-reset" |
+  /// "auto-provision". The last one has no admin actor: actorId is the literal
+  /// "system" and actorEmail "google-sso", because nobody granted it — the
+  /// person walked in through SSO and the row records that they did.
   action       String
   /// Changed fields only, as { field: { from, to } }. NEVER the credential
   /// value — a cred-reset records that one happened, never what was set.

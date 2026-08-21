@@ -2,17 +2,22 @@
 // lives here so swapping the credentials login for Google SSO later is a
 // single-file change. Env is read lazily inside function bodies (PRD §11).
 //
-// Sign-in is email + password against User.passwordHash (bcrypt). There is no
-// public signup: accounts are created by scripts/seed-admin.mts and must be
-// `active`. The old passwordless "persona" provider is GONE — it authenticated
-// on a user id alone, which is an authentication bypass wherever its env flag
-// was set.
+// Two ways in. Google SSO is the primary path and self-provisions: any
+// verified @snitch.com address gets a User row on first sign-in (see
+// auto-provision.ts), landing on VIEWER — read-only, every facility, no edit
+// right — until an admin grants a real role. Email + password against
+// User.passwordHash (bcrypt) remains for admin-created accounts; an
+// auto-provisioned row has no hash and so cannot use it.
+//
+// The old passwordless "persona" provider is GONE — it authenticated on a user
+// id alone, which is an authentication bypass wherever its env flag was set.
 
 import type { NextAuthOptions } from "next-auth";
 import CredentialsProvider from "next-auth/providers/credentials";
 import GoogleProvider from "next-auth/providers/google";
 import { compare } from "bcryptjs";
 import { findUserByEmail, findUserById, findPasswordHash } from "./users";
+import { provisionOnFirstSignIn } from "./auto-provision";
 import type { Facility, Role } from "./types";
 
 declare module "next-auth" {
@@ -128,10 +133,21 @@ export function buildAuthOptions(): NextAuthOptions {
             console.warn(`[auth] google sign-in denied — domain/verification: ${email || "<no email>"}`);
             return false;
           }
-          // New @snitch.com logins need an Admin-activated user record.
+          // Past this point the address is a verified @snitch.com one, so it
+          // is an employee: they get an account without an admin pre-creating
+          // it. What they do NOT get is access — the row lands on VIEWER,
+          // read-only everywhere, until an admin says otherwise.
           const known = await findUserByEmail(email);
-          if (!known?.active) {
-            console.warn(`[auth] google sign-in denied — not an active user: ${email}`);
+          if (known) {
+            if (!known.active) {
+              console.warn(`[auth] google sign-in denied — deactivated account: ${email}`);
+              return false;
+            }
+            return true;
+          }
+          const provisioned = await provisionOnFirstSignIn({ email, name: profile?.name ?? user.name });
+          if (!provisioned) {
+            console.warn(`[auth] google sign-in denied — could not provision: ${email}`);
             return false;
           }
           return true;

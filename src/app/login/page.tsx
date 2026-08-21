@@ -20,7 +20,8 @@ export default function LoginPage() {
           <LoginPanel google={googleConfigured()} />
         </Suspense>
         <p className="mt-6 text-center text-xs text-mute">
-          Accounts are created by an admin — there is no self-signup. Ask an admin if you need access.
+          Any @snitch.com Google account can sign in. New accounts start read-only — ask an admin to
+          grant the access your role needs.
         </p>
       </div>
     </div>

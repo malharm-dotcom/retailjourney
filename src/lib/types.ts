@@ -76,7 +76,12 @@ export type Role =
   | "WH_SUPERVISOR"
   | "WH_OPERATOR"
   | "LOGISTICS"
-  | "RETAIL_HEAD";
+  | "RETAIL_HEAD"
+  // The landing role for a self-provisioned Google sign-in: read-only across
+  // every facility, no AM scoping, no edit right of any kind. Deliberately NOT
+  // RETAIL_HEAD, which is also read-only but is filtered by areaManager in
+  // data.ts and means something specific on the org chart.
+  | "VIEWER";
 
 export interface User {
   id: string;

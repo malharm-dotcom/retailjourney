@@ -5,7 +5,18 @@
 // URL-param-backed on purpose: a supervisor sending "the overdue FRESH ones at
 // WH-1" to a colleague sends a link, not a description.
 
-import type { OrderType } from "@/lib/types";
+import { WH_FLOW } from "@/lib/journey";
+import type { OrderStatus, OrderType } from "@/lib/types";
+
+/**
+ * Every stage the queue holds, in flow order.
+ *
+ * Single source of truth for both the server list and the table's stage
+ * quick-filter, so a lane that exists in one and not the other is impossible.
+ * ON_HOLD trails the flow: it is a real stage an order sits in, but it is off
+ * the happy path and never a bulk target.
+ */
+export const QUEUE_STAGES: OrderStatus[] = [...WH_FLOW, "ON_HOLD"];
 
 /** Age buckets, in days since the order landed. */
 export const AGE_BUCKETS = [
@@ -26,6 +37,9 @@ export interface QueueFilters {
   /** Only orders whose handover deadline has already passed. */
   overdue: boolean;
   channel: string;
+  /** One queue stage, or "" for every stage. Replaces the kanban's columns:
+   *  narrowing to a stage is now a filter, not a horizontal scroll. */
+  stage: OrderStatus | "";
 }
 
 export const EMPTY_FILTERS: QueueFilters = {
@@ -35,6 +49,7 @@ export const EMPTY_FILTERS: QueueFilters = {
   age: "",
   overdue: false,
   channel: "",
+  stage: "",
 };
 
 /** Anything the filters can be applied to — the card shape, narrowed to the
@@ -47,6 +62,7 @@ export interface Filterable {
   channel?: string;
   ageDays: number;
   due?: "today" | "overdue";
+  status: OrderStatus;
 }
 
 /** Read filters out of Next's searchParams. Unknown values fall back to the
@@ -58,6 +74,7 @@ export function filtersFromParams(params: Record<string, string | string[] | und
     return (Array.isArray(v) ? v[0] : v)?.trim() ?? "";
   };
   const age = one("age");
+  const stage = one("stage");
   return {
     q: one("q"),
     store: one("store"),
@@ -65,6 +82,9 @@ export function filtersFromParams(params: Record<string, string | string[] | und
     age: (AGE_BUCKETS.some((b) => b.key === age) ? age : "") as AgeBucketKey | "",
     overdue: one("overdue") === "1",
     channel: one("channel"),
+    // A stage outside the queue would filter the table down to nothing with no
+    // way to tell that from an empty warehouse, so it degrades to "all stages".
+    stage: (QUEUE_STAGES.includes(stage as OrderStatus) ? stage : "") as OrderStatus | "",
   };
 }
 
@@ -78,12 +98,13 @@ export function paramsFromFilters(f: QueueFilters): string {
   if (f.age) p.set("age", f.age);
   if (f.overdue) p.set("overdue", "1");
   if (f.channel) p.set("channel", f.channel);
+  if (f.stage) p.set("stage", f.stage);
   const s = p.toString();
   return s ? `?${s}` : "";
 }
 
 export function isFiltered(f: QueueFilters): boolean {
-  return Boolean(f.q || f.store || f.type || f.age || f.overdue || f.channel);
+  return Boolean(f.q || f.store || f.type || f.age || f.overdue || f.channel || f.stage);
 }
 
 export function matchesFilters(c: Filterable, f: QueueFilters): boolean {
@@ -92,6 +113,7 @@ export function matchesFilters(c: Filterable, f: QueueFilters): boolean {
     const hay = [c.so, c.store, c.campaign].filter(Boolean) as string[];
     if (!hay.some((v) => v.toLowerCase().includes(needle))) return false;
   }
+  if (f.stage && c.status !== f.stage) return false;
   if (f.store && c.store !== f.store) return false;
   if (f.type && c.type !== f.type) return false;
   if (f.channel && c.channel !== f.channel) return false;

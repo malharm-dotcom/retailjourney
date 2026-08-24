@@ -22,6 +22,7 @@ function card(over: Partial<Filterable> = {}): Filterable {
     type: "FRESH" as OrderType,
     channel: "OWN_STORE",
     ageDays: 3,
+    status: "NOT_STARTED",
     ...over,
   };
 }
@@ -36,14 +37,38 @@ describe("reading filters from the URL", () => {
 
   it("reads every facet", () => {
     expect(
-      filtersFromParams({ q: "SO-1", store: "BOPAL", type: "RPL", age: "4-7", overdue: "1", channel: "OWN_STORE" }),
-    ).toEqual({ q: "SO-1", store: "BOPAL", type: "RPL", age: "4-7", overdue: true, channel: "OWN_STORE" });
+      filtersFromParams({
+        q: "SO-1",
+        store: "BOPAL",
+        type: "RPL",
+        age: "4-7",
+        overdue: "1",
+        channel: "OWN_STORE",
+        stage: "PACKING",
+      }),
+    ).toEqual({
+      q: "SO-1",
+      store: "BOPAL",
+      type: "RPL",
+      age: "4-7",
+      overdue: true,
+      channel: "OWN_STORE",
+      stage: "PACKING",
+    });
   });
 
   it("degrades a hand-edited URL to a broader board rather than throwing", () => {
     // An unknown age bucket must not 500 the page or silently match nothing.
     expect(filtersFromParams({ age: "nonsense" }).age).toBe("");
     expect(filtersFromParams({ overdue: "yes" }).overdue).toBe(false);
+    // Same for a stage that is not one of this queue's: an unrecognised stage
+    // would otherwise empty the table with nothing to say why.
+    expect(filtersFromParams({ stage: "DELIVERED" }).stage).toBe("");
+    expect(filtersFromParams({ stage: "nonsense" }).stage).toBe("");
+  });
+
+  it("accepts ON_HOLD, which is a real stage but off the happy path", () => {
+    expect(filtersFromParams({ stage: "ON_HOLD" }).stage).toBe("ON_HOLD");
   });
 
   it("takes the first value when a param is repeated", () => {
@@ -52,7 +77,7 @@ describe("reading filters from the URL", () => {
 
   it("round-trips back to a query string, omitting neutral values", () => {
     expect(paramsFromFilters(EMPTY_FILTERS)).toBe("");
-    const round = f({ type: "RPL" as OrderType, overdue: true });
+    const round = f({ type: "RPL" as OrderType, overdue: true, stage: "RTS_LOGIC" });
     expect(filtersFromParams(Object.fromEntries(new URLSearchParams(paramsFromFilters(round))))).toEqual(round);
   });
 });
@@ -78,6 +103,12 @@ describe("matching", () => {
     expect(matchesFilters(card(), f({ store: "SNITCH - COCO - OTHER" }))).toBe(false);
     expect(matchesFilters(card(), f({ type: "RPL" as OrderType }))).toBe(false);
     expect(matchesFilters(card(), f({ channel: "FRANCHISE_STORE" }))).toBe(false);
+  });
+
+  it("narrows to one stage exactly, and to every stage when unset", () => {
+    expect(matchesFilters(card({ status: "PACKING" }), f({ stage: "PACKING" }))).toBe(true);
+    expect(matchesFilters(card({ status: "PICKING" }), f({ stage: "PACKING" }))).toBe(false);
+    expect(matchesFilters(card({ status: "PICKING" }), f({ stage: "" }))).toBe(true);
   });
 
   it("reads the overdue flag rather than recomputing a deadline", () => {

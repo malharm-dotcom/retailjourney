@@ -11,8 +11,10 @@ import { useEffect, useId, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { Button, Chip, Input, Select } from "@/components/ui/primitives";
-import type { OrderType } from "@/lib/types";
-import { AGE_BUCKETS, isFiltered, paramsFromFilters, type QueueFilters } from "./filters";
+import { STATUS_LABEL } from "@/lib/journey";
+import { WH_STATUS_VISUAL, cn } from "@/lib/ui";
+import type { OrderStatus, OrderType } from "@/lib/types";
+import { AGE_BUCKETS, QUEUE_STAGES, isFiltered, paramsFromFilters, type QueueFilters } from "./filters";
 
 const CHANNELS: { value: string; label: string }[] = [
   { value: "OWN_STORE", label: "Own store" },
@@ -23,12 +25,16 @@ export function FilterBar({
   filters,
   stores,
   types,
+  stageCounts,
   matchedTotal,
   scopeTotal,
 }: {
   filters: QueueFilters;
   stores: string[];
   types: OrderType[];
+  /** Per-stage totals with every OTHER facet applied, so narrowing to one
+   *  stage still shows how many orders wait in the ones you left. */
+  stageCounts: Record<OrderStatus, number>;
   matchedTotal: number;
   scopeTotal: number;
 }) {
@@ -55,9 +61,44 @@ export function FilterBar({
   useEffect(() => () => void (debounce.current && clearTimeout(debounce.current)), []);
 
   const on = isFiltered(filters);
+  // "All stages" counts what the other facets left, not the whole facility, so
+  // the pills always add up to the number next to them.
+  const acrossStages = QUEUE_STAGES.reduce((n, s) => n + (stageCounts[s] ?? 0), 0);
 
   return (
-    <div className="mb-3 flex flex-wrap items-center gap-2.5">
+    <>
+      {/* The stage quick-filter. This is what the kanban's columns became: the
+          same stage separation, minus the horizontal scroll that kept three of
+          the seven stages permanently off-screen. Each pill carries its count,
+          so a supervisor can see where the queue is piling up before clicking. */}
+      <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by stage">
+        <Chip active={!filters.stage} onClick={() => apply({ stage: "" })}>
+          All stages
+          <span className="mono text-cap text-inherit opacity-70">{acrossStages}</span>
+        </Chip>
+        {QUEUE_STAGES.map((s) => {
+          const n = stageCounts[s] ?? 0;
+          const active = filters.stage === s;
+          return (
+            <Chip
+              key={s}
+              active={active}
+              tone={WH_STATUS_VISUAL[s].tone}
+              // An empty stage stays visible but unclickable: knowing that
+              // Picking is at zero is information, and a pill that disappears
+              // when it empties makes the row jump under the pointer.
+              disabled={n === 0 && !active}
+              onClick={() => apply({ stage: active ? "" : s })}
+              className={cn(n === 0 && !active && "opacity-45")}
+            >
+              {STATUS_LABEL[s]}
+              <span className="mono text-cap text-inherit opacity-70">{n}</span>
+            </Chip>
+          );
+        })}
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2.5">
       <div className="flex min-w-[230px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:max-w-[340px] sm:flex-none">
         <Icon name="magnifer-linear" size={15} />
         <label htmlFor={searchId} className="sr-only">
@@ -145,6 +186,7 @@ export function FilterBar({
           </Button>
         </>
       ) : null}
-    </div>
+      </div>
+    </>
   );
 }

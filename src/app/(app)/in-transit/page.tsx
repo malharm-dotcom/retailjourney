@@ -85,6 +85,9 @@ export default async function InTransitPage() {
         lane: o.laneClassification ?? r.rule?.laneClassification,
         type: o.type,
         qty: o.qty,
+        // Straight off the order — the same field the detail view renders as
+        // "Sale invoice". Not derived, not reformatted.
+        invoice: o.saleInvoiceNumber,
         lr: o.lrNumber,
         // The live AWB, not the oldest: an RTO'd original with a delivered
         // replacement must show the replacement. Falls back to the order-level

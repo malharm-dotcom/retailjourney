@@ -19,6 +19,9 @@ export interface TransitRow {
   lane?: string;
   type: string;
   qty: number;
+  /** `Order.saleInvoiceNumber` verbatim — the same value the order detail view
+   *  shows under "Sale invoice". Absent until the warehouse raises one. */
+  invoice?: string;
   lr?: string;
   /** The live AWB (see page.tsx) — what a floor operator reads off to a courier. */
   awb?: string;
@@ -58,6 +61,7 @@ function visualOf(r: TransitRow): StatusVisual {
  */
 const CSV_COLUMNS: CsvColumn<TransitRow>[] = [
   { header: "SO", value: (r) => r.so },
+  { header: "Sale invoice", value: (r) => r.invoice },
   { header: "Store", value: (r) => r.store },
   { header: "Zone", value: (r) => r.zone },
   { header: "Lane", value: (r) => r.lane },
@@ -269,7 +273,7 @@ export function TransitBoard({
         {/* Sticky so the column meaning survives a long scroll. `top` clears the
             60px bar plus the sync strip that sit above it. */}
         <div className="sticky top-[var(--bar-h)] z-10 hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] rounded-t-card border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid">
-          <div className={CELL}>Store · SO</div>
+          <div className={CELL}>Store · SO · Invoice</div>
           <div className={CELL}>AWB · Courier</div>
           <div className={CELL}>Status</div>
           <div className={CELL}>Latest checkpoint</div>
@@ -312,9 +316,15 @@ export function TransitBoard({
                   {/* The SO leads the meta line: the store name says which
                       shop, only this says WHICH ORDER — and identifying one
                       without opening it is the whole point of the board. */}
+                  {/* Invoice sits directly beside the SO: those two are what a
+                      floor operator matches a physical consignment against, and
+                      splitting them across the row means reading twice. Rendered
+                      even when absent, so "no invoice raised yet" is visible
+                      rather than looking like a field that was never added. */}
                   <div className="mt-1 text-cap text-mute">
-                    <span className="mono text-ink-soft">{r.so}</span> · {r.zone} · {r.lane ?? "—"} · {r.type} ·{" "}
-                    {r.qty} pcs
+                    <span className="mono text-ink-soft">{r.so}</span> · INV{" "}
+                    <span className="mono text-ink-soft">{r.invoice ?? "—"}</span> · {r.zone} ·{" "}
+                    {r.lane ?? "—"} · {r.type} · {r.qty} pcs
                   </div>
                 </div>
                 <div className={cn(CELL, "mono py-1 md:py-4")}>

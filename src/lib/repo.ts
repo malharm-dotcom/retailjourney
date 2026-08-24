@@ -338,6 +338,7 @@ class InMemoryRepo implements OrderRepo {
         trackingPickTs: s.trackingPickTs,
         awb: s.awb,
         shipmentStatus: s.shipmentStatus,
+        packageCount: s.packageCount,
       };
       if (list) list.push(entry);
       else out.set(s.soNumber, [entry]);

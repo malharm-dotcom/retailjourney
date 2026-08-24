@@ -49,7 +49,8 @@ export type AnchorShipment = Pick<OrderShipment, "pickedUpTs" | "trackingPickTs"
 /** What a BOARD row needs from the same batched child query: the anchor fields
  *  plus enough identity and state to name the live AWB. Optional, so the
  *  anchor's own callers and fixtures are unaffected. */
-export type BoardShipment = AnchorShipment & Partial<Pick<OrderShipment, "awb" | "shipmentStatus">>;
+export type BoardShipment = AnchorShipment &
+  Partial<Pick<OrderShipment, "awb" | "shipmentStatus" | "packageCount">>;
 
 /**
  * Which AWB to SHOW for an order, and how many it has.

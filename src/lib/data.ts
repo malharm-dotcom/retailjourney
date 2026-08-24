@@ -3,7 +3,7 @@
 
 import { repo } from "./repo";
 import { computeOrderSla, isBreaching, ruleFor, type OrderSla } from "./sla";
-import { primaryAwb, transitAnchor, type TransitAnchor } from "./transit-anchor";
+import { primaryAwb, transitAnchor, type BoardShipment, type TransitAnchor } from "./transit-anchor";
 import type { FacilityScope, Order, RulebookEntry, User } from "./types";
 
 export interface OrderRow {
@@ -20,6 +20,16 @@ export interface OrderRow {
   awb?: string;
   /** How many AWBs the order has, so a board can say "+1 more". */
   awbCount: number;
+  /** Boxes across the order's AWBs. Order-grain `boxCount` is NULL on every
+   *  spine order — the count only exists at child grain — so this sums the
+   *  children. Undefined when no child carries one, which is not zero boxes. */
+  boxes?: number;
+}
+
+/** Boxes across an order's AWBs — undefined when no child carries a count. */
+function boxesOf(children: BoardShipment[] = []): number | undefined {
+  const counted = children.filter((c) => c.packageCount != null);
+  return counted.length ? counted.reduce((a, c) => a + (c.packageCount ?? 0), 0) : undefined;
 }
 
 export async function scopedOrders(scope: FacilityScope, user: User): Promise<OrderRow[]> {
@@ -42,6 +52,7 @@ export async function scopedOrders(scope: FacilityScope, user: User): Promise<Or
       anchor: transitAnchor(order, children),
       awb,
       awbCount: count,
+      boxes: boxesOf(children),
     };
   });
 }
@@ -80,5 +91,6 @@ export async function orderBySo(
     anchor: transitAnchor(order, shipments),
     awb,
     awbCount: count,
+    boxes: boxesOf(shipments),
   };
 }

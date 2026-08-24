@@ -327,7 +327,16 @@ export class PrismaRepo implements OrderRepo {
     // second query for two more columns of the same rows would be worse.
     const rows = await prisma().orderShipment.findMany({
       where: { soNumber: { in: soNumbers } },
-      select: { soNumber: true, pickedUpTs: true, trackingPickTs: true, awb: true, shipmentStatus: true },
+      select: {
+        soNumber: true,
+        pickedUpTs: true,
+        trackingPickTs: true,
+        awb: true,
+        shipmentStatus: true,
+        // Box count is AWB-grain in the spine and NULL on every order row, so a
+        // board that wants boxes has to read it here or not at all.
+        packageCount: true,
+      },
     });
     for (const r of rows) {
       const entry: BoardShipment = {
@@ -335,6 +344,7 @@ export class PrismaRepo implements OrderRepo {
         trackingPickTs: r.trackingPickTs?.toISOString(),
         awb: r.awb,
         shipmentStatus: r.shipmentStatus ?? undefined,
+        packageCount: r.packageCount ?? undefined,
       };
       const list = out.get(r.soNumber);
       if (list) list.push(entry);

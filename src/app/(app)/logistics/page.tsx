@@ -1,13 +1,21 @@
 // Logistics Queue (PRD §6.4) — everything at DISPATCHED_TO_STORE and beyond:
 // courier/LR/DC assignment, shipment transitions, NDR attempts, delivery + POD.
+//
+// Shaped like the logistics team's own spreadsheet tracker: one row per
+// dispatch, dispatch-date led, their column names. Curated, not replicated —
+// the tracker's ~30 columns would rebuild exactly the wall the Warehouse
+// redesign removed, so the columns the team ACTS on are the grid and the rest
+// live on row-expand and in the order-level CSV on the Reports desk.
 
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
-import { istDateOf, istToday, daysBetween } from "@/lib/ist";
+import { istDateOf, istToday, daysBetween, weekdayOf } from "@/lib/ist";
 import type { AnchorSource } from "@/lib/transit-anchor";
 import { policyOf } from "@/lib/rbac";
 import { requireSession } from "@/lib/session";
+import { SLA_LABEL } from "@/lib/sla";
 import { LogisticsTable, type LogisticsRow } from "./table";
+import { perRulebook, tatStatusOf } from "./tat";
 
 export const metadata = { title: "Logistics" };
 export const dynamic = "force-dynamic";
@@ -44,45 +52,66 @@ export default async function LogisticsPage() {
     .map((r) => {
       const o = r.order;
       const pickup = pickupDateOf(o, r.anchor);
+      // The internal promise is the primary EDD. `idealDeliveryDate` is the
+      // rulebook-derived date (93% of dispatched orders), with the spine's own
+      // delivery target already behind it for out-of-rulebook orders. The
+      // courier's EDD — `expectedDate`, present on 59% — is on row-expand.
+      const edd = o.idealDeliveryDate;
+      // Manual first, synced behind it — the app's precedence rule everywhere
+      // else. `logisticsPartner` is what the edit dialog writes and is NULL on
+      // every spine-synced order, which is why this column read "—" on every
+      // live row and why the self-delivery filter matched nothing; falling
+      // through to `courierPartner` fixes that without making a manual
+      // correction invisible.
+      const courier = o.logisticsPartner ?? o.courierPartner;
+      const delivery = r.sla.legs.find((l) => l.leg === "DELIVERY")?.state;
+      const logisticsDelivery = r.sla.legs.find((l) => l.leg === "LOGISTICS_DELIVERY")?.state;
       return {
         so: o.soNumber,
+        dispatch: r.anchor.date,
+        invoice: o.saleInvoiceNumber,
+        type: o.type,
         store: o.storeNameFormat,
         facility: o.facility,
         zone: o.zone,
-        dc: o.dcNumber,
-        lr: o.lrNumber,
-        courier: o.logisticsPartner,
-        self: o.logisticsPartner === "SELF",
-        vehicle: o.vehicleNumber,
-        eway: o.eWayBill,
-        // Replaces the old DISPATCHED column. dispatchedDate is null on every
-        // live order (the spine has no dispatch column), so that column read
-        // "—" in every row and carried a "Nd since manifest" sub-line that
-        // measured from a warehouse event the SLA fix already stopped
-        // trusting. Pickup is the honest anchor and the actionable number.
+        lane: o.laneClassification,
+        courier,
+        self: /self/i.test(courier ?? ""),
+        awb: r.awb ?? o.trackingNumber,
+        awbCount: r.awbCount,
         pickup,
-        // Days since collection — the staleness signal. Undefined when nothing
-        // has been picked up yet: that is "not picked up", not "0 days", and
-        // the two must not render the same.
         sincePickup: pickup ? Math.max(0, daysBetween(pickup, o.deliveredDate ?? today)) : undefined,
-        expected: o.expectedDate,
-        delivered: o.deliveredDate,
+        edd,
+        eddDay: edd ? weekdayOf(edd) : undefined,
+        courierEdd: o.expectedDate,
+        courierEddDay: o.expectedDate ? weekdayOf(o.expectedDate) : undefined,
         shipment: o.shipmentStatus,
         source: o.shipmentSource ?? o.statusSource,
+        delivered: o.deliveredDate,
+        tat: tatStatusOf(edd, o.deliveredDate, today),
+        perRulebook: perRulebook(o.targetHandoverDay, pickup),
+        rulebookDay: o.targetHandoverDay,
+        // The SLA engine's own verdicts, verbatim — the tracker's "final
+        // Malhar / courier TAT status" columns, one per EDD.
+        malharTat: delivery ? SLA_LABEL[delivery] : undefined,
+        courierTat: logisticsDelivery ? SLA_LABEL[logisticsDelivery] : undefined,
+        dc: o.dcNumber,
+        lr: o.lrNumber,
+        vehicle: o.vehicleNumber,
+        eway: o.eWayBill,
+        boxes: r.boxes,
+        qty: o.qty,
+        city: o.receiverCity ?? o.lastCheckpointCity,
         attempts: o.deliveryAttempts,
         pod: o.podLink,
+        trackingLink: o.trackingLink,
         msg: o.trackingLatestMessage,
         breaching: r.breaching,
       };
     })
-    // Live before delivered; then never-collected first (they are the ones
-    // needing a courier chased), then oldest pickup first.
-    .sort(
-      (a, b) =>
-        Number(!!a.delivered) - Number(!!b.delivered) ||
-        Number(a.sincePickup !== undefined) - Number(b.sincePickup !== undefined) ||
-        (b.sincePickup ?? 0) - (a.sincePickup ?? 0),
-    );
+    // Newest dispatch first — the tracker's own order. Undated dispatches (no
+    // anchor at all: a genuine spine gap) sort last rather than to the top.
+    .sort((a, b) => (b.dispatch ?? "").localeCompare(a.dispatch ?? "") || a.so.localeCompare(b.so));
 
   const selfCount = table.filter((t) => t.self && !t.delivered).length;
 

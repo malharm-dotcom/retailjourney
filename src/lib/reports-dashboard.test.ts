@@ -1,8 +1,22 @@
-// Pins the two things on the dashboard that are not allowed to drift: the
-// server-side facility predicate, and the SLA definition every panel shares.
+// Pins the things on the dashboard that are not allowed to drift: the
+// server-side facility predicate, and the ported Metabase definitions.
+//
+// The SQL assertions look pedantic, and that is the point. Every one of them
+// encodes a place where the upstream question does something surprising —
+// FUTURE SLA passing, two adjacent columns using different denominators,
+// Perfect Order% ignoring the PERFECT_ORDER_SLA column. A well-meaning
+// "cleanup" of any of them silently desyncs this page from the dashboard it
+// exists to mirror, and nothing else in the suite would notice.
 
 import { describe, expect, it } from "vitest";
-import { KPI_AMBER, KPI_GREEN, kpiTone, scopeClause, slaPct } from "./reports-dashboard";
+import {
+  KPI_AMBER,
+  KPI_GREEN,
+  REPORT_TABLE,
+  WINDOW_DAYS,
+  kpiTone,
+  scopeClause,
+} from "./reports-dashboard";
 
 describe("scopeClause — server-side facility scoping", () => {
   it("narrows to a single warehouse when the session resolves to one", () => {
@@ -29,23 +43,17 @@ describe("scopeClause — server-side facility scoping", () => {
   });
 });
 
-describe("slaPct — the shared SLA definition", () => {
-  it("counts EARLY_CREATION as a pass on placement, and nowhere else", () => {
-    expect(slaPct("ORDER_PLACEMENT_SLA")).toContain("'WITHIN_SLA','EARLY_CREATION'");
-    for (const col of ["HANDOVER_SLA", "PICKUP_SLA", "DELIVERY_SLA", "PERFECT_ORDER_SLA"]) {
-      expect(slaPct(col)).not.toContain("EARLY_CREATION");
-      expect(slaPct(col)).toContain("'WITHIN_SLA'");
-    }
+describe("source", () => {
+  it("reads the table Metabase reads, not the app's own spine", () => {
+    // Reading RETAIL_JOURNEY_SPINE here would be defensible and would NOT match
+    // the dashboard — the spine keeps out-of-rulebook orders that
+    // distribution_analytics drops. See the header comment before changing this.
+    expect(REPORT_TABLE).toBe("SNITCH_DB.MAPLEMONK.DISTRIBUTION_ANALYTICS");
+    expect(REPORT_TABLE).not.toContain("RETAIL_JOURNEY_SPINE");
   });
 
-  it("keeps FUTURE SLA out of the denominator on every leg", () => {
-    for (const col of ["ORDER_PLACEMENT_SLA", "HANDOVER_SLA", "PICKUP_SLA", "DELIVERY_SLA", "PERFECT_ORDER_SLA"]) {
-      expect(slaPct(col)).toContain(`${col} <> 'FUTURE SLA'`);
-    }
-  });
-
-  it("divides by NULLIF so an empty day reads as no data, not as 0%", () => {
-    expect(slaPct("DELIVERY_SLA")).toContain("NULLIF(");
+  it("uses upstream's 31-day trailing window", () => {
+    expect(WINDOW_DAYS).toBe(31);
   });
 });
 

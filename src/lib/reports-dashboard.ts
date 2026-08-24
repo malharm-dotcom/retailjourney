@@ -1,65 +1,105 @@
 // At-a-glance Distribution 2.0 panels for the Reports desk.
 //
-// These read RETAIL_JOURNEY_SPINE directly rather than the app's Postgres, and
-// deliberately so. The app's own SLA engine (sla.ts) RECOMPUTES every verdict
-// against actuals; the spine carries the verdict Metabase itself renders, baked
-// per row. Computing app-side would give numbers that are defensible but
-// different, and the whole point of these panels is that they reconcile 1:1
-// with the Distribution 2.0 dashboard. So: same table, same columns, same
-// verdict strings. The app-side path is not blocked (the dispatchedDate →
-// anchor re-anchor is done, see reports.ts) — it is simply the wrong source for
-// a must-match panel.
+// Every expression below is a PORT OF THE METABASE QUESTION SQL, not a
+// reimplementation of it. That is the whole contract of these panels: they are
+// the Distribution 2.0 dashboard rendered inside RetailJourney, so where the
+// upstream definition is odd, this file is odd in exactly the same way. Do not
+// "improve" a formula here — improve it in Metabase and port it back, or the
+// two surfaces start disagreeing and neither can be trusted.
+//
+// WHY distribution_analytics AND NOT THE SPINE
+// -------------------------------------------
+// The app's order spine was deliberately repointed OFF distribution_analytics
+// (see snowflake.ts) because that table gates out every order the rulebook does
+// not cover — which is exactly the population the boards exist to make visible.
+// That reasoning is unchanged and the boards still run on RETAIL_JOURNEY_SPINE.
+//
+// But these panels have the opposite requirement: they must equal Metabase, and
+// Metabase reads distribution_analytics. The two tables are near-identical in
+// shape and genuinely different in content — measured live, the same Metabase
+// lane query returned 2,404 vs 2,472 boxes and 35.01% vs 33.60% on-time attempt
+// for one lane, because the spine carries 564 out-of-rulebook rows that
+// distribution_analytics drops. Reading the spine here would produce numbers
+// that are arguably better and provably not the ones on the dashboard.
+//
+// So: the boards read the spine, these panels read distribution_analytics, and
+// the panels say so on screen. A reader who notices the drill-down reports
+// count more orders than the dashboard is seeing something real.
 
 import { unstable_cache } from "next/cache";
-import { querySnowflake, SPINE_TABLE } from "./snowflake";
+import { querySnowflake } from "./snowflake";
 import type { FacilityScope } from "./types";
 
+/** The Metabase source. Fully qualified for the same reason SPINE_TABLE is —
+ *  a mis-set SNOWFLAKE_SCHEMA must not silently repoint this at something else. */
+export const REPORT_TABLE = "SNITCH_DB.MAPLEMONK.DISTRIBUTION_ANALYTICS";
+
 // ---------------------------------------------------------------------------
-// THE SLA DEFINITION. One block, on purpose.
+// THE SLA DEFINITION, ported verbatim from the Distribution Journey SLAs
+// question. Five metrics, and no two of them are built the same way:
 //
-// The spine's *_SLA columns speak this vocabulary:
-//   WITHIN_SLA · BREACHED · FUTURE SLA · BREACHED-PENDING FOR PROCESS ·
-//   BREACHED-PENDING FOR DELIVERY · EARLY_CREATION (placement only) · NULL
+//   Order SLA%     EARLY_CREATION and WITHIN_SLA both pass. Order grain.
+//                  Denominator: orders with a non-null verdict.
+//   WH Processing% pass = NOT LIKE 'BREACH%', so a leg still inside its window
+//                  ('FUTURE SLA') counts as a PASS, not as pending. Order grain.
+//   Pickup SLA%    same NOT-LIKE-BREACH% test, but AWB grain (TRACKING_NUMBER),
+//                  denominator = AWBs with a non-null verdict.
+//   Delivery SLA%  NOT LIKE '%BREACH%' (leading wildcard — upstream's, kept),
+//                  AWB grain, denominator = ALL AWBs including those with no
+//                  verdict at all. Different denominator from Pickup, one line
+//                  above it. This asymmetry is upstream's and is deliberate here.
+//   Perfect Order% NOT read off the PERFECT_ORDER_SLA column. It is recomputed
+//                  as "all four legs strictly WITHIN_SLA" over ALL distinct
+//                  orders — so an order with a null or future leg counts
+//                  against it. That is why this reads ~8-37% and the
+//                  PERFECT_ORDER_SLA column would have read ~85%.
 //
-// Metabase's exact numerator/denominator has NOT been confirmed against its
-// question SQL yet, so these are stated defaults, not verified parity:
-//
-//   pass       = WITHIN_SLA, plus EARLY_CREATION on the placement leg (an order
-//                raised ahead of its cutoff is early, not late — and it is 47%
-//                of all rows, so this single choice moves that tile by ~45pts).
-//   denominator= every non-NULL verdict EXCEPT 'FUTURE SLA'. A leg whose clock
-//                has not run out yet is not-yet-applicable, not a pass; scoring
-//                it either way would flatter or punish the day it lands in.
-//                Both BREACHED-PENDING values DO count, as fails — the deadline
-//                has already passed on those.
-//   grain      = spine rows, i.e. order+bill+AWB. Live spine is 6,422 rows over
-//                6,419 orders so this is ~1:1 today; it stops being so on a
-//                split-dispatch day, when the courier legs genuinely are per-AWB.
-//
-// When the Metabase SQL arrives, reconcile HERE and nowhere else — every panel
-// below and every CSV download built on top routes through these two helpers.
+// Used by BOTH the KPI tiles and the trend table, from this one constant, so a
+// tile can never disagree with the column beneath it.
 // ---------------------------------------------------------------------------
+const SLA_METRICS = `
+  100 * COUNT(DISTINCT CASE WHEN ORDER_PLACEMENT_SLA IN ('EARLY_CREATION', 'WITHIN_SLA')
+              THEN ORDER_NAME END)
+    / NULLIF(COUNT(DISTINCT CASE WHEN NOT ORDER_PLACEMENT_SLA IS NULL THEN ORDER_NAME END), 0)
+    AS ORDER_PCT,
+  100 * COUNT(DISTINCT CASE WHEN NOT HANDOVER_SLA LIKE 'BREACH%' THEN ORDER_NAME END)
+    / NULLIF(COUNT(DISTINCT CASE WHEN NOT HANDOVER_SLA IS NULL THEN ORDER_NAME END), 0)
+    AS WH_PCT,
+  100 * COUNT(DISTINCT CASE WHEN NOT PICKUP_SLA LIKE 'BREACH%' THEN TRACKING_NUMBER END)
+    / NULLIF(COUNT(DISTINCT CASE WHEN NOT PICKUP_SLA IS NULL THEN TRACKING_NUMBER END), 0)
+    AS PICKUP_PCT,
+  COUNT(DISTINCT CASE WHEN NOT DELIVERY_SLA LIKE '%BREACH%' THEN TRACKING_NUMBER END) * 100.0
+    / NULLIF(COUNT(DISTINCT TRACKING_NUMBER), 0)
+    AS DELIVERY_PCT,
+  100 * COUNT(DISTINCT CASE WHEN ORDER_PLACEMENT_SLA IN ('WITHIN_SLA', 'EARLY_CREATION')
+                             AND HANDOVER_SLA = 'WITHIN_SLA'
+                             AND PICKUP_SLA = 'WITHIN_SLA'
+                             AND DELIVERY_SLA = 'WITHIN_SLA'
+              THEN ORDER_NAME END)
+    / NULLIF(COUNT(DISTINCT ORDER_NAME), 0)
+    AS PERFECT_PCT`;
 
-const EXCLUDED_FROM_DENOMINATOR = "'FUTURE SLA'";
+/** Trailing window every panel measures over, in days. Upstream uses 31 on all
+ *  three questions (order timestamp, logistics-created timestamp, pick date). */
+export const WINDOW_DAYS = 31;
 
-/** Pass values for a leg. Placement is the only one that admits EARLY_CREATION. */
-const passSet = (col: string) =>
-  col === "ORDER_PLACEMENT_SLA" ? "'WITHIN_SLA','EARLY_CREATION'" : "'WITHIN_SLA'";
-
-/** SQL fragment: this leg's SLA% under the definition above. NULL when the day
- *  has no applicable rows at all — rendered as "—", never as 0%.
- *  Exported for the test that pins the definition. */
-export const slaPct = (col: string) => `ROUND(100 * SUM(IFF(${col} IN (${passSet(col)}), 1, 0))
-      / NULLIF(SUM(IFF(${col} IS NOT NULL AND ${col} <> ${EXCLUDED_FROM_DENOMINATOR}, 1, 0)), 0), 2)`;
-
-/** Denominator count, so a tile can show how thin the day was. */
-const slaN = (col: string) =>
-  `SUM(IFF(${col} IS NOT NULL AND ${col} <> ${EXCLUDED_FROM_DENOMINATOR}, 1, 0))`;
+/** The journey question's row filter: live-ish statuses only (a NULL status is
+ *  an order with no AWB yet and is kept), the trailing order window, and a cap
+ *  that drops delivery dates too far in the future to mean anything. */
+const JOURNEY_WHERE = `(FINAL_STATUS IS NULL OR FINAL_STATUS IN
+    ('DELIVERED', 'EXCEPTION', 'INFORECEIVED', 'INTRANSIT', 'OUTFORDELIVERY', 'PICKEDUP'))
+  AND ORDER_TIMESTAMP >= DATEADD(day, -${WINDOW_DAYS}, CURRENT_DATE)
+  AND ORDER_TIMESTAMP < CURRENT_DATE
+  AND IDEAL_DELIVERY_DATE <= CURRENT_DATE + 10`;
 
 // ---------------------------------------------------------------------------
 // Tile thresholds. Uniform across all five until real per-metric SLA targets
 // are supplied — a tile that colours against a made-up target is worse than one
 // that colours against an openly generic one.
+//
+// NOTE these are generous relative to what the data actually does: Perfect
+// Order% runs in the twenties by upstream's definition, so it will sit red
+// permanently until a Perfect-Order-specific target is set.
 // ---------------------------------------------------------------------------
 export const KPI_GREEN = 95;
 export const KPI_AMBER = 85;
@@ -71,35 +111,23 @@ export function kpiTone(pct: number | null): "done" | "handling" | "failed" | "p
   return "failed";
 }
 
-// ---------------------------------------------------------------------------
-// The five tiles. Each is FUNCTION-anchored — measured on the date its own
-// event happened, not on the order's ideal delivery date. That is the whole
-// distinction the Journey table below carries a caveat about.
-//
-// Each tile resolves its own "as-of" day: the most recent day BEFORE today that
-// has at least one applicable row. It is not literally "yesterday" because
-// IDEAL_DELIVERY_DATE carries no weekend rows — a literal-yesterday Perfect
-// Order tile reads "—" every Sunday and Monday. The tile therefore always
-// states the date it is actually showing.
-// ---------------------------------------------------------------------------
+/** The five tiles, in dashboard order. Each reads one column of SLA_METRICS —
+ *  the tiles ARE the trend table's totals row, which is why they cannot drift
+ *  from it. */
 const KPIS = [
-  { key: "placement", label: "Order Placement SLA", col: "ORDER_PLACEMENT_SLA", anchor: "TO_DATE(ORDER_DATE)", icon: "clipboard-list-bold-duotone" },
-  { key: "wh", label: "WH Processing SLA", col: "HANDOVER_SLA", anchor: "TO_DATE(MANIFESTED_TIMESTAMP)", icon: "box-bold-duotone" },
-  { key: "pickup", label: "Pickup SLA", col: "PICKUP_SLA", anchor: "TO_DATE(TRACKING_PICK_DATE)", icon: "delivery-bold-duotone" },
-  { key: "delivery", label: "Delivery SLA", col: "DELIVERY_SLA", anchor: "TO_DATE(LOGISTICS_DELIVERY_TIMESTAMP)", icon: "shop-bold-duotone" },
-  { key: "perfect", label: "Perfect Order", col: "PERFECT_ORDER_SLA", anchor: "TO_DATE(IDEAL_DELIVERY_DATE)", icon: "medal-ribbon-star-bold-duotone" },
+  { key: "placement", label: "Order Placement SLA", col: "ORDER_PCT", icon: "clipboard-list-bold-duotone" },
+  { key: "wh", label: "WH Processing SLA", col: "WH_PCT", icon: "box-bold-duotone" },
+  { key: "pickup", label: "Pickup SLA", col: "PICKUP_PCT", icon: "delivery-bold-duotone" },
+  { key: "delivery", label: "Delivery SLA", col: "DELIVERY_PCT", icon: "shop-bold-duotone" },
+  { key: "perfect", label: "Perfect Order", col: "PERFECT_PCT", icon: "medal-ribbon-star-bold-duotone" },
 ] as const;
 
 export interface KpiTile {
   key: string;
   label: string;
   icon: string;
-  /** Percentage, or null when the metric has no applicable row at all. */
+  /** Percentage, or null when nothing in the window is applicable. */
   pct: number | null;
-  /** The IST business date this tile is measured on. */
-  asOf?: string;
-  /** Denominator — how many rows the percentage rests on. */
-  n: number;
 }
 
 export interface TrendRow {
@@ -140,19 +168,17 @@ export interface LaneRow {
 
 export interface DashboardData {
   kpis: KpiTile[];
+  /** Total distinct orders behind the tiles — the tiles' denominator, shown so
+   *  a percentage is never read without knowing how much it rests on. */
+  totalOrders: number;
   trend: TrendRow[];
   couriers: CourierRow[];
   lanes: LaneRow[];
-  /** Trailing window, in days, that the courier and lane tables cover. */
   windowDays: number;
 }
 
-/** How far back the courier and lane rollups look. Both are rolled up over the
- *  window rather than broken out per delivery date: an at-a-glance panel wants
- *  one row per courier, not fourteen. */
-const WINDOW_DAYS = 14;
-
-/** How many delivery dates the journey trend shows. */
+/** How many delivery dates the journey trend shows. Upstream returns the whole
+ *  window; a panel wants the recent end of it. */
 const TREND_DAYS = 14;
 
 /**
@@ -175,7 +201,7 @@ export function scopeClause(scope: FacilityScope, areaManager?: string): string 
 }
 
 /** Snowflake hands numerics back as number | string | null depending on the
- *  column; every percentage below routes through this so a "97.50" string never
+ *  column; every figure below routes through this so a "97.50" string never
  *  reaches a `.toFixed`. */
 const num = (v: unknown): number | null => {
   if (v == null) return null;
@@ -185,112 +211,141 @@ const num = (v: unknown): number | null => {
 
 const int = (v: unknown): number => Math.round(num(v) ?? 0);
 
-const KPI_ROW = (k: (typeof KPIS)[number], where: string) => `
-SELECT '${k.key}' AS METRIC, TO_CHAR(ASOF, 'YYYY-MM-DD') AS ASOF, N, PCT FROM (
-  SELECT ${k.anchor} AS ASOF, ${slaN(k.col)} AS N, ${slaPct(k.col)} AS PCT
-  FROM ${SPINE_TABLE}
-  WHERE ${where}
-    AND ${k.anchor} IS NOT NULL
-    AND ${k.anchor} < CURRENT_DATE
-    AND ${k.col} IS NOT NULL AND ${k.col} <> ${EXCLUDED_FROM_DENOMINATOR}
-  GROUP BY 1 ORDER BY 1 DESC LIMIT 1
-)`;
-
 /**
  * The uncached read. Exported because `loadDashboard` wraps it in
  * `unstable_cache`, which only works inside a Next request context — anything
  * outside one (a script, a diagnostic, a check that these queries still parse
- * against the live spine) has to call this directly.
+ * against the live table) has to call this directly.
  */
 export async function fetchDashboard(
   scope: FacilityScope,
   areaManager?: string,
 ): Promise<DashboardData> {
-  const where = scopeClause(scope, areaManager);
-  const window = `${where}
-    AND TO_DATE(IDEAL_DELIVERY_DATE) BETWEEN DATEADD(day, -${WINDOW_DAYS}, CURRENT_DATE)
-                                         AND DATEADD(day, -1, CURRENT_DATE)`;
+  const scoped = scopeClause(scope, areaManager);
 
   // Four statements, run concurrently. The Snowflake reader opens and destroys
   // a connection per call by design (see snowflake.ts) — there is no pool to
   // exhaust, and serialising them would just make the page four times slower.
   const [kpiRows, trendRows, courierRows, laneRows] = await Promise.all([
-    querySnowflake<{ METRIC: string; ASOF: string | null; N: unknown; PCT: unknown }>(
-      KPIS.map((k) => KPI_ROW(k, where)).join("\nUNION ALL"),
-    ),
+    // Tiles: the journey question with the date grouping removed. Verified
+    // against the dashboard's own tiles — Order SLA% 53.22 and Perfect Order%
+    // 23.84 over this window match the 53.26 / 23.3 the screenshots show.
+    querySnowflake<Record<string, unknown>>(`
+SELECT COUNT(DISTINCT ORDER_NAME) AS TOTAL_ORDERS, ${SLA_METRICS}
+FROM ${REPORT_TABLE}
+WHERE ${scoped} AND ${JOURNEY_WHERE}`),
 
     querySnowflake<Record<string, unknown>>(`
-SELECT TO_CHAR(TO_DATE(IDEAL_DELIVERY_DATE), 'YYYY-MM-DD') AS D,
-       COUNT(DISTINCT ORDER_NAME) AS TOTAL_ORDERS,
-       ${slaPct("ORDER_PLACEMENT_SLA")} AS ORDER_PCT,
-       ${slaPct("HANDOVER_SLA")} AS WH_PCT,
-       ${slaPct("PICKUP_SLA")} AS PICKUP_PCT,
-       ${slaPct("DELIVERY_SLA")} AS DELIVERY_PCT,
-       ${slaPct("PERFECT_ORDER_SLA")} AS PERFECT_PCT
-FROM ${SPINE_TABLE}
-WHERE ${where} AND IDEAL_DELIVERY_DATE IS NOT NULL AND TO_DATE(IDEAL_DELIVERY_DATE) < CURRENT_DATE
+SELECT TO_CHAR(DATE_TRUNC('DAY', IDEAL_DELIVERY_DATE), 'YYYY-MM-DD') AS D,
+       COUNT(DISTINCT ORDER_NAME) AS TOTAL_ORDERS, ${SLA_METRICS}
+FROM ${REPORT_TABLE}
+WHERE ${scoped} AND ${JOURNEY_WHERE}
 GROUP BY 1 ORDER BY 1 DESC LIMIT ${TREND_DAYS}`),
 
+    // Courier Partner Wise. Upstream also groups by ideal delivery date; this
+    // panel drops that grouping and rolls the window up to one row per courier,
+    // which is what "at a glance" means. Every cell is still the same
+    // expression over the same window, so a courier's window-level figure is
+    // exact — it is simply not the per-date row Metabase renders.
     querySnowflake<Record<string, unknown>>(`
 SELECT COALESCE(COURIER_PARTNER, '—') AS COURIER,
-       COUNT(*) AS AWBS,
-       COALESCE(SUM(PACKAGE_COUNT), 0) AS BOXES,
-       ${slaPct("PICKUP_SLA")} AS PICKUP_PCT,
-       ${slaPct("DELIVERY_SLA")} AS DELIVERY_PCT,
-       SUM(IFF(DELIVERY_SLA LIKE 'BREACHED%', 1, 0)) AS BREACHED,
-       ROUND(AVG(DATEDIFF(day, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP)), 2) AS P2D_AVG,
-       -- Denominator is shipments that HAVE a pick→deliver span, not every AWB.
-       -- AVG(IFF(...)) over the whole partition scores a NULL span as a miss,
-       -- which quietly charges a courier for consignments still in flight.
-       ROUND(100 * SUM(IFF(DATEDIFF(day, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP) <= 5, 1, 0))
-             / NULLIF(COUNT(DATEDIFF(day, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP)), 0), 2) AS P2D_LE5,
-       -- On-time attempt: the courier's FIRST out-for-delivery run landed on or
-       -- before the ideal delivery date. Measured only over shipments that were
-       -- actually attempted, so a consignment still sitting in a hub neither
-       -- helps nor hurts the number.
-       ROUND(100 * SUM(IFF(TO_DATE(FIRST_OFD_DATE) <= TO_DATE(IDEAL_DELIVERY_DATE), 1, 0))
-             / NULLIF(COUNT(FIRST_OFD_DATE), 0), 2) AS ONTIME_ATTEMPT
-FROM ${SPINE_TABLE}
-WHERE ${window}
+       COUNT(DISTINCT TRACKING_NUMBER) AS AWBS,
+       SUM(PACKAGE_COUNT) AS BOXES,
+       COUNT(DISTINCT CASE WHEN NOT PICKUP_SLA LIKE 'BREACH%' THEN TRACKING_NUMBER END) * 100.0
+         / NULLIF(COUNT(DISTINCT TRACKING_NUMBER), 0) AS PICKUP_PCT,
+       COUNT(DISTINCT CASE WHEN NOT DELIVERY_SLA LIKE 'BREACH%' THEN TRACKING_NUMBER END) * 100.0
+         / NULLIF(COUNT(DISTINCT TRACKING_NUMBER), 0) AS DELIVERY_PCT,
+       -- Breached = missed its delivery SLA AND still has not arrived. A late
+       -- delivery that eventually landed is not counted here.
+       COUNT(DISTINCT CASE WHEN DELIVERY_SLA <> 'WITHIN_SLA'
+                            AND LOGISTICS_DELIVERY_TIMESTAMP IS NULL
+             THEN TRACKING_NUMBER END) AS BREACHED,
+       -- AVG(DISTINCT ...) is upstream's, and it averages the DISTINCT span
+       -- values rather than the spans themselves — a lane where 200 shipments
+       -- took 3 days and one took 9 reads 6.0, not 3.03. Mirrored deliberately;
+       -- fix it in Metabase first if it should change.
+       AVG(DISTINCT CASE WHEN NOT TRACKING_NUMBER IS NULL
+                          AND NOT TRACKING_PICK_DATE IS NULL
+                          AND NOT LOGISTICS_DELIVERY_TIMESTAMP IS NULL
+                     THEN DATEDIFF(DAY, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP) END)
+         AS P2D_AVG,
+       -- Denominator is every AWB, not just delivered ones, so a consignment
+       -- still in flight counts against the courier. Upstream's choice.
+       COUNT(DISTINCT CASE WHEN NOT TRACKING_PICK_DATE IS NULL
+                            AND NOT LOGISTICS_DELIVERY_TIMESTAMP IS NULL
+                            AND DATEDIFF(DAY, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP) <= 5
+             THEN TRACKING_NUMBER END) * 100.0
+         / NULLIF(COUNT(DISTINCT TRACKING_NUMBER), 0) AS P2D_LE5,
+       COUNT(DISTINCT CASE WHEN DATEDIFF(DAY, IDEAL_DELIVERY_DATE, FIRST_OFD_DATE) <= 0
+                            AND NOT TRACKING_PICK_DATE IS NULL
+             THEN TRACKING_NUMBER END) * 100.0
+         / NULLIF(COUNT(DISTINCT TRACKING_NUMBER), 0) AS ONTIME_ATTEMPT
+FROM ${REPORT_TABLE}
+WHERE ${scoped}
+  AND (FINAL_STATUS IS NULL OR FINAL_STATUS IN
+       ('DELIVERED', 'EXCEPTION', 'INFORECEIVED', 'INTRANSIT', 'OUTFORDELIVERY', 'PICKEDUP'))
+  AND LOGISTICS_CREATED_TIMESTAMP >= DATEADD(day, -${WINDOW_DAYS}, CURRENT_DATE)
+  AND LOGISTICS_CREATED_TIMESTAMP < CURRENT_DATE
+  AND NOT TRACKING_PICK_DATE IS NULL
 GROUP BY 1 ORDER BY 2 DESC`),
 
+    // Lane-wise (North Star) — grouped exactly as upstream groups it, so these
+    // rows are 1:1 with the Metabase table.
     querySnowflake<Record<string, unknown>>(`
 SELECT COALESCE(LANE_CLASSIFICATION, '—') AS LANE,
        COALESCE(WAREHOUSE_NAME, '—') AS WH,
-       COALESCE(SUM(PACKAGE_COUNT), 0) AS BOXES,
-       COUNT(*) AS SHIPMENTS,
-       -- FASR: delivered on the first attempt, over everything delivered.
-       ROUND(100 * SUM(IFF(LOGISTICS_DELIVERY_TIMESTAMP IS NOT NULL
-                           AND COALESCE(DELIVERY_ATTEMPTS, 1) <= 1, 1, 0))
-             / NULLIF(COUNT(LOGISTICS_DELIVERY_TIMESTAMP), 0), 2) AS FASR,
-       ROUND(100 * SUM(IFF(TO_DATE(FIRST_OFD_DATE) <= TO_DATE(IDEAL_DELIVERY_DATE), 1, 0))
-             / NULLIF(COUNT(FIRST_OFD_DATE), 0), 2) AS ONTIME_ATTEMPT,
-       ROUND(100 * SUM(IFF(TO_DATE(LOGISTICS_DELIVERY_TIMESTAMP) <= TO_DATE(IDEAL_DELIVERY_DATE), 1, 0))
-             / NULLIF(COUNT(LOGISTICS_DELIVERY_TIMESTAMP), 0), 2) AS ONTIME_DELIVERY,
-       MEDIAN(DATEDIFF(day, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP)) AS P50,
+       SUM(PACKAGE_COUNT) AS BOXES,
+       -- FASR: delivered on the SAME DAY it first went out for delivery. Note
+       -- this reads 0% for any lane with no OFD scan at all (self-delivery
+       -- lanes never get one) — that is an absence of evidence, not a failure.
+       COALESCE(100.0 * COUNT(DISTINCT CASE WHEN FINAL_STATUS = 'DELIVERED'
+                    AND NOT FIRST_OFD_DATE IS NULL
+                    AND NOT LOGISTICS_DELIVERY_TIMESTAMP IS NULL
+                    AND TO_DATE(FIRST_OFD_DATE) = TO_DATE(LOGISTICS_DELIVERY_TIMESTAMP)
+              THEN TRACKING_NUMBER END)
+         / NULLIF(COUNT(DISTINCT CASE WHEN FINAL_STATUS = 'DELIVERED' THEN TRACKING_NUMBER END), 0), 0)
+         AS FASR,
+       -- Both on-time columns measure against DELIVERY_TAT, the per-order
+       -- deadline — not against IDEAL_DELIVERY_DATE.
+       COALESCE(100.0 * COUNT(DISTINCT CASE WHEN FINAL_STATUS = 'DELIVERED'
+                    AND NOT DELIVERY_TAT IS NULL
+                    AND NOT COALESCE(FIRST_OFD_DATE, LOGISTICS_DELIVERY_TIMESTAMP) IS NULL
+                    AND COALESCE(FIRST_OFD_DATE, LOGISTICS_DELIVERY_TIMESTAMP) <= DELIVERY_TAT
+              THEN TRACKING_NUMBER END)
+         / NULLIF(COUNT(DISTINCT CASE WHEN FINAL_STATUS = 'DELIVERED' THEN TRACKING_NUMBER END), 0), 0)
+         AS ONTIME_ATTEMPT,
+       COALESCE(100.0 * COUNT(DISTINCT CASE WHEN FINAL_STATUS = 'DELIVERED'
+                    AND NOT LOGISTICS_DELIVERY_TIMESTAMP IS NULL
+                    AND NOT DELIVERY_TAT IS NULL
+                    AND LOGISTICS_DELIVERY_TIMESTAMP <= DELIVERY_TAT
+              THEN TRACKING_NUMBER END)
+         / NULLIF(COUNT(DISTINCT CASE WHEN FINAL_STATUS = 'DELIVERED' THEN TRACKING_NUMBER END), 0), 0)
+         AS ONTIME_DELIVERY,
+       PERCENTILE_CONT(0.5) WITHIN GROUP (
+         ORDER BY DATEDIFF(DAY, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP)) AS P50,
        PERCENTILE_CONT(0.9) WITHIN GROUP (
-         ORDER BY DATEDIFF(day, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP)) AS P90,
-       ${slaPct("PERFECT_ORDER_SLA")} AS PERFECT_PCT,
-       ROUND(100 * COUNT(LOGISTICS_DELIVERY_TIMESTAMP) / NULLIF(COUNT(*), 0), 2) AS DELIVERED_PCT
-FROM ${SPINE_TABLE}
-WHERE ${window}
-GROUP BY 1, 2 ORDER BY 4 DESC`),
+         ORDER BY DATEDIFF(DAY, TRACKING_PICK_DATE, LOGISTICS_DELIVERY_TIMESTAMP)) AS P90,
+       100 * COUNT(DISTINCT CASE WHEN ORDER_PLACEMENT_SLA IN ('WITHIN_SLA', 'EARLY_CREATION')
+                                  AND HANDOVER_SLA = 'WITHIN_SLA'
+                                  AND PICKUP_SLA = 'WITHIN_SLA'
+                                  AND DELIVERY_SLA = 'WITHIN_SLA'
+             THEN ORDER_NAME END)
+         / NULLIF(COUNT(DISTINCT ORDER_NAME), 0) AS PERFECT_PCT,
+       COUNT(DISTINCT TRACKING_NUMBER) AS SHIPMENTS,
+       SUM(CASE WHEN FINAL_STATUS IN ('DELIVERED') THEN 1 ELSE 0 END) * 100.0
+         / NULLIF(COUNT(*), 0) AS DELIVERED_PCT
+FROM ${REPORT_TABLE}
+WHERE ${scoped}
+  AND NOT IDEAL_DELIVERY_DATE IS NULL
+  AND TRACKING_PICK_DATE >= CURRENT_DATE - ${WINDOW_DAYS}
+GROUP BY 1, 2 ORDER BY 3 DESC`),
   ]);
 
-  const byKey = new Map(kpiRows.map((r) => [r.METRIC, r]));
+  const totals = kpiRows[0] ?? {};
   return {
     windowDays: WINDOW_DAYS,
-    kpis: KPIS.map((k) => {
-      const r = byKey.get(k.key);
-      return {
-        key: k.key,
-        label: k.label,
-        icon: k.icon,
-        pct: num(r?.PCT),
-        asOf: r?.ASOF ?? undefined,
-        n: int(r?.N),
-      };
-    }),
+    totalOrders: int(totals.TOTAL_ORDERS),
+    kpis: KPIS.map((k) => ({ key: k.key, label: k.label, icon: k.icon, pct: num(totals[k.col]) })),
     trend: trendRows.map((r) => ({
       idealDeliveryDate: String(r.D),
       totalOrders: int(r.TOTAL_ORDERS),
@@ -330,11 +385,11 @@ GROUP BY 1, 2 ORDER BY 4 DESC`),
 /**
  * Cached per (scope, area manager) for 5 minutes.
  *
- * The spine itself only moves hourly, so a live read on every page load would
- * open four Snowflake connections to re-derive numbers that cannot have
- * changed. Five minutes is short enough that an operator refreshing after a
- * sync sees the new figures within one coffee, and long enough that a team all
- * opening the tab at 9am costs one query set rather than forty.
+ * The source only moves on its own upstream schedule, so a live read on every
+ * page load would open four Snowflake connections to re-derive numbers that
+ * cannot have changed. Five minutes is short enough that an operator refreshing
+ * after a sync sees new figures within one coffee, and long enough that a team
+ * all opening the tab at 9am costs one query set rather than forty.
  *
  * The cache key carries the scope, so one facility's numbers can never be
  * served to another facility's user out of the cache.

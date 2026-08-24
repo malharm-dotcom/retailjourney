@@ -33,13 +33,17 @@ function Panel<T>({
   title,
   sub,
   caption,
+  note,
   cols,
   rows,
   empty,
 }: {
   title: string;
   sub: string;
+  /** Load-bearing caveat about how to read the panel. Ships with it. */
   caption?: string;
+  /** Second caveat, for a panel that needs two. */
+  note?: string;
   cols: Col<T>[];
   rows: T[];
   empty: string;
@@ -49,12 +53,15 @@ function Panel<T>({
       <header className="border-b border-line px-5 py-4">
         <h2 className="font-display text-title font-bold leading-snug tracking-tight">{title}</h2>
         <p className="mt-1 text-dense leading-relaxed text-mute">{sub}</p>
-        {caption ? (
-          <p className="mt-2.5 flex items-start gap-1.5 rounded-control bg-paper px-3 py-2 text-dense leading-relaxed text-ink-soft">
+        {[caption, note].filter(Boolean).map((c) => (
+          <p
+            key={c}
+            className="mt-2.5 flex items-start gap-1.5 rounded-control bg-paper px-3 py-2 text-dense leading-relaxed text-ink-soft"
+          >
             <Icon name="info-circle-bold-duotone" size={15} className="mt-[2px] shrink-0 text-mute" />
-            <span>{caption}</span>
+            <span>{c}</span>
           </p>
-        ) : null}
+        ))}
       </header>
       <div className="max-h-[52vh] overflow-auto">
         <table className="w-full min-w-[760px] border-collapse text-left">
@@ -112,17 +119,19 @@ function Dashboard({ data }: { data: DashboardData }) {
             tone={kpiTone(k.pct)}
             label={k.label}
             value={pct(k.pct)}
-            // The date is never "yesterday" as a word: IDEAL_DELIVERY_DATE has
-            // no weekend rows, so the honest label is the day actually measured.
-            sub={k.asOf ? `${fmtDate(k.asOf)} IST · ${k.n} rows` : "no data yet"}
+            // Never labelled "yesterday". These are the totals row of the trend
+            // table below — the same trailing window, ungrouped — which is what
+            // the Metabase tiles measure too.
+            sub={`last ${data.windowDays}d IST · ${data.totalOrders.toLocaleString("en-IN")} orders`}
           />
         ))}
       </div>
 
       <Panel
         title="Distribution Journey SLAs"
-        sub="By ideal delivery date — the newest 14 delivery dates in your scope."
+        sub={`By ideal delivery date — the newest 14 delivery dates in the last ${data.windowDays} days, in your scope.`}
         caption="This table is anchored on IDEAL_DELIVERY_DATE, so only Perfect Order% should be read as a headline SLA here. The functional SLA% columns are journey-anchored, not function-anchored — read those from the tiles above."
+        note="Perfect Order% is recomputed as all four legs strictly within SLA, over every order in the window — an order with a leg still running counts against it. It is not the PERFECT_ORDER_SLA column, and it runs far lower than one."
         rows={data.trend}
         empty="No delivery dates in range."
         cols={[
@@ -138,7 +147,8 @@ function Dashboard({ data }: { data: DashboardData }) {
 
       <Panel
         title="Courier partner performance"
-        sub={`Rolled up over the last ${data.windowDays} delivery dates.`}
+        sub={`AWBs created in the last ${data.windowDays} days, one row per courier.`}
+        caption="Metabase breaks these same figures out per ideal delivery date; this panel rolls the whole window into one row per courier. Each cell is the same expression over the same window — it is a window total, not one of those daily rows."
         rows={data.couriers}
         empty="No shipments in range."
         cols={[
@@ -156,7 +166,8 @@ function Dashboard({ data }: { data: DashboardData }) {
 
       <Panel
         title="Lane-wise performance"
-        sub={`North Star view — lane × warehouse, last ${data.windowDays} delivery dates.`}
+        sub={`North Star view — lane × warehouse, picked up in the last ${data.windowDays} days.`}
+        caption="FASR% is same-day: delivered on the day it first went out for delivery. A lane whose shipments never get an out-for-delivery scan — self-delivery, most milk runs — reads 0% here. That is missing evidence, not a failure."
         rows={data.lanes}
         empty="No lanes in range."
         cols={[
@@ -220,9 +231,18 @@ export default async function ReportsPage() {
       />
       {panels ? <Dashboard data={panels} /> : <Unavailable reason={failure!} />}
 
-      <h2 className="mb-3.5 mt-7 font-display text-title font-bold leading-snug tracking-tight">
+      <h2 className="mt-7 font-display text-title font-bold leading-snug tracking-tight">
         Drill-down reports
       </h2>
+      {/* Not a footnote. The panels above read the same table Metabase reads, so
+          they match the dashboard — and that table drops orders the rulebook
+          does not cover, which the reports below deliberately keep. Anyone who
+          notices the two counts differ is seeing something real. */}
+      <p className="mb-3.5 mt-1.5 max-w-[68ch] text-dense leading-relaxed text-mute">
+        These run on RetailJourney&rsquo;s own order spine and include out-of-rulebook orders. The panels above
+        mirror the Metabase Distribution 2.0 dashboard, which excludes them — so the two will not always agree
+        on totals.
+      </p>
       {/* No staggered entrance. Eight static tiles animating in on a 45ms cascade
           is choreography the reader has to wait out on every visit, and it told
           them nothing — the stagger implied an order that does not exist. The

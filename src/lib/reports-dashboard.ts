@@ -242,12 +242,64 @@ FROM ${REPORT_TABLE}
 WHERE ${scoped} AND ${JOURNEY_WHERE}
 GROUP BY 1 ORDER BY 1 DESC LIMIT ${TREND_DAYS}`),
 
-    // Courier Partner Wise. Upstream also groups by ideal delivery date; this
-    // panel drops that grouping and rolls the window up to one row per courier,
-    // which is what "at a glance" means. Every cell is still the same
-    // expression over the same window, so a courier's window-level figure is
-    // exact — it is simply not the per-date row Metabase renders.
-    querySnowflake<Record<string, unknown>>(`
+    querySnowflake<Record<string, unknown>>(courierSql(`${scoped} AND ${courierWindow()}`)),
+
+    querySnowflake<Record<string, unknown>>(laneSql(`${scoped} AND ${laneWindow()}`)),
+  ]);
+
+  return shapeDashboard(kpiRows, trendRows, courierRows, laneRows);
+}
+
+/** Live-ish statuses. A NULL status is an order with no AWB yet and is kept. */
+export const LIVE_STATUS_FILTER = `(FINAL_STATUS IS NULL OR FINAL_STATUS IN
+    ('DELIVERED', 'EXCEPTION', 'INFORECEIVED', 'INTRANSIT', 'OUTFORDELIVERY', 'PICKEDUP'))`;
+
+/**
+ * An explicit inclusive range of IST business dates, or nothing for the panel's
+ * own rolling window. Callers MUST have validated the strings as YYYY-MM-DD
+ * before they get here (resolveRange in reports-download.ts does) — they become
+ * literal SQL text.
+ */
+export interface DateRange {
+  from: string;
+  to: string;
+}
+
+/** The courier panel's window predicate, anchored on AWB creation. The download
+ *  passes a range so it filters on the SAME column the panel does; without one
+ *  it is the panel's rolling window verbatim. */
+export const courierWindow = (range?: DateRange) => `${LIVE_STATUS_FILTER}
+  AND ${
+    range
+      ? `TO_DATE(LOGISTICS_CREATED_TIMESTAMP) BETWEEN '${range.from}' AND '${range.to}'`
+      : `LOGISTICS_CREATED_TIMESTAMP >= DATEADD(day, -${WINDOW_DAYS}, CURRENT_DATE)
+  AND LOGISTICS_CREATED_TIMESTAMP < CURRENT_DATE`
+  }
+  AND NOT TRACKING_PICK_DATE IS NULL`;
+
+/** The lane panel's window predicate, anchored on courier pickup. */
+export const laneWindow = (range?: DateRange) => `NOT IDEAL_DELIVERY_DATE IS NULL
+  AND ${
+    range
+      ? `TO_DATE(TRACKING_PICK_DATE) BETWEEN '${range.from}' AND '${range.to}'`
+      : `TRACKING_PICK_DATE >= CURRENT_DATE - ${WINDOW_DAYS}`
+  }`;
+
+/**
+ * Courier Partner Wise, as one row per courier.
+ *
+ * Exported and parameterised on its whole WHERE clause so the CSV download runs
+ * THIS query rather than a lookalike — a download that disagrees with the panel
+ * above it is a bug, and the only way to guarantee it cannot happen is for both
+ * to be the same string.
+ *
+ * Upstream also groups by ideal delivery date; this drops that grouping and
+ * rolls the window up. Every cell is still the same expression over the same
+ * window, so a courier's window-level figure is exact — it is simply not the
+ * per-date row Metabase renders.
+ */
+export function courierSql(where: string): string {
+  return `
 SELECT COALESCE(COURIER_PARTNER, '—') AS COURIER,
        COUNT(DISTINCT TRACKING_NUMBER) AS AWBS,
        SUM(PACKAGE_COUNT) AS BOXES,
@@ -281,17 +333,15 @@ SELECT COALESCE(COURIER_PARTNER, '—') AS COURIER,
              THEN TRACKING_NUMBER END) * 100.0
          / NULLIF(COUNT(DISTINCT TRACKING_NUMBER), 0) AS ONTIME_ATTEMPT
 FROM ${REPORT_TABLE}
-WHERE ${scoped}
-  AND (FINAL_STATUS IS NULL OR FINAL_STATUS IN
-       ('DELIVERED', 'EXCEPTION', 'INFORECEIVED', 'INTRANSIT', 'OUTFORDELIVERY', 'PICKEDUP'))
-  AND LOGISTICS_CREATED_TIMESTAMP >= DATEADD(day, -${WINDOW_DAYS}, CURRENT_DATE)
-  AND LOGISTICS_CREATED_TIMESTAMP < CURRENT_DATE
-  AND NOT TRACKING_PICK_DATE IS NULL
-GROUP BY 1 ORDER BY 2 DESC`),
+WHERE ${where}
+GROUP BY 1 ORDER BY 2 DESC, 1`;
+}
 
-    // Lane-wise (North Star) — grouped exactly as upstream groups it, so these
-    // rows are 1:1 with the Metabase table.
-    querySnowflake<Record<string, unknown>>(`
+/** Lane-wise (North Star) — grouped exactly as upstream groups it, so these
+ *  rows are 1:1 with the Metabase table. Parameterised for the same
+ *  same-query-or-it-is-a-bug reason as courierSql. */
+export function laneSql(where: string): string {
+  return `
 SELECT COALESCE(LANE_CLASSIFICATION, '—') AS LANE,
        COALESCE(WAREHOUSE_NAME, '—') AS WH,
        SUM(PACKAGE_COUNT) AS BOXES,
@@ -335,17 +385,53 @@ SELECT COALESCE(LANE_CLASSIFICATION, '—') AS LANE,
        SUM(CASE WHEN FINAL_STATUS IN ('DELIVERED') THEN 1 ELSE 0 END) * 100.0
          / NULLIF(COUNT(*), 0) AS DELIVERED_PCT
 FROM ${REPORT_TABLE}
-WHERE ${scoped}
-  AND NOT IDEAL_DELIVERY_DATE IS NULL
-  AND TRACKING_PICK_DATE >= CURRENT_DATE - ${WINDOW_DAYS}
-GROUP BY 1, 2 ORDER BY 3 DESC`),
-  ]);
+WHERE ${where}
+-- Lane and warehouse break the tie. Without them two lanes on equal box counts
+-- swap places between runs, so the same export downloads twice and diffs.
+GROUP BY 1, 2 ORDER BY 3 DESC, 1, 2`;
+}
 
+/** Row shapes for the two tables the CSV downloads also render. Exported so the
+ *  download layer maps identical column names off identical result sets. */
+export const toCourierRow = (r: Record<string, unknown>): CourierRow => ({
+  courier: String(r.COURIER),
+  awbs: int(r.AWBS),
+  boxes: int(r.BOXES),
+  pickupPct: num(r.PICKUP_PCT),
+  deliveryPct: num(r.DELIVERY_PCT),
+  breached: int(r.BREACHED),
+  p2dAvg: num(r.P2D_AVG),
+  p2dLe5Pct: num(r.P2D_LE5),
+  onTimeAttemptPct: num(r.ONTIME_ATTEMPT),
+});
+
+export const toLaneRow = (r: Record<string, unknown>): LaneRow => ({
+  lane: String(r.LANE),
+  warehouse: String(r.WH),
+  boxes: int(r.BOXES),
+  shipments: int(r.SHIPMENTS),
+  fasrPct: num(r.FASR),
+  onTimeAttemptPct: num(r.ONTIME_ATTEMPT),
+  onTimeDeliveryPct: num(r.ONTIME_DELIVERY),
+  p50: num(r.P50),
+  p90: num(r.P90),
+  perfectPct: num(r.PERFECT_PCT),
+  deliveredPct: num(r.DELIVERED_PCT),
+});
+
+function shapeDashboard(
+  kpiRows: Record<string, unknown>[],
+  trendRows: Record<string, unknown>[],
+  courierRows: Record<string, unknown>[],
+  laneRows: Record<string, unknown>[],
+): DashboardData {
   const totals = kpiRows[0] ?? {};
   return {
     windowDays: WINDOW_DAYS,
     totalOrders: int(totals.TOTAL_ORDERS),
     kpis: KPIS.map((k) => ({ key: k.key, label: k.label, icon: k.icon, pct: num(totals[k.col]) })),
+    couriers: courierRows.map(toCourierRow),
+    lanes: laneRows.map(toLaneRow),
     trend: trendRows.map((r) => ({
       idealDeliveryDate: String(r.D),
       totalOrders: int(r.TOTAL_ORDERS),
@@ -354,30 +440,6 @@ GROUP BY 1, 2 ORDER BY 3 DESC`),
       pickupPct: num(r.PICKUP_PCT),
       deliveryPct: num(r.DELIVERY_PCT),
       perfectPct: num(r.PERFECT_PCT),
-    })),
-    couriers: courierRows.map((r) => ({
-      courier: String(r.COURIER),
-      awbs: int(r.AWBS),
-      boxes: int(r.BOXES),
-      pickupPct: num(r.PICKUP_PCT),
-      deliveryPct: num(r.DELIVERY_PCT),
-      breached: int(r.BREACHED),
-      p2dAvg: num(r.P2D_AVG),
-      p2dLe5Pct: num(r.P2D_LE5),
-      onTimeAttemptPct: num(r.ONTIME_ATTEMPT),
-    })),
-    lanes: laneRows.map((r) => ({
-      lane: String(r.LANE),
-      warehouse: String(r.WH),
-      boxes: int(r.BOXES),
-      shipments: int(r.SHIPMENTS),
-      fasrPct: num(r.FASR),
-      onTimeAttemptPct: num(r.ONTIME_ATTEMPT),
-      onTimeDeliveryPct: num(r.ONTIME_DELIVERY),
-      p50: num(r.P50),
-      p90: num(r.P90),
-      perfectPct: num(r.PERFECT_PCT),
-      deliveredPct: num(r.DELIVERED_PCT),
     })),
   };
 }

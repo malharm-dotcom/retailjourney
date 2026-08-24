@@ -5,11 +5,19 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { PageHead } from "@/components/shell/page-head";
 import { KpiCard } from "@/components/ui/kpi";
-import { fmtDate } from "@/lib/ist";
+import { Input, Select } from "@/components/ui/primitives";
+import { addDays, fmtDate, istToday } from "@/lib/ist";
 import { REPORTS } from "@/lib/reports";
 import { kpiTone, loadDashboard, type DashboardData } from "@/lib/reports-dashboard";
+import {
+  DEFAULT_WINDOW_DAYS,
+  DOWNLOADS,
+  selectableFacilities,
+  type DownloadDef,
+} from "@/lib/reports-download";
 import { requireSession } from "@/lib/session";
 import { snowflakeConfigured } from "@/lib/snowflake";
+import type { Facility } from "@/lib/types";
 import { cn } from "@/lib/ui";
 
 export const metadata = { title: "Reports" };
@@ -188,6 +196,91 @@ function Dashboard({ data }: { data: DashboardData }) {
   );
 }
 
+const FIELD_LABEL = "mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute";
+
+/**
+ * One download: a filter form and a button, no result grid.
+ *
+ * A plain `<form method="get">` pointed at the route handler, so the browser's
+ * own download machinery does the work — no client component, no fetch, no
+ * blob, and the whole thing keeps working with JavaScript off. The facility
+ * select offers only what the session already allows; the server narrows again
+ * regardless, because a select is a suggestion, not a permission.
+ */
+function DownloadCard({
+  def,
+  facilities,
+  couriers,
+  lanes,
+  defaultFrom,
+  defaultTo,
+}: {
+  def: DownloadDef;
+  facilities: Facility[];
+  couriers: string[];
+  lanes: string[];
+  defaultFrom: string;
+  defaultTo: string;
+}) {
+  const options = def.filter === "courier" ? couriers : def.filter === "lane" ? lanes : [];
+  return (
+    <form
+      method="get"
+      action={`/api/reports/${def.slug}`}
+      className="flex flex-col rounded-card bg-card p-5 shadow-card"
+    >
+      <span className="grid h-10 w-10 place-items-center rounded-control bg-sage-soft text-sage">
+        <Icon name={def.icon} size={21} />
+      </span>
+      <h3 className="mt-3.5 font-display text-title font-bold leading-snug tracking-tight">{def.title}</h3>
+      <p className="mt-1.5 text-dense leading-relaxed text-mute">{def.description}</p>
+
+      <div className="mt-4 flex flex-wrap items-end gap-2.5">
+        <label className="flex-1">
+          <span className={FIELD_LABEL}>From</span>
+          <Input type="date" name="from" defaultValue={defaultFrom} max={defaultTo} />
+        </label>
+        <label className="flex-1">
+          <span className={FIELD_LABEL}>To</span>
+          <Input type="date" name="to" defaultValue={defaultTo} />
+        </label>
+        <label className="flex-1">
+          <span className={FIELD_LABEL}>Facility</span>
+          <Select name="facility" defaultValue={facilities.length === 1 ? facilities[0] : "ALL"}>
+            {facilities.length > 1 ? <option value="ALL">All my facilities</option> : null}
+            {facilities.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </Select>
+        </label>
+        {def.filter ? (
+          <label className="flex-1">
+            <span className={FIELD_LABEL}>{def.filter === "courier" ? "Courier" : "Lane"}</span>
+            <Select name={def.filter} defaultValue="">
+              <option value="">All</option>
+              {options.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </Select>
+          </label>
+        ) : null}
+      </div>
+
+      <button
+        type="submit"
+        className="mt-4 flex items-center justify-center gap-1.5 self-start rounded-control bg-ink px-4 py-2 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85"
+      >
+        <Icon name="download-minimalistic-bold" size={14} />
+        Download CSV
+      </button>
+    </form>
+  );
+}
+
 function Unavailable({ reason }: { reason: string }) {
   return (
     <section className="mb-5 flex items-start gap-2.5 rounded-card bg-card px-5 py-4 shadow-card">
@@ -208,6 +301,12 @@ export default async function ReportsPage() {
   // scopedOrders); the spine carries AREA_MANAGER, so the same narrowing applies
   // here rather than this one surface showing them the whole country.
   const areaManager = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
+
+  const today = istToday();
+  const defaultFrom = addDays(today, -DEFAULT_WINDOW_DAYS);
+  // Only what the session already allows. The handler narrows again on every
+  // request — this list is a convenience, never the enforcement.
+  const facilities = selectableFacilities(user, scope);
 
   // A Snowflake outage must degrade the panels, not take the whole Reports desk
   // down — the eight drill-down reports below run off Postgres and are fine.
@@ -230,6 +329,29 @@ export default async function ReportsPage() {
         sub="Distribution 2.0 at a glance, then filterable slices of the whole journey — scoped to your facility view."
       />
       {panels ? <Dashboard data={panels} /> : <Unavailable reason={failure!} />}
+
+      <h2 className="mt-7 font-display text-title font-bold leading-snug tracking-tight">Downloads</h2>
+      <p className="mb-3.5 mt-1.5 max-w-[68ch] text-dense leading-relaxed text-mute">
+        Filter, then download — these produce a file, not a table on screen. Leave the dates alone and you get
+        the last {DEFAULT_WINDOW_DAYS} days. The courier and lane files carry the same figures as the panels
+        above.
+      </p>
+      <div className="grid gap-3.5 sm:grid-cols-2">
+        {DOWNLOADS.map((d) => (
+          <DownloadCard
+            key={d.slug}
+            def={d}
+            facilities={facilities}
+            // Option lists come off the panels already on this page: no extra
+            // query, and the form can never offer a courier or lane the data
+            // does not actually contain.
+            couriers={panels?.couriers.map((c) => c.courier) ?? []}
+            lanes={[...new Set(panels?.lanes.map((l) => l.lane) ?? [])].sort()}
+            defaultFrom={defaultFrom}
+            defaultTo={today}
+          />
+        ))}
+      </div>
 
       <h2 className="mt-7 font-display text-title font-bold leading-snug tracking-tight">
         Drill-down reports

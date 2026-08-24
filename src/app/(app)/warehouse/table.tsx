@@ -30,6 +30,7 @@ import {
   DropdownTrigger,
 } from "@/components/ui/dropdown";
 import { Button, Field, Input, Select } from "@/components/ui/primitives";
+import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import { REQUIRED_CAPTURES, STATUS_LABEL, WH_FLOW, WH_TRANSITIONS } from "@/lib/journey";
 import { ageingBucket } from "@/lib/sla";
 import { LOGISTICS_PARTNERS, type Order, type OrderStatus, type OrderType } from "@/lib/types";
@@ -105,6 +106,32 @@ function MobileLabel({ children }: { children: React.ReactNode }) {
 
 /** Urgency rank for sorting: overdue first, then due today, then the rest. */
 const urgencyRank = (r: QueueRow) => (r.due === "overdue" ? 2 : r.due === "today" ? 1 : 0);
+
+/**
+ * The export, column for column with the table above it.
+ *
+ * Deliberately NOT a superset: an export that carries fields the operator
+ * cannot see on screen is a second, unreviewed report. The only additions are
+ * splits of things the table renders as one cell — store and facility share a
+ * column, AWB carries its "+N more" as a count — so every value here is one an
+ * operator can point at. Action is a control, not data, and has no column.
+ */
+const CSV_COLUMNS: CsvColumn<QueueRow>[] = [
+  { header: "Order", value: (r) => r.so },
+  { header: "Store", value: (r) => r.store },
+  { header: "Facility", value: (r) => r.facility },
+  { header: "Campaign", value: (r) => r.campaign },
+  { header: "Stage", value: (r) => STATUS_LABEL[r.status] },
+  { header: "Type", value: (r) => r.type },
+  { header: "Channel", value: (r) => r.channel },
+  { header: "Priority", value: (r) => (r.priority ? "HIGH" : "") },
+  { header: "Qty", value: (r) => r.qty },
+  { header: "Age (days)", value: (r) => r.ageDays },
+  { header: "AWB", value: (r) => r.awb },
+  { header: "AWB count", value: (r) => r.awbCount },
+  { header: "Handover", value: (r) => (r.due === "overdue" ? "Overdue" : r.due === "today" ? "Due today" : "") },
+  { header: "Out of rulebook", value: (r) => (r.outOfRulebook ? "yes" : "") },
+];
 
 export function QueueTable({
   rows,
@@ -349,6 +376,16 @@ export function QueueTable({
 
   const allShownSelected = rows.length > 0 && selected.size === rows.length;
 
+  /** Export exactly what is on screen: the server-filtered rows, in the sort
+   *  order currently applied, with the stage each row is actually showing —
+   *  an optimistically advanced row exports the stage the operator can see,
+   *  not the one the last server render had. */
+  const exportCsv = () => {
+    const stamped = csvFilename("warehouse-queue");
+    downloadCsv(stamped, toCsv(CSV_COLUMNS, sorted.map((r) => ({ ...r, status: stageOf(r) }))));
+    setAnnouncement(`Exported ${sorted.length} orders to ${stamped}`);
+  };
+
   return (
     <>
       <FilterBar
@@ -367,11 +404,20 @@ export function QueueTable({
           {selected.size ? ` · ${selected.size} selected` : ""}
         </p>
 
+        {/* Exports the FILTERED view, not the whole queue — the button sits
+            next to the count it will write, so what you get is what that
+            number says. Client-side: these rows are already in the browser,
+            and a server round-trip could only disagree with the screen. */}
+        <Button variant="outline" onClick={exportCsv} disabled={sorted.length === 0} className="ml-auto">
+          <Icon name="download-minimalistic-bold" size={15} aria-hidden />
+          Export CSV
+        </Button>
+
         {/* Density. A floor lead working one stage wants the whole row; a
             supervisor sweeping the queue for what is late wants twice as many
             rows on screen. Same table, two reading distances. */}
         <div
-          className="ml-auto flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]"
+          className="flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]"
           role="group"
           aria-label="Row density"
         >

@@ -6,7 +6,8 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
-import { Chip, Input } from "@/components/ui/primitives";
+import { Button, Chip, Input } from "@/components/ui/primitives";
+import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import { ageingBucket } from "@/lib/sla";
 import { AGE_EMPHASIS, OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
 import type { OverallStatus, ShipmentStatus, Source } from "@/lib/types";
@@ -44,6 +45,39 @@ function visualOf(r: TransitRow): StatusVisual {
   if (r.shipment) return SHIPMENT_VISUAL[r.shipment];
   return OVERALL_VISUAL[r.overall];
 }
+
+/**
+ * The export, column for column with the board above it.
+ *
+ * Deliberately NOT a superset. `am` and `expected` ride along on TransitRow but
+ * are not rendered anywhere on screen, so they are not here either — an export
+ * carrying fields the operator cannot see is a second, unreviewed report. What
+ * looks like extra columns are splits of cells the board renders as one: store
+ * and SO share a column, AWB carries its courier and "+N more" alongside it.
+ * The tracking link and journey link are controls, not data.
+ */
+const CSV_COLUMNS: CsvColumn<TransitRow>[] = [
+  { header: "SO", value: (r) => r.so },
+  { header: "Store", value: (r) => r.store },
+  { header: "Zone", value: (r) => r.zone },
+  { header: "Lane", value: (r) => r.lane },
+  { header: "Type", value: (r) => r.type },
+  { header: "Qty", value: (r) => r.qty },
+  { header: "AWB", value: (r) => r.awb },
+  { header: "AWB count", value: (r) => r.awbCount },
+  { header: "LR", value: (r) => r.lr },
+  { header: "Courier", value: (r) => r.courier?.replace("_", " ") },
+  { header: "Manual lane", value: (r) => (r.self ? "yes" : "") },
+  // The pill's own label, so the file and the screen name the status the same
+  // way rather than one saying OUT_FOR_DELIVERY and the other "Out for Delivery".
+  { header: "Status", value: (r) => visualOf(r).label },
+  { header: "Source", value: (r) => r.source },
+  { header: "Breaching", value: (r) => (r.breaching ? "yes" : "") },
+  { header: "Latest checkpoint", value: (r) => r.msg ?? "Awaiting first scan" },
+  { header: "City", value: (r) => r.city },
+  { header: "Attempts", value: (r) => r.attempts },
+  { header: "Transit age (days)", value: (r) => r.ageing },
+];
 
 /** How often the board pulls fresh server data while the tab is visible. */
 const REFRESH_MS = 75_000;
@@ -171,6 +205,13 @@ export function TransitBoard({
       .sort((a, b) => Number(b.breaching) - Number(a.breaching) || b.ageing - a.ageing);
   }, [rows, filter, q]);
 
+  /** Export exactly what is on screen: the chip filter, the search box and the
+   *  facility scope have all already been applied to `shown`, in the order the
+   *  board is displaying it. No server round-trip — these rows are already
+   *  here, and re-querying could only produce a file that disagrees with the
+   *  screen the operator pressed the button on. */
+  const exportCsv = () => downloadCsv(csvFilename("in-transit"), toCsv(CSV_COLUMNS, shown));
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center gap-2.5">
@@ -205,6 +246,12 @@ export function TransitBoard({
             className="border-0 bg-transparent px-0 py-2 focus:border-0"
           />
         </div>
+        {/* Exports the filtered view — whatever the chips and the search box
+            have left on the board, in the order it is shown. */}
+        <Button variant="outline" onClick={exportCsv} disabled={shown.length === 0}>
+          <Icon name="download-minimalistic-bold" size={15} aria-hidden />
+          Export CSV
+        </Button>
       </div>
 
       {/* Breach arrivals are announced. The wash and the rail colour are both

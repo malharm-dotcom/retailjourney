@@ -107,12 +107,26 @@ const COLUMNS: { key: SortKey | null; label: string; align?: "center" }[] = [
   { key: null, label: "Rulebook", align: "center" },
 ];
 
-/** One grid template shared by the header and every row, so a column and its
- *  heading can never drift apart. The leading 1.75rem is the expand gutter. */
+/**
+ * One grid template shared by the header and every row, so a column and its
+ * heading can never drift apart. The leading 1.75rem is the expand gutter, the
+ * trailing 9rem holds three 40px row actions plus their gaps.
+ *
+ * Every flexible track is `minmax(0, Nfr)`, not `Nfr`. A bare `fr` has an AUTO
+ * minimum: a long store name or "Dedicated Vehicle Lane" forces its track wider
+ * than its share, which pushes the row past the card AND makes each row compute
+ * its own widths — so the rows no longer line up with the header, which has
+ * different content. A zero minimum lets a track shrink to its share and the
+ * cell truncate inside it, which is why every cell below is `truncate` or
+ * `whitespace-nowrap`.
+ */
 const GRID =
-  "md:grid-cols-[1.75rem_.85fr_1fr_.5fr_1.55fr_.9fr_.9fr_1.05fr_.8fr_.8fr_1.1fr_.7fr_.55fr_6.5rem]";
+  "md:grid-cols-[1.75rem_minmax(0,.6fr)_minmax(0,1.05fr)_minmax(0,.4fr)_minmax(0,1.7fr)_minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(0,1.05fr)_minmax(0,.7fr)_minmax(0,.65fr)_minmax(0,1.15fr)_minmax(0,.55fr)_minmax(0,.6fr)_9rem]";
 
-const CELL = "px-1.5 py-2";
+const CELL = "min-w-0 px-1.5 py-2";
+
+/** Values that must never wrap into a second line inside a narrow track. */
+const ONE_LINE = "block truncate whitespace-nowrap";
 
 /** Mobile-only field label — the md+ grid has a header row, the stacked
  *  layout has none. */
@@ -498,7 +512,10 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
               <div key={r.so}>
                 <div
                   className={cn(
-                    "rail grid grid-cols-1 border-b border-line px-3 transition-colors duration-150 ease-ui hover:bg-paper md:items-center",
+                    // overflow-hidden is the backstop: with every track able to
+                    // shrink, nothing should exceed its cell — and if something
+                    // ever does, it clips instead of widening the page.
+                    "rail grid grid-cols-1 overflow-hidden border-b border-line px-3 transition-colors duration-150 ease-ui hover:bg-paper md:items-center",
                     GRID,
                     density === "compact" ? "md:py-0" : "md:py-1",
                     i === 0 && "max-md:rounded-t-card",
@@ -526,35 +543,35 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
 
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
                     <MobileLabel>Dispatch</MobileLabel>
-                    {fmtDate(r.dispatch)}
+                    <span className={ONE_LINE}>{fmtDate(r.dispatch)}</span>
                   </div>
 
                   <div className={cn(CELL, "mono")}>
                     <MobileLabel>Invoice</MobileLabel>
-                    <span className="block truncate font-display text-ui font-semibold" title={r.invoice}>
+                    <span className={cn(ONE_LINE, "font-display text-ui font-semibold")} title={r.invoice}>
                       {r.invoice ?? "—"}
                     </span>
                     {density === "comfortable" ? (
-                      <span className="block truncate text-cap text-mute">{r.so}</span>
+                      <span className={cn(ONE_LINE, "text-cap text-mute")}>{r.so}</span>
                     ) : null}
                   </div>
 
                   <div className={cn(CELL, "text-dense text-ink-soft")}>
                     <MobileLabel>Type</MobileLabel>
-                    {r.type}
+                    <span className={ONE_LINE}>{r.type}</span>
                   </div>
 
                   <div className={CELL}>
                     <MobileLabel>Store</MobileLabel>
                     <Link
                       href={`/orders/${r.so}`}
-                      className="block truncate text-ui font-semibold hover:text-sage"
+                      className={cn(ONE_LINE, "text-ui font-semibold hover:text-sage")}
                       title={r.store}
                     >
                       {r.store}
                     </Link>
                     {density === "comfortable" ? (
-                      <span className="block truncate text-cap text-mute">
+                      <span className={cn(ONE_LINE, "text-cap text-mute")}>
                         {r.facility} · {r.zone}
                       </span>
                     ) : null}
@@ -562,18 +579,18 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
 
                   <div className={cn(CELL, "text-dense text-ink-soft")}>
                     <MobileLabel>Lane</MobileLabel>
-                    <span className="block truncate" title={r.lane}>
+                    <span className={ONE_LINE} title={r.lane}>
                       {r.lane ?? "—"}
                     </span>
                   </div>
 
                   <div className={cn(CELL, "text-dense text-ink-soft")}>
                     <MobileLabel>Courier</MobileLabel>
-                    <span className="block truncate" title={r.courier}>
+                    <span className={ONE_LINE} title={r.courier}>
                       {(r.courier ?? "—").replace(/_/g, " ")}
                     </span>
                     {r.self ? (
-                      <span className="mt-0.5 block w-fit rounded-full bg-ofd-bg px-1.5 py-0.5 text-meta font-bold text-ofd">
+                      <span className="mt-0.5 block w-fit max-w-full truncate rounded-full bg-ofd-bg px-1.5 py-0.5 text-meta font-bold text-ofd">
                         manual lane
                       </span>
                     ) : null}
@@ -581,7 +598,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
 
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
                     <MobileLabel>AWB</MobileLabel>
-                    <span className="block truncate" title={r.awb}>
+                    <span className={ONE_LINE} title={r.awb}>
                       {r.awb ?? "—"}
                     </span>
                     {/* Multi-AWB is by design (a split consignment, or a
@@ -598,11 +615,12 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     <MobileLabel>Picked up</MobileLabel>
                     {r.pickup ? (
                       <>
-                        {fmtDate(r.pickup)}
+                        <span className={ONE_LINE}>{fmtDate(r.pickup)}</span>
                         {r.sincePickup !== undefined && density === "comfortable" ? (
                           <span
                             className={cn(
-                              "block text-cap",
+                              ONE_LINE,
+                              "text-cap",
                               // Stale only matters while it is still moving.
                               !r.delivered && r.sincePickup >= 5 ? "font-semibold text-breach" : "text-mute",
                             )}
@@ -612,21 +630,30 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                         ) : null}
                       </>
                     ) : (
-                      <span className="font-sans text-mute">Pending</span>
+                      <span className={cn(ONE_LINE, "font-sans text-mute")}>Pending</span>
                     )}
                   </div>
 
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
                     <MobileLabel>EDD</MobileLabel>
-                    {fmtDate(r.edd)}
+                    <span className={ONE_LINE}>{fmtDate(r.edd)}</span>
                     {r.delivered && density === "comfortable" ? (
-                      <span className="block text-cap text-mute">del. {fmtDate(r.delivered)}</span>
+                      <span className={cn(ONE_LINE, "text-cap text-mute")}>del. {fmtDate(r.delivered)}</span>
                     ) : null}
                   </div>
 
-                  <div className={CELL}>
+                  <div className={cn(CELL, "overflow-hidden")}>
                     <MobileLabel>Status</MobileLabel>
-                    <StatusPill visual={v} source={r.source} size="sm" />
+                    {/* The synced badge is dropped here, unlike In-Transit: it
+                        is ~60px on every row of a 13-column grid to say what
+                        all but a handful of rows say. A MANUAL source is the
+                        exception worth the width, so only that one shows. */}
+                    <StatusPill
+                      visual={v}
+                      source={r.source === "MANUAL" ? r.source : undefined}
+                      size="sm"
+                      className="max-w-full"
+                    />
                   </div>
 
                   <div className={CELL}>
@@ -634,7 +661,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     {tat ? (
                       <span
                         className={cn(
-                          "inline-block rounded-md px-1.5 py-0.5 text-meta font-bold",
+                          "inline-block max-w-full truncate rounded-md px-1.5 py-0.5 text-meta font-bold",
                           TONE[tat.tone].pill,
                         )}
                         title={`Against the internal EDD ${r.edd}`}
@@ -655,7 +682,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     ) : (
                       <span
                         className={cn(
-                          "inline-block rounded-md px-1.5 py-0.5 text-meta font-bold",
+                          "inline-block max-w-full truncate rounded-md px-1.5 py-0.5 text-meta font-bold",
                           r.perRulebook ? TONE.done.pill : TONE.failed.pill,
                         )}
                         title={`Rulebook handover day: ${r.rulebookDay}`}

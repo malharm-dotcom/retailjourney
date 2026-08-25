@@ -46,15 +46,39 @@ function PickupChip({ pickedUp }: { pickedUp: boolean }) {
   );
 }
 
+/** An order with no rulebook timeline — its WH processing TAT is the derived
+ *  order + 2 days, not a rulebook deadline. Flagged so the floor never reads a
+ *  derived date as a negotiated one. Same words the Logistics tracker uses. */
+function RulebookTag({ onRulebook }: { onRulebook: boolean }) {
+  return onRulebook ? null : (
+    <span className="mt-0.5 block text-meta font-bold text-ofd" title="No rulebook timeline — TAT derived as order date + 2 days">
+      off rulebook
+    </span>
+  );
+}
+
 const COLS: { h: string; v: (r: PlanRow) => React.ReactNode; label?: true }[] = [
   { h: "Status", v: (r) => <PickupChip pickedUp={r.pickedUp} />, label: true },
   { h: "Order date", v: (r) => day(r.orderDate), label: true },
-  { h: "Order", v: (r) => r.orderName, label: true },
+  {
+    h: "Order",
+    v: (r) => (
+      <>
+        {r.orderName}
+        <RulebookTag onRulebook={r.onRulebook} />
+      </>
+    ),
+    label: true,
+  },
   { h: "Store", v: (r) => text(r.store), label: true },
   { h: "Warehouse", v: (r) => text(r.warehouse), label: true },
   { h: "Type", v: (r) => text(r.orderType), label: true },
   { h: "Qty", v: (r) => r.quantity ?? "—" },
-  { h: "TAT", v: (r) => ts(r.tat), label: true },
+  // The two deadlines, side by side and never merged: the first is the
+  // warehouse's (packed + manifested by), the second the courier's
+  // (collected by). Different owners, routinely different days.
+  { h: "WH processing TAT", v: (r) => ts(r.whProcessingTat), label: true },
+  { h: "Pickup TAT", v: (r) => ts(r.pickupTat), label: true },
   { h: "Handover date", v: (r) => day(r.handoverDate), label: true },
   { h: "Manifested", v: (r) => ts(r.manifestedAt), label: true },
   { h: "Lane", v: (r) => text(r.lane), label: true },
@@ -69,6 +93,11 @@ function Counts({ s }: { s: PlanSection }) {
       <span className="text-ink">{s.total.toLocaleString("en-IN")} orders</span>
       <span className="text-deliv">{s.manifested.toLocaleString("en-IN")} picked up</span>
       <span className="text-breach">{s.pending.toLocaleString("en-IN")} pending</span>
+      {s.offRulebook ? (
+        <span className="text-ofd" title="No rulebook timeline — TAT derived as order date + 2 days">
+          {s.offRulebook.toLocaleString("en-IN")} off rulebook
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -91,10 +120,11 @@ function PlanTable({
         <p className="mt-1 text-dense leading-relaxed text-mute">{sub}</p>
         <Counts s={s} />
       </header>
-      {/* Fourteen columns is what the email carries, so the table scrolls inside
-          its own card rather than squeezing cells past legibility. */}
+      {/* Fifteen columns of dispatch facts, so the table scrolls inside its own
+          card rather than squeezing cells past legibility — the same trade the
+          Logistics grid makes. */}
       <div className="max-h-[58vh] overflow-auto">
-        <table className="w-full min-w-[1240px] border-collapse text-left">
+        <table className="w-full min-w-[1400px] border-collapse text-left">
           <thead className="sticky top-0 z-10">
             <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
               {COLS.map((c) => (
@@ -179,9 +209,10 @@ export default async function DailyPlanPage() {
       <p className="mb-5 flex items-start gap-1.5 rounded-control bg-card px-3.5 py-2.5 text-dense leading-relaxed text-ink-soft shadow-card">
         <Icon name="info-circle-bold-duotone" size={15} className="mt-[2px] shrink-0 text-mute" />
         <span>
-          Computed live against the same relative-date windows the 08:27 mail uses, so this shows the same orders
-          all day and rolls over with the date — not at the time the mail was sent. The mail keeps running; this is
-          the always-available copy of it.
+          Today&rsquo;s work, on a 5am-to-5am operating day — the list is the same all day and rolls over at 5am,
+          not when a mail was sent. Orders with no rulebook timeline, including every quick-commerce (QC) order,
+          are included on a derived TAT of order date + 2 days and tagged <b className="font-semibold">off rulebook</b>.
+          The 08:27 mail keeps running and covers a different day, so the two will not match.
         </span>
       </p>
 
@@ -189,15 +220,15 @@ export default async function DailyPlanPage() {
         <>
           <PlanTable
             title="To process"
-            sub="Orders whose warehouse TAT falls inside the emailer's window, earliest TAT first."
+            sub="Packed and manifested before today's WH processing TAT — earliest TAT first."
             s={plan.process}
-            empty="Nothing due for processing in this window."
+            empty="Nothing due for processing today."
           />
           <PlanTable
             title="To handover"
-            sub="Orders whose handover (pickup) date is the emailer's next-day boundary."
+            sub="Being collected by a courier today."
             s={plan.handover}
-            empty="Nothing due for handover."
+            empty="Nothing due for handover today."
           />
         </>
       ) : (

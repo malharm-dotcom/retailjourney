@@ -17,6 +17,10 @@ const GROUPS: { heading: string; items: { href: string; label: string; icon: str
       { href: "/", label: "Control Tower", icon: "widget-5-bold-duotone" },
       { href: "/in-transit", label: "In-Transit", icon: "delivery-bold-duotone" },
       { href: "/warehouse", label: "Warehouse", icon: "box-minimalistic-bold-duotone" },
+      // Sits beside Warehouse because it is the same team's shift work list.
+      // NOT under Reference next to /rulebook — that tab is the distribution
+      // rulebook (per-store targets), a different thing with a colliding name.
+      { href: "/daily-plan", label: "Daily Plan", icon: "clipboard-check-bold-duotone" },
       { href: "/logistics", label: "Logistics", icon: "tram-bold-duotone" },
     ],
   },

@@ -91,20 +91,27 @@ const TAT_VISUAL: Record<TatStatus, { label: string; tone: Tone }> = {
   pending: { label: "Pending", tone: "pending" },
 };
 
-/** Columns, in render order. `key` marks the ones whose header sorts. */
-const COLUMNS: { key: SortKey | null; label: string; align?: "center" }[] = [
+/**
+ * Columns, in render order. `key` marks the ones whose header sorts.
+ *
+ * EIGHT, not thirteen. The shell measures 1360px and gives the table ~1250 of
+ * it; thirteen columns plus three row actions divided that into ~70px each,
+ * which truncated "RPL" to "R…" and printed "25 …" for a date — a table that
+ * fits but cannot be read is not better than one that scrolls. Five columns
+ * are PAIRED into the cell they belong with rather than dropped: type joins
+ * the store's meta line, lane joins its courier, the rulebook verdict joins
+ * the pickup it is measured from, and the TAT cue joins the EDD it is measured
+ * against. Every tracker fact is still on screen, in both densities.
+ */
+const COLUMNS: { key: SortKey | null; label: string }[] = [
   { key: "dispatch", label: "Dispatch date" },
-  { key: "invoice", label: "Invoice no." },
-  { key: null, label: "Type" },
-  { key: "store", label: "Store" },
-  { key: null, label: "Lane" },
-  { key: "courier", label: "Courier" },
+  { key: "invoice", label: "Invoice · SO" },
+  { key: "store", label: "Store · type" },
+  { key: "courier", label: "Courier · lane" },
   { key: null, label: "AWB" },
   { key: "pickup", label: "Picked up" },
-  { key: "edd", label: "EDD" },
+  { key: "edd", label: "EDD · TAT" },
   { key: null, label: "Shipment status" },
-  { key: null, label: "TAT" },
-  { key: null, label: "Rulebook", align: "center" },
 ];
 
 /**
@@ -118,10 +125,11 @@ const COLUMNS: { key: SortKey | null; label: string; align?: "center" }[] = [
  * its own widths — so the rows no longer line up with the header, which has
  * different content. A zero minimum lets a track shrink to its share and the
  * cell truncate inside it, which is why every cell below is `truncate` or
- * `whitespace-nowrap`.
+ * `whitespace-nowrap` — including the headers, whose labels used to spill into
+ * the neighbouring column and overlap it.
  */
 const GRID =
-  "md:grid-cols-[1.75rem_minmax(0,.6fr)_minmax(0,1.05fr)_minmax(0,.4fr)_minmax(0,1.7fr)_minmax(0,1.05fr)_minmax(0,1.15fr)_minmax(0,1.05fr)_minmax(0,.7fr)_minmax(0,.65fr)_minmax(0,1.15fr)_minmax(0,.55fr)_minmax(0,.6fr)_9rem]";
+  "md:grid-cols-[1.75rem_minmax(0,.75fr)_minmax(0,1.3fr)_minmax(0,1.95fr)_minmax(0,1.4fr)_minmax(0,1.2fr)_minmax(0,.95fr)_minmax(0,.95fr)_minmax(0,1.4fr)_9rem]";
 
 const CELL = "min-w-0 px-1.5 py-2";
 
@@ -464,18 +472,22 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
           {COLUMNS.map((c) => {
             const active = sort.key === c.key;
             return (
-              <div key={c.label} className={cn(CELL, c.align === "center" && "text-center")}>
+              <div key={c.label} className={cn(CELL, "overflow-hidden")}>
                 {c.key ? (
                   <button
                     type="button"
                     onClick={() => toggleSort(c.key!)}
                     aria-label={`Sort by ${c.label}`}
                     className={cn(
-                      "inline-flex items-center gap-1 uppercase tracking-[0.04em] transition-colors duration-150 ease-ui hover:text-ink",
+                      "flex max-w-full items-center gap-1 uppercase tracking-[0.04em] transition-colors duration-150 ease-ui hover:text-ink",
                       active && "text-ink",
                     )}
                   >
-                    {c.label}
+                    {/* Wraps rather than ellipsing — "Dispatch …" tells a
+                        reader nothing, and the header band is two lines tall
+                        anyway. The cell's overflow-hidden keeps it inside its
+                        own column either way. */}
+                    <span className="break-words text-left">{c.label}</span>
                     <Icon
                       name="alt-arrow-down-bold"
                       size={11}
@@ -488,7 +500,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     />
                   </button>
                 ) : (
-                  c.label
+                  <span className="block break-words">{c.label}</span>
                 )}
               </div>
             );
@@ -556,11 +568,9 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     ) : null}
                   </div>
 
-                  <div className={cn(CELL, "text-dense text-ink-soft")}>
-                    <MobileLabel>Type</MobileLabel>
-                    <span className={ONE_LINE}>{r.type}</span>
-                  </div>
-
+                  {/* Store carries its type. Compact drops the facility, never
+                      the type — the type is a tracker column, the facility is
+                      already the toggle at the top of the page. */}
                   <div className={CELL}>
                     <MobileLabel>Store</MobileLabel>
                     <Link
@@ -570,30 +580,23 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     >
                       {r.store}
                     </Link>
-                    {density === "comfortable" ? (
-                      <span className={cn(ONE_LINE, "text-cap text-mute")}>
-                        {r.facility} · {r.zone}
-                      </span>
-                    ) : null}
-                  </div>
-
-                  <div className={cn(CELL, "text-dense text-ink-soft")}>
-                    <MobileLabel>Lane</MobileLabel>
-                    <span className={ONE_LINE} title={r.lane}>
-                      {r.lane ?? "—"}
+                    <span className={cn(ONE_LINE, "text-cap text-mute")}>
+                      {density === "comfortable" ? `${r.facility} · ` : ""}
+                      {r.zone} · {r.type}
                     </span>
                   </div>
 
+                  {/* Courier carries its lane: both answer "how does this
+                      move", and the lane is the longest value on the row. */}
                   <div className={cn(CELL, "text-dense text-ink-soft")}>
                     <MobileLabel>Courier</MobileLabel>
                     <span className={ONE_LINE} title={r.courier}>
                       {(r.courier ?? "—").replace(/_/g, " ")}
                     </span>
-                    {r.self ? (
-                      <span className="mt-0.5 block w-fit max-w-full truncate rounded-full bg-ofd-bg px-1.5 py-0.5 text-meta font-bold text-ofd">
-                        manual lane
-                      </span>
-                    ) : null}
+                    <span className={cn(ONE_LINE, "text-cap text-mute")} title={r.lane}>
+                      {r.lane ?? "—"}
+                      {r.self ? " · manual lane" : ""}
+                    </span>
                   </div>
 
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
@@ -610,19 +613,21 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                   </div>
 
                   {/* Not collected is a different fact from collected-today, so
-                      it gets its own words rather than a "—" and a 0. */}
+                      it gets its own words rather than a "—" and a 0. The
+                      rulebook verdict rides here because it IS this date: the
+                      rulebook handover day against the day it was collected. */}
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
                     <MobileLabel>Picked up</MobileLabel>
                     {r.pickup ? (
                       <>
                         <span className={ONE_LINE}>{fmtDate(r.pickup)}</span>
-                        {r.sincePickup !== undefined && density === "comfortable" ? (
+                        {r.sincePickup !== undefined && density === "comfortable" && !r.delivered ? (
                           <span
                             className={cn(
                               ONE_LINE,
                               "text-cap",
                               // Stale only matters while it is still moving.
-                              !r.delivered && r.sincePickup >= 5 ? "font-semibold text-breach" : "text-mute",
+                              r.sincePickup >= 5 ? "font-semibold text-breach" : "text-mute",
                             )}
                           >
                             {r.sincePickup}d ago
@@ -632,13 +637,38 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     ) : (
                       <span className={cn(ONE_LINE, "font-sans text-mute")}>Pending</span>
                     )}
+                    {r.perRulebook == null ? null : (
+                      <span
+                        className={cn(
+                          ONE_LINE,
+                          "font-sans text-meta font-bold",
+                          r.perRulebook ? "text-deliv" : "text-breach",
+                        )}
+                        title={`Rulebook handover day: ${r.rulebookDay}`}
+                      >
+                        {r.perRulebook ? "on rulebook" : "off rulebook"}
+                      </span>
+                    )}
                   </div>
 
+                  {/* EDD carries its TAT: the cue is nothing but this date read
+                      against the delivery, so the two belong in one cell. */}
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
                     <MobileLabel>EDD</MobileLabel>
                     <span className={ONE_LINE}>{fmtDate(r.edd)}</span>
                     {r.delivered && density === "comfortable" ? (
                       <span className={cn(ONE_LINE, "text-cap text-mute")}>del. {fmtDate(r.delivered)}</span>
+                    ) : null}
+                    {tat ? (
+                      <span
+                        className={cn(
+                          "mt-0.5 inline-block max-w-full truncate rounded-md px-1.5 py-0.5 font-sans text-meta font-bold",
+                          TONE[tat.tone].pill,
+                        )}
+                        title={`TAT against the internal EDD ${r.edd}`}
+                      >
+                        {tat.label}
+                      </span>
                     ) : null}
                   </div>
 
@@ -654,42 +684,6 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                       size="sm"
                       className="max-w-full"
                     />
-                  </div>
-
-                  <div className={CELL}>
-                    <MobileLabel>TAT</MobileLabel>
-                    {tat ? (
-                      <span
-                        className={cn(
-                          "inline-block max-w-full truncate rounded-md px-1.5 py-0.5 text-meta font-bold",
-                          TONE[tat.tone].pill,
-                        )}
-                        title={`Against the internal EDD ${r.edd}`}
-                      >
-                        {tat.label}
-                      </span>
-                    ) : (
-                      <span className="text-cap text-mute">—</span>
-                    )}
-                  </div>
-
-                  <div className={cn(CELL, "md:text-center")}>
-                    <MobileLabel>Rulebook</MobileLabel>
-                    {r.perRulebook == null ? (
-                      <span className="text-cap text-mute" title="No rulebook handover day, or nothing collected yet">
-                        —
-                      </span>
-                    ) : (
-                      <span
-                        className={cn(
-                          "inline-block max-w-full truncate rounded-md px-1.5 py-0.5 text-meta font-bold",
-                          r.perRulebook ? TONE.done.pill : TONE.failed.pill,
-                        )}
-                        title={`Rulebook handover day: ${r.rulebookDay}`}
-                      >
-                        {r.perRulebook ? "Y" : "N"}
-                      </span>
-                    )}
                   </div>
 
                   <div className={cn(CELL, "flex items-center gap-1 max-md:pb-3 md:justify-end")}>

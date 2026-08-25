@@ -12,13 +12,13 @@
 // must be fixed there first — the whole value of this file is that the app and
 // the email cannot disagree.
 //
-// FLAGGED FOR MALHAR — the limits CTE's names do not match its offsets:
+// KNOWN AND DELIBERATE — the limits CTE's names do not match its offsets:
 //   today_5am    = DATE_TRUNC(day, CURRENT_DATE) + 1 day + 5 hours  → TOMORROW 05:00
 //   tomorrow_5am = DATE_TRUNC(day, CURRENT_DATE) + 2 days + 5 hours → DAY AFTER 05:00
 // So the PROCESSING window is a day ahead of what the variable names suggest,
-// and HANDOVER_DATE = CURRENT_DATE + 1 is tomorrow. Malhar confirmed this is
-// deliberate — the timestamps are shaped to fit the n8n tool — so it is
-// reproduced exactly rather than corrected.
+// and HANDOVER_DATE = CURRENT_DATE + 1 is tomorrow. This is intentional — the
+// timestamps are shaped to fit the n8n tool — so it is reproduced exactly
+// rather than corrected. Change it in n8n first, never here.
 //
 // The read path is the R1 one: querySnowflake() on an Asia/Kolkata session with
 // DATE/TIMESTAMP fetched as strings. Read-only; nothing here writes.

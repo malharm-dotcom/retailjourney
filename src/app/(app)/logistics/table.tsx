@@ -51,10 +51,14 @@ export interface LogisticsRow {
   pickup?: string;
   /** Days since collection. Undefined when `pickup` is. */
   sincePickup?: number;
-  /** Primary EDD — the internal promise (`idealDeliveryDate`). */
+  /** Primary EDD — our own promise (`idealDeliveryDate`), rulebook-derived on
+   *  ~93% of dispatched orders and the spine's delivery target behind that.
+   *  Labelled "Store Delivery EDD": it is the target the SLA engine's DELIVERY
+   *  leg measures against, so the two carry one name. */
   edd?: string;
   eddDay?: string;
-  /** The courier's own EDD (`expectedDate`), on row-expand. */
+  /** The courier's own EDD (`expectedDate`), on row-expand. Labelled
+   *  "Logistics Delivery EDD" — the LOGISTICS_DELIVERY leg's target. */
   courierEdd?: string;
   courierEddDay?: string;
   shipment?: ShipmentStatus;
@@ -64,8 +68,11 @@ export interface LogisticsRow {
   /** Collected on the rulebook's handover day? Undefined when unknowable. */
   perRulebook?: boolean;
   rulebookDay?: string;
-  malharTat?: string;
-  courierTat?: string;
+  /** The SLA engine's own two delivery verdicts, named for the legs they come
+   *  from (LEG_LABEL.DELIVERY / LEG_LABEL.LOGISTICS_DELIVERY). Same delivery
+   *  event, two yardsticks: ours (`edd`) and the courier's (`courierEdd`). */
+  storeDeliverySla?: string;
+  logisticsDeliverySla?: string;
   dc?: string;
   lr?: string;
   vehicle?: string;
@@ -174,16 +181,16 @@ const CSV_COLUMNS: CsvColumn<LogisticsRow>[] = [
   { header: "Picked Up", value: (r) => r.pickup },
   { header: "Picked Up Status", value: (r) => (r.pickup ? "Picked up" : "Pending") },
   { header: "Days Since Pickup", value: (r) => r.sincePickup },
-  { header: "Final Malhar EDD", value: (r) => r.edd },
-  { header: "Malhar EDD Day", value: (r) => r.eddDay },
-  { header: "Courier EDD", value: (r) => r.courierEdd },
-  { header: "Courier EDD Day", value: (r) => r.courierEddDay },
+  { header: "Store Delivery EDD", value: (r) => r.edd },
+  { header: "Store Delivery EDD Day", value: (r) => r.eddDay },
+  { header: "Logistics Delivery EDD", value: (r) => r.courierEdd },
+  { header: "Logistics Delivery EDD Day", value: (r) => r.courierEddDay },
   { header: "Shipment Status", value: (r) => statusLabel(r) },
   { header: "Source", value: (r) => r.source },
   { header: "Delivered Date", value: (r) => r.delivered },
   { header: "TAT Status", value: (r) => (r.tat ? TAT_VISUAL[r.tat].label : "") },
-  { header: "Final Malhar TAT Status", value: (r) => r.malharTat },
-  { header: "Final Courier TAT Status", value: (r) => r.courierTat },
+  { header: "Store Delivery SLA", value: (r) => r.storeDeliverySla },
+  { header: "Logistics Delivery SLA", value: (r) => r.logisticsDeliverySla },
   { header: "Dispatched As Per Rulebook", value: (r) => (r.perRulebook == null ? "" : r.perRulebook ? "Y" : "N") },
   { header: "Rulebook Handover Day", value: (r) => r.rulebookDay },
   { header: "Boxes", value: (r) => r.boxes },
@@ -665,7 +672,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                           "mt-0.5 inline-block max-w-full truncate rounded-md px-1.5 py-0.5 font-sans text-meta font-bold",
                           TONE[tat.tone].pill,
                         )}
-                        title={`TAT against the internal EDD ${r.edd}`}
+                        title={`TAT against the Store Delivery EDD ${r.edd}`}
                       >
                         {tat.label}
                       </span>
@@ -737,13 +744,16 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     <Detail label="e-Way bill" value={r.eway} mono />
                     <Detail label="City" value={r.city} />
                     <Detail label="Boxes · pieces" value={`${r.boxes ?? "—"} · ${r.qty}`} mono />
-                    <Detail label="Malhar EDD" value={r.edd ? `${fmtDate(r.edd)} · ${r.eddDay}` : undefined} />
                     <Detail
-                      label="Courier EDD"
+                      label="Store Delivery EDD"
+                      value={r.edd ? `${fmtDate(r.edd)} · ${r.eddDay}` : undefined}
+                    />
+                    <Detail
+                      label="Logistics Delivery EDD"
                       value={r.courierEdd ? `${fmtDate(r.courierEdd)} · ${r.courierEddDay}` : undefined}
                     />
-                    <Detail label="Final Malhar TAT status" value={r.malharTat} />
-                    <Detail label="Final courier TAT status" value={r.courierTat} />
+                    <Detail label="Store Delivery SLA" value={r.storeDeliverySla} />
+                    <Detail label="Logistics Delivery SLA" value={r.logisticsDeliverySla} />
                     <Detail label="Rulebook handover day" value={r.rulebookDay} />
                     <Detail label="Delivered" value={r.delivered ? fmtDate(r.delivered) : undefined} />
                     <Detail label="Delivery attempts" value={r.attempts} />
@@ -827,9 +837,10 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 <Field label="e-Way bill">
                   <Input value={form.eWayBill} onChange={(e) => setForm((f) => ({ ...f, eWayBill: e.target.value }))} />
                 </Field>
-                {/* The COURIER EDD — `expectedDate`. The grid's EDD column is
-                    the internal promise, which is derived and not editable. */}
-                <Field label="Courier EDD">
+                {/* `expectedDate` — the courier's own promise. The grid's EDD
+                    column is the Store Delivery EDD, which is derived from the
+                    rulebook and so is not editable. */}
+                <Field label="Logistics Delivery EDD">
                   <Input type="date" value={form.expectedDate} onChange={(e) => setForm((f) => ({ ...f, expectedDate: e.target.value }))} />
                 </Field>
                 <div className="col-span-2">

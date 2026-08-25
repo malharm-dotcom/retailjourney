@@ -91,10 +91,12 @@ export default async function LogisticsPage() {
         tat: tatStatusOf(edd, o.deliveredDate, today),
         perRulebook: perRulebook(o.targetHandoverDay, pickup),
         rulebookDay: o.targetHandoverDay,
-        // The SLA engine's own verdicts, verbatim — the tracker's "final
-        // Malhar / courier TAT status" columns, one per EDD.
-        malharTat: delivery ? SLA_LABEL[delivery] : undefined,
-        courierTat: logisticsDelivery ? SLA_LABEL[logisticsDelivery] : undefined,
+        // The SLA engine's own verdicts, verbatim, and named for the legs they
+        // come from (LEG_LABEL) rather than relabelled — one verdict per EDD:
+        // DELIVERY measures against our own target, LOGISTICS_DELIVERY against
+        // the courier's.
+        storeDeliverySla: delivery ? SLA_LABEL[delivery] : undefined,
+        logisticsDeliverySla: logisticsDelivery ? SLA_LABEL[logisticsDelivery] : undefined,
         dc: o.dcNumber,
         lr: o.lrNumber,
         vehicle: o.vehicleNumber,

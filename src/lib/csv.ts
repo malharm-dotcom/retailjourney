@@ -52,6 +52,53 @@ export function toCsv<T>(columns: CsvColumn<T>[], rows: T[]): string {
   return lines.join("\r\n");
 }
 
+/**
+ * The inverse: a CSV string back to rows of cells.
+ *
+ * Deliberately hand-rolled rather than a dependency. It is the exact mirror of
+ * toCsv above — same quoting rules, same CRLF — and the files it reads are the
+ * ones this module wrote, round-tripped through Excel. A parser library would
+ * be a supply-chain surface for thirty lines of state machine.
+ *
+ * Excel's own leniencies are matched on purpose: the BOM we write is eaten, a
+ * quote appearing mid-cell is a literal quote rather than a syntax error, and a
+ * doubled quote inside a quoted cell is one quote. The formula guard that
+ * csvCell applies on the way OUT is deliberately NOT undone here — a leading
+ * apostrophe is part of the value the operator can see in their spreadsheet,
+ * and silently stripping it would corrupt any store code that legitimately
+ * starts with one.
+ *
+ * ponytail: bare-CR (pre-OS X Mac) line endings merge lines rather than
+ * splitting them. Nothing emits those any more; handle it if a file ever shows
+ * up that does.
+ */
+export function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let cell = "";
+  let quoted = false;
+  // Our own downloads lead with a BOM (see downloadCsv) and Excel preserves it
+  // on save, so it would otherwise land inside the first header name.
+  let i = text.charCodeAt(0) === 0xfeff ? 1 : 0;
+  for (; i < text.length; i++) {
+    const c = text[i];
+    if (quoted) {
+      if (c !== '"') cell += c;
+      else if (text[i + 1] === '"') (cell += '"'), i++;
+      else quoted = false;
+      continue;
+    }
+    if (c === '"' && cell === "") quoted = true;
+    else if (c === ",") (row.push(cell), (cell = ""));
+    else if (c === "\r") continue; // half of a CRLF; the \n ends the line
+    else if (c === "\n") (row.push(cell), rows.push(row), (row = []), (cell = ""));
+    else cell += c;
+  }
+  // A file not ending in a newline still has a last row to flush.
+  if (cell !== "" || row.length) (row.push(cell), rows.push(row));
+  return rows;
+}
+
 /** `<prefix>-YYYY-MM-DD.csv`, stamped with the IST business date rather than
  *  the browser's local one, so a late-evening export is filed under the day the
  *  floor considers it to belong to. */

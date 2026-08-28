@@ -31,12 +31,14 @@ import {
 } from "@/components/ui/dropdown";
 import { Button, Field, Input, Select } from "@/components/ui/primitives";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
+import type { ImportTarget } from "@/lib/csv-import";
 import { REQUIRED_CAPTURES, STATUS_LABEL, WH_FLOW, WH_TRANSITIONS } from "@/lib/journey";
 import { ageingBucket } from "@/lib/sla";
 import { LOGISTICS_PARTNERS, type Order, type OrderStatus, type OrderType } from "@/lib/types";
 import { AGE_EMPHASIS, TONE, WH_STATUS_VISUAL, cn, railOf } from "@/lib/ui";
 import { BulkBar } from "./bulk-bar";
 import { FilterBar } from "./filter-bar";
+import { ImportDialog } from "./import-dialog";
 import type { QueueFilters } from "./filters";
 
 export interface QueueRow {
@@ -175,6 +177,11 @@ export function QueueTable({
   // Orders the server refused in a bulk run — they flash and stay selected.
   const [rejected, setRejected] = useState<Record<string, true>>({});
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [importing, setImporting] = useState(false);
+  // Which template the importer opens on. Hoisted out of the dialog so the
+  // bulk bar can aim it at RTS Logic without the dialog remembering a target
+  // the operator picked on an earlier, unrelated trip through it.
+  const [importTo, setImportTo] = useState<ImportTarget>("RTS_LOGIC");
   // Anchor for shift-click range select, as an index into the sorted list.
   const lastPicked = useRef<number | null>(null);
 
@@ -412,6 +419,17 @@ export function QueueTable({
           <Icon name="download-minimalistic-bold" size={15} aria-hidden />
           Export CSV
         </Button>
+
+        {/* The per-order-detail counterpart to the bulk bar. Lives up here
+            rather than in the selection bar because its first step is
+            downloading a template, which needs no selection at all — though a
+            selection, if there is one, pre-populates that template. */}
+        {canEdit ? (
+          <Button variant="outline" onClick={() => setImporting(true)}>
+            <Icon name="upload-bold" size={15} aria-hidden />
+            Import CSV
+          </Button>
+        ) : null}
 
         {/* Density. A floor lead working one stage wants the whole row; a
             supervisor sweeping the queue for what is late wants twice as many
@@ -717,6 +735,18 @@ export function QueueTable({
         {terminalCount} cancelled / unfulfillable orders in this scope — see Reports for the full funnel.
       </div>
 
+      <ImportDialog
+        open={importing}
+        onOpenChange={setImporting}
+        to={importTo}
+        onToChange={setImportTo}
+        selected={[...selected].map((so) => rowBySo.get(so)).filter((r): r is QueueRow => Boolean(r))}
+        onImported={() => {
+          clearSelection();
+          router.refresh();
+        }}
+      />
+
       {canEdit ? (
         <BulkBar
           count={selected.size}
@@ -724,6 +754,7 @@ export function QueueTable({
           pending={pending}
           onClear={clearSelection}
           onAdvance={bulkAdvance}
+          onImport={() => (setImportTo("RTS_LOGIC"), setImporting(true))}
         />
       ) : null}
 

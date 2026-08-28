@@ -5,6 +5,15 @@
 // The dialog is the headline: one truck, one consignment, five fields entered
 // ONCE and applied to every selected order. That is the Sheets-parity win —
 // the floor used to type the same LR and vehicle number into forty rows.
+//
+// DISPATCH IS THE ONLY MOVE THAT WORKS THAT WAY. A consignment genuinely has
+// one DC, one LR and one partner, so entering them once is correct. The RTS
+// Logic move does not: box count, weight and sale invoice describe a single
+// order each, and there is no shared value to type. It used to sit in the
+// captureless list below, advancing whichever selected orders already happened
+// to carry all four fields and reporting the rest as skips — which read as a
+// bulk action but was really "advance the ones somebody already filled in".
+// It now routes to the CSV importer, which captures the four per row.
 
 import { useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
@@ -36,12 +45,16 @@ export function BulkBar({
   pending,
   onClear,
   onAdvance,
+  onImport,
 }: {
   count: number;
   statuses: OrderStatus[];
   pending: boolean;
   onClear: () => void;
   onAdvance: (to: OrderStatus, captures?: Partial<Order>) => void;
+  /** Open the CSV importer on the RTS Logic template, pre-populated with the
+   *  current selection. */
+  onImport: () => void;
 }) {
   const reduce = useReducedMotion();
   const [dispatching, setDispatching] = useState(false);
@@ -50,12 +63,16 @@ export function BulkBar({
 
   const targets = eligibleTargets(statuses);
   const DISPATCH: OrderStatus = "DISPATCHED_TO_STORE";
+  const RTS: OrderStatus = "RTS_LOGIC";
   const dispatchable = targets.find((t) => t.to === DISPATCH);
-  // Everything except dispatch moves without extra input. RTS_LOGIC is in here
-  // deliberately: its four captures (box count, weight, invoice, RTS date)
-  // describe one order each, so there is no shared value to type once — orders
-  // that already carry them advance, the rest come back as skips.
-  const captureless = targets.filter((t) => t.to !== DISPATCH);
+  // The per-order-detail move. Not advanced from here — it hands off to the CSV
+  // importer, which is the only path that can carry a different box count and
+  // invoice for each order in the selection.
+  const importable = targets.find((t) => t.to === RTS);
+  // What is left genuinely needs no input at all: Picking, Packing and
+  // Ready-to-Dispatch prompt for nothing (REQUIRED_CAPTURES has no entry for
+  // them), so one button per target is the whole interaction.
+  const captureless = targets.filter((t) => t.to !== DISPATCH && t.to !== RTS);
 
   const submitDispatch = () => {
     const fields = REQUIRED_CAPTURES[DISPATCH] ?? [];
@@ -106,6 +123,16 @@ export function BulkBar({
                   {t.count < count ? <span className="text-cap text-mute">({t.count})</span> : null}
                 </Button>
               ))}
+
+              {importable ? (
+                <Button variant="outline" disabled={pending} onClick={onImport}>
+                  <Icon name="upload-bold" size={14} />
+                  RTS Logic via CSV…
+                  {importable.count < count ? (
+                    <span className="text-cap text-mute">({importable.count})</span>
+                  ) : null}
+                </Button>
+              ) : null}
 
               {dispatchable ? (
                 <Button disabled={pending} onClick={() => (setErrors({}), setDispatching(true))}>

@@ -125,8 +125,9 @@
  * separate Radix dialog with a separate job and is deliberately untouched — a
  * drawer you have to open is already collapsed.
  *
- * No prefers-reduced-motion rule here: the block above already flattens every
- * transition-duration to 0.01ms, which covers the rail's width transition.
+ * Nothing here transitions, so the reduced-motion block above has nothing to
+ * flatten. See the note on the <aside> in components/shell/sidebar.tsx for why
+ * the width change is instant rather than animated.
  */
 @media (min-width: 1024px) {
   [data-nav="collapsed"] .nav-rail {

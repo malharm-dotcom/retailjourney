@@ -154,15 +154,17 @@ export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onC
   return (
     <>
       {/* Desktop rail */}
-      <aside
-        className={cn(
-          "nav-rail sticky top-0 hidden h-dvh w-[216px] shrink-0 flex-col border-r border-line bg-paper lg:flex",
-          // Width only. The reduced-motion block in globals.css already
-          // flattens every transition-duration to 0.01ms, so this disappears
-          // for anyone who asked for that — no second rule needed here.
-          "transition-[width] duration-200 ease-ui",
-        )}
-      >
+      {/* The collapse is INSTANT, deliberately. This rail is a flex sibling of
+          the main column, so transitioning its width relayouts the entire
+          content area every frame — and the widest page behind it is the
+          Warehouse table, a ~200-row CSS grid. That is roughly a dozen
+          full-table reflows to decorate a button press. Transform cannot help
+          here: translating the rail would leave a gap or overlay the content,
+          and the whole point of collapsing is that main RECLAIMS the 152px.
+          The reduced-motion block in globals.css was already flattening this
+          for anyone who asked, so the instant version was shipping regardless
+          — this just gives everyone the good one. */}
+      <aside className="nav-rail sticky top-0 hidden h-dvh w-[216px] shrink-0 flex-col border-r border-line bg-paper lg:flex">
         <div className="nav-rail-head flex h-[60px] items-center gap-2 px-6">
           <Wordmark className="nav-wordmark" />
           <RailToggle />

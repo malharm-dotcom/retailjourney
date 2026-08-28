@@ -172,6 +172,13 @@ export const REQUIRED_CAPTURES: Partial<Record<OrderStatus, { field: keyof Order
     { field: "weightKg", label: "Weight (kg)", kind: "number" },
     { field: "saleInvoiceNumber", label: "Sale invoice no.", kind: "text" },
     { field: "rtsLogicDate", label: "RTS Logic date", kind: "date" },
+    // The CONFIRMED quantity leaving the warehouse, optional because it is the
+    // ordered quantity on all but the short-shipped orders. Left blank, the
+    // server fills it from the UC-synced `qty` (see rtsQuantityDefault in
+    // advance.ts) — never the other way round: `qty` is sync-owned and is not
+    // manually editable anywhere, which is why this writes `fulfilledQty`.
+    // reports.ts already reads `fulfilledQty ?? qty` for exactly this reason.
+    { field: "fulfilledQty", label: "Quantity", kind: "number", optional: true },
   ],
   DISPATCHED_TO_STORE: [
     { field: "dcNumber", label: "DC number", kind: "text" },

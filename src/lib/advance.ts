@@ -42,6 +42,36 @@ export function allowedCaptures(to: OrderStatus, captures: Partial<Order>): Part
 }
 
 /**
+ * Server-derived capture defaults, applied to the ALREADY-ALLOWLISTED captures.
+ *
+ * The RTS Logic quantity is optional on the modal and in the CSV import: the
+ * confirmed quantity equals the ordered quantity on all but the short-shipped
+ * orders, so making the floor retype it 290 times is the kind of busywork the
+ * old Sheet was made of. Left blank it means "all of it", which is the
+ * UC-synced `qty` already on the order.
+ *
+ * This lives HERE, not in either caller, so the modal and the importer cannot
+ * drift into two different ideas of what blank means.
+ *
+ * Two things it deliberately does NOT do:
+ *  - It never touches `qty`. That is the sync-owned ordered quantity behind the
+ *    board's and Daily Plan's Qty column, and it has no FIELD_RIGHTS entry
+ *    precisely so nothing can hand-edit it. `fulfilledQty` is the confirmed
+ *    counterpart (reports.ts: `fulfilledQty ?? qty`).
+ *  - It does not re-derive over a value the order already carries. An order
+ *    walked back to Ready-to-Dispatch and re-advanced would otherwise have a
+ *    hand-entered short-ship quantity silently reset to the ordered one on the
+ *    second pass. Same "already on the order satisfies it" rule the required
+ *    captures follow in transitionStatus.
+ */
+function withDerivedCaptures(order: Order, to: OrderStatus, captures: Partial<Order>): Partial<Order> {
+  if (to === "RTS_LOGIC" && captures.fulfilledQty == null && order.fulfilledQty == null) {
+    return { ...captures, fulfilledQty: order.qty };
+  }
+  return captures;
+}
+
+/**
  * Advance ONE order, fully guarded. The caller has already established the
  * actor and their canEditWarehouse right; everything that varies per order —
  * existence, facility entitlement, the capture allowlist, and the ladder /
@@ -66,7 +96,15 @@ export async function advanceOne(
   if (!order) throw new Error(`Order ${soNumber} not found`);
   assertFacility(user, order.facility);
   guard?.(order);
-  await repo.transitionStatus(soNumber, to, { id: user.id, name: user.name }, allowedCaptures(to, captures), note);
+  await repo.transitionStatus(
+    soNumber,
+    to,
+    { id: user.id, name: user.name },
+    // Allowlist FIRST, then derive: a forged key is still rejected, and the
+    // server-derived default is not itself subject to a check it would pass.
+    withDerivedCaptures(order, to, allowedCaptures(to, captures)),
+    note,
+  );
 }
 
 /**

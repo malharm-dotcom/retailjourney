@@ -769,6 +769,14 @@ export function QueueTable({
                           <Input
                             invalid={Boolean(err)}
                             type={f.kind === "number" ? "number" : f.kind === "date" ? "date" : "text"}
+                            // The RTS Logic quantity is optional and defaults
+                            // server-side to the ordered qty. Showing that
+                            // number as the placeholder is what makes "leave it
+                            // blank unless this shipped short" readable — a bare
+                            // "(optional)" label reads as "we don't care".
+                            // Placeholder, not prefill: a typed value is an
+                            // explicit confirmation, a blank one is the default.
+                            placeholder={key === "fulfilledQty" ? String(move.row.qty) : undefined}
                             value={values[key] ?? ""}
                             onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
                           />

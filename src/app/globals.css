@@ -113,3 +113,50 @@
     animation-duration: 2.4s !important;
   }
 }
+
+/* ── Collapsible desktop rail ────────────────────────────────────────────────
+ *
+ * The state lives on <html data-nav>, stamped before first paint by the inline
+ * script in app/layout.tsx. Everything below is pure CSS on purpose: the rail
+ * must already be narrow in the FIRST frame for a user who chose that, and any
+ * React-effect approach paints 216px and snaps shut a frame later.
+ *
+ * Scoped to lg+ because only the desktop rail collapses. The mobile drawer is a
+ * separate Radix dialog with a separate job and is deliberately untouched — a
+ * drawer you have to open is already collapsed.
+ *
+ * No prefers-reduced-motion rule here: the block above already flattens every
+ * transition-duration to 0.01ms, which covers the rail's width transition.
+ */
+@media (min-width: 1024px) {
+  [data-nav="collapsed"] .nav-rail {
+    /* 64px: a 42px tap target plus the gutter, wide enough that the icons stay
+     * centred and clickable rather than becoming a cramped strip. Frees 152px,
+     * which takes a 1440px laptop to the shell's full 1360px cap. */
+    width: 64px;
+  }
+  /* Hidden, not unmounted — the accessible name of every link survives, and
+   * the link keeps its title tooltip as the visible label's stand-in. */
+  [data-nav="collapsed"] .nav-label,
+  [data-nav="collapsed"] .nav-heading,
+  [data-nav="collapsed"] .nav-wordmark {
+    display: none;
+  }
+  /* The group gap still separates The Floor from Reference once the headings
+   * are gone, so nothing is needed to keep the two lists legible apart. */
+  [data-nav="collapsed"] .nav-item,
+  [data-nav="collapsed"] .nav-rail-head {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  /* The toggle is the only thing left in the header; ml-auto would shove it
+   * against the border once the wordmark beside it is gone. */
+  [data-nav="collapsed"] .nav-rail-head > button {
+    margin-left: 0;
+  }
+  [data-nav="collapsed"] .nav-rail nav {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+}

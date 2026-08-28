@@ -2,9 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { Icon } from "@/components/icon";
 import { cn } from "@/lib/ui";
+
+/** Where the rail's collapsed state is remembered. Read by the pre-paint
+ *  script in app/layout.tsx — keep the two in step. */
+export const NAV_STORAGE_KEY = "retailjourney-nav";
 
 /** The two work groups. Grouping keeps each list at or under Miller's four
  *  before the eye has to choose, and gives /admin a home — it was reachable only
@@ -43,7 +48,9 @@ function NavList({ onNavigate, isAdmin }: { onNavigate?: () => void; isAdmin: bo
         if (items.length === 0) return null;
         return (
           <div key={group.heading} className="flex flex-col gap-0.5">
-            <h2 className="mb-1 px-3 text-meta font-bold uppercase tracking-[0.08em] text-mute">{group.heading}</h2>
+            <h2 className="nav-heading mb-1 px-3 text-meta font-bold uppercase tracking-[0.08em] text-mute">
+              {group.heading}
+            </h2>
             {items.map((it) => {
               const on = it.href === "/" ? pathname === "/" : pathname.startsWith(it.href);
               return (
@@ -52,14 +59,21 @@ function NavList({ onNavigate, isAdmin }: { onNavigate?: () => void; isAdmin: bo
                   href={it.href}
                   onClick={onNavigate}
                   aria-current={on ? "page" : undefined}
+                  // The title is the collapsed rail's only label. It is set
+                  // unconditionally rather than only when collapsed: the
+                  // collapse is CSS-driven and this component never learns
+                  // which state it is rendering in.
+                  title={it.label}
                   className={cn(
-                    "flex min-h-[42px] items-center gap-3 rounded-control px-3 py-2.5 text-ui font-semibold",
+                    "nav-item flex min-h-[42px] items-center gap-3 rounded-control px-3 py-2.5 text-ui font-semibold",
                     "transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.985]",
                     on ? "bg-sage-soft text-sage" : "text-ink-soft hover:bg-line/60 hover:text-ink",
                   )}
                 >
                   <Icon name={it.icon} size={19} className={on ? "text-sage" : "text-mute"} />
-                  {it.label}
+                  {/* Hidden by CSS when collapsed, never unmounted — a screen
+                      reader still reads the destination either way. */}
+                  <span className="nav-label">{it.label}</span>
                 </Link>
               );
             })}
@@ -80,6 +94,52 @@ function Wordmark({ className }: { className?: string }) {
 }
 
 /**
+ * The rail's collapse control.
+ *
+ * The COLLAPSE ITSELF IS PURE CSS, driven by `data-nav` on <html> which a
+ * pre-paint script in app/layout.tsx stamps from localStorage. That split is
+ * the whole point: reading localStorage in an effect would render the rail at
+ * its full 216px and snap it shut a frame later, on every single navigation.
+ *
+ * React state here therefore tracks ONE thing — what this button should say —
+ * and is adopted from the DOM after hydration rather than guessed during it,
+ * so the server and client render the same markup. A collapsed user sees a
+ * correct rail immediately and a correct button label a tick later; the
+ * reverse trade (correct label, flashing rail) is the one that shows.
+ */
+function RailToggle() {
+  const [collapsed, setCollapsed] = useState(false);
+
+  useEffect(() => {
+    setCollapsed(document.documentElement.dataset.nav === "collapsed");
+  }, []);
+
+  const toggle = () => {
+    const next = !collapsed;
+    setCollapsed(next);
+    document.documentElement.dataset.nav = next ? "collapsed" : "expanded";
+    // Private browsing and a full quota both throw on write. Losing the
+    // preference is not worth breaking the button over.
+    try {
+      localStorage.setItem(NAV_STORAGE_KEY, next ? "collapsed" : "expanded");
+    } catch {}
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-expanded={!collapsed}
+      aria-label={collapsed ? "Expand navigation" : "Collapse navigation"}
+      title={collapsed ? "Expand navigation" : "Collapse navigation"}
+      className="ml-auto grid h-8 w-8 shrink-0 place-items-center rounded-control text-mute transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97] hover:bg-line/60 hover:text-ink"
+    >
+      <Icon name="sidebar-minimalistic-linear" size={17} />
+    </button>
+  );
+}
+
+/**
  * Left navigation: a fixed rail on desktop, a slide-in drawer on phone/tablet.
  *
  * The drawer was the one overlay in the product not built on Radix, and it was
@@ -94,9 +154,18 @@ export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onC
   return (
     <>
       {/* Desktop rail */}
-      <aside className="sticky top-0 hidden h-dvh w-[216px] shrink-0 flex-col border-r border-line bg-paper lg:flex">
-        <div className="flex h-[60px] items-center px-6">
-          <Wordmark />
+      <aside
+        className={cn(
+          "nav-rail sticky top-0 hidden h-dvh w-[216px] shrink-0 flex-col border-r border-line bg-paper lg:flex",
+          // Width only. The reduced-motion block in globals.css already
+          // flattens every transition-duration to 0.01ms, so this disappears
+          // for anyone who asked for that — no second rule needed here.
+          "transition-[width] duration-200 ease-ui",
+        )}
+      >
+        <div className="nav-rail-head flex h-[60px] items-center gap-2 px-6">
+          <Wordmark className="nav-wordmark" />
+          <RailToggle />
         </div>
         <div className="pt-2">
           <NavList isAdmin={isAdmin} />

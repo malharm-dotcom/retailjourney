@@ -52,6 +52,19 @@ export default async function WarehousePage({
         status: r.order.status,
         facility: r.order.facility,
         due: due ? (due < today ? "overdue" : due === today ? "today" : undefined) : undefined,
+        // The two deadlines the Daily Plan prints, carried onto the row so the
+        // floor can read them without opening a second tab. Both are already
+        // computed above — `handoverDeadlineTs` is the very field the `due`
+        // badge on the line above is derived from — so nothing here re-derives
+        // an SLA or reaches for a value this page was not already fetching.
+        whTatTs: r.sla.handoverDeadlineTs,
+        // Daily Plan's HANDOVER_DATE is COALESCE(TO_DATE(PICKUP_TAT),
+        // TO_DATE(WH_PROCESSING_TAT)); pickupTargetTs and handoverDeadlineTs
+        // are those same two synced columns, so this is the same coalesce
+        // rather than a second definition of "handover day".
+        handoverDate: r.sla.pickupTargetTs
+          ? istDateOf(r.sla.pickupTargetTs)
+          : due,
         ageDays: r.sla.ageing,
         boxCount: r.order.boxCount,
         weightKg: r.order.weightKg,

@@ -32,6 +32,7 @@ import {
 import { Button, Field, Input, Select } from "@/components/ui/primitives";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import type { ImportTarget } from "@/lib/csv-import";
+import { fmtDate, fmtDateTime } from "@/lib/ist";
 import { REQUIRED_CAPTURES, STATUS_LABEL, WH_FLOW, WH_TRANSITIONS } from "@/lib/journey";
 import { ageingBucket } from "@/lib/sla";
 import { LOGISTICS_PARTNERS, type Order, type OrderStatus, type OrderType } from "@/lib/types";
@@ -53,6 +54,13 @@ export interface QueueRow {
   facility: string;
   due?: "today" | "overdue";
   ageDays: number;
+  /** The warehouse's own deadline — packed and manifested by this moment. The
+   *  same field the Handover badge beside it is derived from, so the column and
+   *  the badge can never tell different stories. ISO UTC. */
+  whTatTs?: string;
+  /** The day the courier collects: the pickup target, falling back to the
+   *  processing day. Daily Plan's HANDOVER_DATE, same coalesce. YYYY-MM-DD. */
+  handoverDate?: string;
   boxCount?: number;
   weightKg?: number;
   invoice?: string;
@@ -88,13 +96,28 @@ const COLUMNS: { key: SortKey | null; label: string; align?: "right"; sortable: 
   { key: "age", label: "Age", align: "right", sortable: true },
   { key: null, label: "AWB", sortable: false },
   { key: "urgency", label: "Handover", sortable: true },
+  { key: null, label: "WH Processing", sortable: false },
   { key: null, label: "Action", sortable: false },
 ];
 
-/** One grid template shared by the header and every row, so a column and its
- *  heading can never drift apart. The leading 2rem is the checkbox gutter. */
+/**
+ * One grid template shared by the header and every row, so a column and its
+ * heading can never drift apart. The leading 2rem is the checkbox gutter.
+ *
+ * The fr values are MEASURED, not chosen: each is the intrinsic width of that
+ * column's widest real value (longest store name, "NON_TRADING", a 13-digit
+ * AWB, the "Ready to Dispatch" pill and action button) plus the cell's own
+ * padding, divided by 100. That is what paid for the WH Processing column —
+ * the old split handed Store 220px for 175px of content and Action 204px for
+ * 177px while starving AWB, so rebalancing bought a tenth column outright.
+ * Measured at the two real shell widths (1304px with the shell at its cap,
+ * 1168px on a 1440 laptop) this fits everything except the AWB's "+N more"
+ * suffix — strictly less truncation than the NINE-column grid it replaces.
+ *
+ * Re-measure before changing a number here; they are not taste.
+ */
 const GRID =
-  "md:grid-cols-[2rem_1.35fr_2.1fr_1.35fr_.95fr_.5fr_.65fr_1.35fr_1fr_1.9fr]";
+  "md:grid-cols-[2rem_1.17fr_1.91fr_1.1fr_1.03fr_.46fr_.49fr_1.3fr_.75fr_1.06fr_1.77fr]";
 
 const CELL = "px-2 py-2.5";
 
@@ -132,6 +155,12 @@ const CSV_COLUMNS: CsvColumn<QueueRow>[] = [
   { header: "AWB", value: (r) => r.awb },
   { header: "AWB count", value: (r) => r.awbCount },
   { header: "Handover", value: (r) => (r.due === "overdue" ? "Overdue" : r.due === "today" ? "Due today" : "") },
+  // The stacked column's two halves, split — same rule as Store · facility
+  // above: what the table renders as one cell exports as the values it is
+  // made of. The TAT keeps its full instant rather than the "17 Jul, 6:00 pm"
+  // the cell shows, because a spreadsheet sorts and filters on it.
+  { header: "WH Processing TAT", value: (r) => r.whTatTs },
+  { header: "Handover Date", value: (r) => r.handoverDate },
   { header: "Out of rulebook", value: (r) => (r.outOfRulebook ? "yes" : "") },
 ];
 
@@ -653,6 +682,32 @@ export function QueueTable({
                   ) : (
                     <span className="text-cap text-mute">—</span>
                   )}
+                </div>
+
+                {/* The two Daily Plan deadlines, stacked. Two separate columns
+                    do not fit: measured at the real shell width they squeeze
+                    the action button to 39px of the 74 its label needs. Pairing
+                    them is also the truer reading — one is the warehouse's
+                    deadline and the other is the courier's day for the same
+                    consignment, so they belong to each other. */}
+                <div className={CELL}>
+                  <MobileLabel>WH Processing</MobileLabel>
+                  <span
+                    className="mono block truncate text-ui font-semibold text-ink-soft"
+                    title={r.whTatTs ? `Packed and manifested by ${fmtDateTime(r.whTatTs)} IST` : undefined}
+                  >
+                    {fmtDateTime(r.whTatTs)}
+                  </span>
+                  {/* Drops with every other second line in compact, exactly as
+                      Store and Type do — same toggle, same behaviour. */}
+                  {density === "comfortable" ? (
+                    <span
+                      className="mono block truncate text-cap text-mute"
+                      title={r.handoverDate ? `Courier collects ${fmtDate(r.handoverDate)}` : undefined}
+                    >
+                      Handover {fmtDate(r.handoverDate)}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className={cn(CELL, "flex items-center gap-1.5 max-md:pb-4")}>

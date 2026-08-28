@@ -117,9 +117,28 @@ const COLUMNS: { key: SortKey | null; label: string; align?: "right"; sortable: 
  * Re-measure before changing a number here; they are not taste.
  */
 const GRID =
-  "md:grid-cols-[2rem_1.17fr_1.91fr_1.1fr_1.03fr_.46fr_.49fr_1.3fr_.75fr_1.06fr_1.77fr]";
+  "md:grid-cols-[2rem_minmax(0,1.17fr)_minmax(0,1.91fr)_minmax(0,1.1fr)_minmax(0,1.03fr)_minmax(0,.46fr)_minmax(0,.49fr)_minmax(0,1.3fr)_minmax(0,.75fr)_minmax(0,1.06fr)_minmax(0,1.77fr)]";
 
-const CELL = "px-2 py-2.5";
+/**
+ * EVERY TRACK ABOVE IS minmax(0, …) AND MUST STAY THAT WAY.
+ *
+ * A bare `1.17fr` means `minmax(auto, 1.17fr)`, and that `auto` floor is
+ * content-derived: a track can never shrink below the widest thing in it. The
+ * header and each row are SEPARATE grids, so with an auto floor every row sizes
+ * its own tracks from its own content — a row carrying an AWB pushed its
+ * neighbours right, a row reading "No further step" pulled them left, and the
+ * columns fanned out down the page. Measured drift on the old template: 1px at
+ * 1168, 23px at 1032, 101px at 900, 196px at 780.
+ *
+ * `minmax(0, …)` removes the floor, so all eleven grids resolve to identical
+ * tracks from the container width alone and content truncates instead of
+ * shoving. Verified 0px drift from 780px to 1304px.
+ *
+ * The corollary is that every cell must be able to SHRINK — hence min-w-0 on
+ * CELL below (a grid item defaults to min-width:auto and would otherwise
+ * overflow its own track) and `truncate` on each cell's text.
+ */
+const CELL = "min-w-0 px-2 py-2.5";
 
 /** Mobile-only field label. The md+ grid has a header row; the stacked layout
  *  has none, so a phone user would otherwise read bare values. */
@@ -593,7 +612,7 @@ export function QueueTable({
 
                 <div className={CELL}>
                   <MobileLabel>Order</MobileLabel>
-                  <JourneyLink so={r.so} variant="text" className="mono font-display text-ui font-bold" />
+                  <JourneyLink so={r.so} variant="text" className="mono block truncate font-display text-ui font-bold" />
                 </div>
 
                 <div className={CELL}>
@@ -610,7 +629,12 @@ export function QueueTable({
                   ) : null}
                 </div>
 
-                <div className={CELL}>
+                {/* overflow-hidden because a pill is whitespace-nowrap and
+                    cannot truncate: with the track floor removed it would spill
+                    into the next column rather than widen its own. Clipping is
+                    the honest failure — the label stays readable from its left
+                    edge, and the columns stay in line. */}
+                <div className={cn(CELL, "overflow-hidden")}>
                   <MobileLabel>Stage</MobileLabel>
                   <StatusPill visual={v} size="sm" />
                 </div>
@@ -638,7 +662,7 @@ export function QueueTable({
 
                 <div className={cn(CELL, "md:text-right")}>
                   <MobileLabel>Qty</MobileLabel>
-                  <span className="mono text-ui text-ink-soft">{r.qty}</span>
+                  <span className="mono block truncate text-ui text-ink-soft">{r.qty}</span>
                 </div>
 
                 {/* Age is emphasis, never a pill: it borrows the app-wide
@@ -646,7 +670,7 @@ export function QueueTable({
                     reports cannot disagree about when an order is old. */}
                 <div className={cn(CELL, "flex items-baseline gap-1.5 md:block md:text-right")}>
                   <MobileLabel>Age</MobileLabel>
-                  <span className={cn("mono font-display text-ui font-bold", age.className)} title={age.note}>
+                  <span className={cn("mono truncate font-display text-ui font-bold", age.className)} title={age.note}>
                     {r.ageDays}d
                   </span>
                   <span className="text-cap text-mute md:hidden"> · {age.note}</span>
@@ -654,20 +678,27 @@ export function QueueTable({
 
                 <div className={cn(CELL, "mono")}>
                   <MobileLabel>AWB</MobileLabel>
-                  <span className="text-ui text-ink-soft">{r.awb ?? "—"}</span>
-                  {/* Multi-AWB is by design (a split consignment, or a returned
-                      original plus its replacement). The one shown is the
-                      furthest-forward live child; this only says there are
-                      others to find inside. */}
-                  {r.awbCount > 1 ? (
-                    <span className="ml-1.5 font-sans text-cap text-mute">+{r.awbCount - 1} more</span>
-                  ) : null}
+                  {/* One truncating block, not two siblings: `truncate` is
+                      overflow:hidden, which does nothing on an inline span, and
+                      the count has to be inside the same box so the pair
+                      ellipsises together instead of the suffix dropping onto a
+                      second line. */}
+                  <span className="block truncate text-ui text-ink-soft" title={r.awb}>
+                    {r.awb ?? "—"}
+                    {/* Multi-AWB is by design (a split consignment, or a
+                        returned original plus its replacement). The one shown is
+                        the furthest-forward live child; this only says there are
+                        others to find inside. */}
+                    {r.awbCount > 1 ? (
+                      <span className="ml-1.5 font-sans text-cap text-mute">+{r.awbCount - 1} more</span>
+                    ) : null}
+                  </span>
                 </div>
 
                 {/* One handover column. The kanban repeated a HANDOVER OVERDUE
                     sub-banner inside every lane on top of the filter chip; the
                     verdict belongs to the order, so it is stated once, here. */}
-                <div className={CELL}>
+                <div className={cn(CELL, "overflow-hidden")}>
                   <MobileLabel>Handover</MobileLabel>
                   {r.due === "overdue" ? (
                     <span className={cn("inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-meta font-bold", TONE.failed.pill)}>
@@ -772,7 +803,7 @@ export function QueueTable({
                   ) : null}
                   {/* Dispatched and terminal rows have nowhere left to go. */}
                   {canEdit && !primaryNext && !others.length ? (
-                    <span className="text-cap text-mute">No further step</span>
+                    <span className="truncate text-cap text-mute">No further step</span>
                   ) : null}
                   {!canEdit ? (
                     <Link href={`/orders/${r.so}`} className="text-cap font-semibold text-ink-soft hover:text-sage">

@@ -62,6 +62,16 @@ export const REPORTS: ReportDef[] = [
     icon: "hourglass-bold-duotone",
   },
   {
+    // Served by its own route (reports/logistics-followup/page.tsx), which
+    // shadows [slug] — it needs column-mode and EDD-source controls the generic
+    // report shell has no place for, so `buildReport` has no case for it.
+    slug: "logistics-followup",
+    title: "Logistics follow-up pivot",
+    description:
+      "In-transit AWBs as Store × EDD or Store × days-past-EDD, with totals — the file couriers get chased with.",
+    icon: "clipboard-list-bold-duotone",
+  },
+  {
     slug: "courier-scorecard",
     title: "Courier scorecard",
     description:

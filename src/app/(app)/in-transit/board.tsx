@@ -8,8 +8,7 @@ import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Input } from "@/components/ui/primitives";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
-import { ageingBucket } from "@/lib/sla";
-import { AGE_EMPHASIS, OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
+import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
 import type { OverallStatus, ShipmentStatus, Source } from "@/lib/types";
 
 export interface TransitRow {
@@ -34,15 +33,37 @@ export interface TransitRow {
   source?: Source;
   msg?: string;
   city?: string;
+  /** Days since dispatch. Still exported, no longer the headline number — the
+   *  board now leads on lateness against the promise, not time on the road. */
   ageing: number;
+  /** Store EDD, the courier's own behind it. Absent on ~15% of in-transit. */
+  edd?: string;
+  /** True when `edd` came from the courier rather than the rulebook. */
+  eddFallback?: boolean;
+  /** Days past `edd` — negative while still to come, undefined when no EDD. */
+  pastEdd?: number;
   breaching: boolean;
   am?: string;
-  expected?: string;
   trackingLink?: string;
   attempts: number;
 }
 
-type FilterKey = "all" | "PICKUP_PENDING" | "IN_TRANSIT" | "DELIVERED" | "breach";
+/** How late, in words. Mirrors the follow-up report's bands so the board and
+ *  the file the team sends couriers cannot disagree about what "3–5d" means. */
+function lateness(r: TransitRow): { value: string; note: string; className: string } {
+  if (r.pastEdd === undefined) return { value: "—", note: "no EDD", className: "text-mute" };
+  if (r.pastEdd < 0) {
+    const d = Math.abs(r.pastEdd);
+    return { value: `−${d}`, note: `due in ${d}d`, className: "text-mute" };
+  }
+  if (r.pastEdd === 0) return { value: "0", note: "due today", className: "text-pending" };
+  if (r.pastEdd <= 2) return { value: `+${r.pastEdd}`, note: "1–2d late", className: "text-pending" };
+  if (r.pastEdd <= 5) return { value: `+${r.pastEdd}`, note: "3–5d late", className: "text-ofd" };
+  if (r.pastEdd <= 10) return { value: `+${r.pastEdd}`, note: "6–10d late", className: "text-breach" };
+  return { value: `+${r.pastEdd}`, note: "10d+ late", className: "text-breach" };
+}
+
+type FilterKey = "all" | "PICKUP_PENDING" | "IN_TRANSIT" | "DELIVERED" | "breach" | "late";
 
 function visualOf(r: TransitRow): StatusVisual {
   if (r.shipment) return SHIPMENT_VISUAL[r.shipment];
@@ -52,9 +73,11 @@ function visualOf(r: TransitRow): StatusVisual {
 /**
  * The export, column for column with the board above it.
  *
- * Deliberately NOT a superset. `am` and `expected` ride along on TransitRow but
- * are not rendered anywhere on screen, so they are not here either — an export
- * carrying fields the operator cannot see is a second, unreviewed report. What
+ * Deliberately NOT a superset. `am` rides along on TransitRow but is not
+ * rendered anywhere on screen, so it is not here either — an export carrying
+ * fields the operator cannot see is a second, unreviewed report. The one
+ * exception is transit age, which the board showed until lateness replaced it:
+ * it stays in the file because it answers a question lateness does not. What
  * looks like extra columns are splits of cells the board renders as one: store
  * and SO share a column, AWB carries its courier and "+N more" alongside it.
  * The tracking link and journey link are controls, not data.
@@ -80,6 +103,13 @@ const CSV_COLUMNS: CsvColumn<TransitRow>[] = [
   { header: "Latest checkpoint", value: (r) => r.msg ?? "Awaiting first scan" },
   { header: "City", value: (r) => r.city },
   { header: "Attempts", value: (r) => r.attempts },
+  { header: "EDD", value: (r) => r.edd },
+  { header: "EDD source", value: (r) => (r.edd ? (r.eddFallback ? "courier" : "rulebook") : "") },
+  // Signed, so the file distinguishes "three days late" from "due in three".
+  { header: "Days past EDD", value: (r) => r.pastEdd },
+  // Kept even though the board no longer leads on it: time on the road is a
+  // different question from lateness, and dropping it from the export would
+  // lose the answer entirely.
   { header: "Transit age (days)", value: (r) => r.ageing },
 ];
 
@@ -102,6 +132,18 @@ const WASH_MS = 2600;
 
 /** Shared cell padding, so every column keeps one vertical rhythm. */
 const CELL = "px-2 py-3 md:py-4";
+
+/**
+ * The column track list. ONE definition, used by the header and every row.
+ *
+ * `minmax(0,Nfr)` rather than bare `Nfr` throughout: a grid track's default
+ * minimum is `auto`, so a long store name or an unbroken checkpoint string
+ * refuses to shrink and pushes every column to its right out of alignment —
+ * the fanning-out this board shared with the Warehouse queue before it was
+ * given one grid per row.
+ */
+const GRID =
+  "md:grid-cols-[minmax(0,2.1fr)_minmax(0,1.3fr)_minmax(0,1.35fr)_minmax(0,2fr)_minmax(0,1.15fr)_minmax(0,.9fr)]";
 
 /** Mobile-only field label. The md+ grid has a header row; the stacked layout
  *  had none, so a phone user saw bare values with no idea what they were. */
@@ -196,7 +238,12 @@ export function TransitBoard({
     return rows
       .filter((r) => {
         if (filter === "breach" && !r.breaching) return false;
-        if (filter !== "all" && filter !== "breach" && r.overall !== filter) return false;
+        // Past its EDD — a plainer question than "breaching", which the SLA
+        // engine decides from the rulebook legs. An order with no EDD is not
+        // late; it is unpromised, and it stays out of this filter.
+        if (filter === "late" && !(r.pastEdd !== undefined && r.pastEdd > 0)) return false;
+        if (filter !== "all" && filter !== "breach" && filter !== "late" && r.overall !== filter)
+          return false;
         if (
           needle &&
           ![r.so, r.lr, r.awb, r.store, r.am, r.courier]
@@ -206,7 +253,15 @@ export function TransitBoard({
           return false;
         return true;
       })
-      .sort((a, b) => Number(b.breaching) - Number(a.breaching) || b.ageing - a.ageing);
+      // Latest-first on lateness, with no-EDD rows last. Sorting them as 0
+      // would file "we never promised a date" in among the on-time orders,
+      // which is exactly where nobody would look for them.
+      .sort(
+        (a, b) =>
+          Number(b.breaching) - Number(a.breaching) ||
+          (b.pastEdd ?? -Infinity) - (a.pastEdd ?? -Infinity) ||
+          b.ageing - a.ageing,
+      );
   }, [rows, filter, q]);
 
   /** Export exactly what is on screen: the chip filter, the search box and the
@@ -230,6 +285,9 @@ export function TransitBoard({
         </Chip>
         <Chip active={filter === "DELIVERED"} tone="done" onClick={() => setFilter("DELIVERED")}>
           Delivered
+        </Chip>
+        <Chip active={filter === "late"} tone="handling" onClick={() => setFilter("late")}>
+          Past EDD
         </Chip>
         <Chip active={filter === "breach"} tone="failed" onClick={() => setFilter("breach")}>
           Breaching
@@ -272,13 +330,23 @@ export function TransitBoard({
       <div className="rounded-card bg-card shadow-card">
         {/* Sticky so the column meaning survives a long scroll. `top` clears the
             60px bar plus the sync strip that sit above it. */}
-        <div className="sticky top-[var(--bar-h)] z-10 hidden grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] rounded-t-card border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid">
+        {/* One track list, declared once (GRID) and shared by the header and
+            every row — they drifted apart before, which is what made the
+            columns fan out. Checkpoint gives up the width the EDD column
+            needs: it is prose that wraps happily, and lateness is the number
+            this board now sorts on. */}
+        <div
+          className={cn(
+            "sticky top-[var(--bar-h)] z-10 hidden rounded-t-card border-b border-line bg-paper px-5 text-cap font-semibold uppercase tracking-[0.04em] text-mute md:grid",
+            GRID,
+          )}
+        >
           <div className={CELL}>Store · SO · Invoice</div>
           <div className={CELL}>AWB · Courier</div>
           <div className={CELL}>Status</div>
           <div className={CELL}>Latest checkpoint</div>
-          <div className={CELL}>Transit age</div>
-          <div />
+          <div className={CELL}>EDD · late by</div>
+          <div className={CELL} />
         </div>
 
         {shown.length === 0 ? (
@@ -288,14 +356,15 @@ export function TransitBoard({
         ) : (
           shown.map((r, i) => {
             const v = visualOf(r);
-            const age = AGE_EMPHASIS[ageingBucket(r.ageing)];
+            const late = lateness(r);
             const isFirst = i === 0;
             const isLast = i === shown.length - 1;
             return (
               <div
                 key={r.so}
                 className={cn(
-                  "rail grid grid-cols-1 gap-0 border-b border-line px-5 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:grid-cols-[2.3fr_1.35fr_1.5fr_2.4fr_.85fr_1.1fr] md:items-center",
+                  "rail grid grid-cols-1 gap-0 border-b border-line px-5 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:items-start",
+                  GRID,
                   // The header is `hidden` below `md`, so on mobile the first
                   // row is the card's actual top edge and needs the corner the
                   // header would otherwise own.
@@ -309,8 +378,12 @@ export function TransitBoard({
                 )}
                 style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
               >
-                <div className={cn(CELL, "pb-1 pt-4 md:py-4")}>
-                  <Link href={`/orders/${r.so}`} className="text-row font-semibold hover:text-sage">
+                <div className={cn(CELL, "min-w-0 pb-1 pt-4 md:py-4")}>
+                  <Link
+                    href={`/orders/${r.so}`}
+                    title={r.store}
+                    className="block truncate text-row font-semibold hover:text-sage"
+                  >
                     {r.store}
                   </Link>
                   {/* The SO leads the meta line: the store name says which
@@ -327,7 +400,7 @@ export function TransitBoard({
                     {r.lane ?? "—"} · {r.type} · {r.qty} pcs
                   </div>
                 </div>
-                <div className={cn(CELL, "mono py-1 md:py-4")}>
+                <div className={cn(CELL, "mono min-w-0 py-1 md:py-4")}>
                   <MobileLabel>AWB</MobileLabel>
                   <span className="font-display text-ui font-semibold">{r.awb ?? "—"}</span>
                   {/* Multi-AWB is by design here (returned original + delivered
@@ -346,7 +419,7 @@ export function TransitBoard({
                 <div className={cn(CELL, "py-1 md:py-4")}>
                   <StatusPill visual={v} source={r.source} />
                 </div>
-                <div className={cn(CELL, "py-1 text-ui leading-snug text-ink-soft md:py-4")}>
+                <div className={cn(CELL, "min-w-0 py-1 text-ui leading-snug text-ink-soft md:py-4")}>
                   <MobileLabel>Checkpoint</MobileLabel>
                   {r.msg ?? "Awaiting first scan"}
                   <span className="mt-1 flex items-center gap-1 text-cap text-mute">
@@ -355,13 +428,19 @@ export function TransitBoard({
                     {r.attempts > 1 ? ` · ${r.attempts} attempts` : ""}
                   </span>
                 </div>
-                {/* Was `hidden md:block`. This is the number that decides whether
-                    an Area Manager escalates, and she is on a phone. */}
-                <div className={cn(CELL, "flex items-baseline gap-1.5 py-1 md:block md:py-4")}>
-                  <MobileLabel>Transit age</MobileLabel>
-                  <span className={cn("mono font-display text-num font-bold", age.className)}>{r.ageing}</span>
-                  <span className="font-sans text-cap font-normal text-mute md:block">
-                    days<span className="md:hidden"> · {age.note}</span>
+                {/* The number that decides whether an Area Manager escalates,
+                    and she is on a phone — so never `hidden md:block`. Signed
+                    against the EDD: −2 is two days of slack, +2 is two days
+                    late, and the date it is measured against sits underneath so
+                    the figure can be checked without opening the order. */}
+                <div className={cn(CELL, "min-w-0 flex items-baseline gap-1.5 py-1 md:block md:py-4")}>
+                  <MobileLabel>Late by</MobileLabel>
+                  <span className={cn("mono font-display text-num font-bold", late.className)}>{late.value}</span>
+                  <span className="block font-sans text-cap font-normal text-mute">
+                    {late.note}
+                  </span>
+                  <span className="mono block truncate text-cap text-mute" title={r.edd ?? undefined}>
+                    {r.edd ? `EDD ${r.edd}${r.eddFallback ? " · courier" : ""}` : "no EDD set"}
                   </span>
                 </div>
                 <div className={cn(CELL, "flex gap-2 pb-4 pt-2 md:justify-end md:py-4")}>
@@ -398,7 +477,7 @@ export function TransitBoard({
           <b className="font-semibold text-ink-soft">{scopeLabel}</b>
         </p>
         <p>
-          Sorted by ageing · breaches first
+          Sorted by days past EDD · breaches first
           {refreshedAt ? (
             <span className="mono"> · refreshed {refreshedAt.toLocaleTimeString("en-IN", { hour12: false })} IST</span>
           ) : null}

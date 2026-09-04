@@ -78,6 +78,13 @@ export default async function InTransitPage() {
       const transitAge = r.anchor.date
         ? Math.max(0, daysBetween(r.anchor.date, transitEndDate(o, today)))
         : r.sla.ageing;
+      // The board's ageing is now measured against the PROMISE, not the road:
+      // "how late is this" is the question an AM escalates on, and days since
+      // dispatch answered a different one. Store EDD leads (idealDeliveryDate,
+      // the rulebook promise), the courier's own behind it — together ~85% of
+      // in-transit orders. Both are @db.Date, already IST business dates, so
+      // nothing here does offset arithmetic.
+      const edd = o.idealDeliveryDate ?? o.expectedDate;
       return {
         so: o.soNumber,
         store: o.storeNameFormat,
@@ -105,9 +112,17 @@ export default async function InTransitPage() {
         msg: o.trackingLatestMessage,
         city: o.lastCheckpointCity,
         ageing: transitAge,
+        edd,
+        // Flagged so the board can say WHICH promise it is showing. A courier's
+        // own date rendered as if it were our rulebook target would quietly
+        // change what "late" means on the row.
+        eddFallback: !o.idealDeliveryDate && Boolean(o.expectedDate),
+        // Positive once today is past the EDD, negative while it is still to
+        // come. Undefined — not 0 — when there is no EDD at all: an order with
+        // no promise is not an order that is on time.
+        pastEdd: edd ? daysBetween(edd, today) : undefined,
         breaching: r.breaching,
         am: o.areaManager,
-        expected: o.expectedDate,
         trackingLink: o.trackingLink,
         attempts: o.deliveryAttempts,
       };

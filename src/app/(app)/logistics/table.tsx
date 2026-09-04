@@ -10,8 +10,8 @@
 // It mirrors the tracker's SHAPE, not its column count: one row per dispatch,
 // dispatch-date led, tracker naming. Thirteen columns are the ones the team
 // acts on; the rest of the tracker is on row-expand, and the full 50-column
-// file is the order-level download on the Reports desk. The edit paths are
-// Every edit — paperwork and stage move alike — is behind ONE ShipmentDialog.
+// file is the order-level download on the Reports desk. Every edit — paperwork
+// and stage move alike — is behind ONE ShipmentDialog.
 
 import Link from "next/link";
 import { useId, useMemo, useState } from "react";
@@ -21,7 +21,7 @@ import { ShipmentDialog } from "@/components/shipment-dialog";
 import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Input, Select } from "@/components/ui/primitives";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
-import { fmtDate } from "@/lib/ist";
+import { addDays, fmtDate, istToday } from "@/lib/ist";
 import type { OrderType, ShipmentStatus, Source } from "@/lib/types";
 import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type Tone } from "@/lib/ui";
 import type { TatStatus } from "./tat";
@@ -136,6 +136,22 @@ const GRID =
 
 const CELL = "min-w-0 px-1.5 py-2";
 
+/**
+ * Dispatch-date shortcuts, as OPEN-ENDED windows (a from with no to).
+ *
+ * Computed on click, never at module load: this file is a client component and
+ * a date frozen at first render would go stale on a board left open overnight —
+ * which is exactly how the Logistics queue is used.
+ *
+ * istToday()/addDays() operate on YYYY-MM-DD IST business dates, so nothing
+ * here touches a timezone offset by hand.
+ */
+const DATE_PRESETS: { label: string; from: () => string }[] = [
+  { label: "Today", from: () => istToday() },
+  { label: "7d", from: () => addDays(istToday(), -6) },
+  { label: "30d", from: () => addDays(istToday(), -29) },
+];
+
 /** Values that must never wrap into a second line inside a narrow track. */
 const ONE_LINE = "block truncate whitespace-nowrap";
 
@@ -203,11 +219,17 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
   const [facility, setFacility] = useState("");
   const [type, setType] = useState("");
   const [courier, setCourier] = useState("");
+  // Dispatch-date window, inclusive IST business dates. Empty = unbounded on
+  // that end, so one box alone is a valid "everything since" / "everything up
+  // to" filter rather than requiring both.
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [density, setDensity] = useState<Density>("comfortable");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "dispatch", dir: "desc" });
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
   const searchId = useId();
+  const fromId = useId();
 
   // Facets come from what is actually in scope, so a picker never offers a
   // value that would return an empty table.
@@ -253,6 +275,11 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         if (facility && r.facility !== facility) return false;
         if (type && r.type !== type) return false;
         if (courier && r.courier !== courier) return false;
+        // String compare is safe and correct here: both sides are YYYY-MM-DD
+        // IST business dates, never timestamps, so this needs no Date parsing
+        // and cannot pick up a UTC offset on the way through.
+        if (from && (!r.dispatch || r.dispatch < from)) return false;
+        if (to && (!r.dispatch || r.dispatch > to)) return false;
         if (
           needle &&
           ![r.invoice, r.awb, r.store, r.so, r.lr, r.dc]
@@ -269,7 +296,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         if (!x !== !y) return x ? -1 : 1;
         return x.localeCompare(y) * dir || a.so.localeCompare(b.so);
       });
-  }, [rows, filter, q, facility, type, courier, sort]);
+  }, [rows, filter, q, facility, type, courier, from, to, sort]);
 
   const toggleSort = (key: SortKey) =>
     setSort((s) =>
@@ -295,7 +322,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
     setAnnouncement(`Exported ${shown.length} dispatches to ${stamped}`);
   };
 
-  const filtered = Boolean(facility || type || courier || q.trim());
+  const filtered = Boolean(facility || type || courier || from || to || q.trim());
 
   return (
     <>
@@ -382,6 +409,48 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
           ))}
         </Select>
 
+        {/* Dispatch-date window. Native `type="date"` on purpose: it gives the
+            floor its own locale, its own keyboard and a real picker on a phone,
+            which no bundled calendar component matches. */}
+        <div className="flex items-center gap-1.5">
+          <label htmlFor={fromId} className="text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+            Dispatched
+          </label>
+          <Input
+            id={fromId}
+            type="date"
+            aria-label="Dispatched on or after"
+            value={from}
+            max={to || undefined}
+            onChange={(e) => setFrom(e.target.value)}
+            className="w-auto py-1.5"
+          />
+          <span className="text-cap text-mute">to</span>
+          <Input
+            type="date"
+            aria-label="Dispatched on or before"
+            value={to}
+            min={from || undefined}
+            onChange={(e) => setTo(e.target.value)}
+            className="w-auto py-1.5"
+          />
+        </div>
+
+        {/* The three windows the floor actually asks for, so the common case is
+            one tap rather than two date pickers. */}
+        {DATE_PRESETS.map((p) => (
+          <Chip
+            key={p.label}
+            active={Boolean(from) && from === p.from() && to === ""}
+            onClick={() => {
+              setFrom(p.from());
+              setTo("");
+            }}
+          >
+            {p.label}
+          </Chip>
+        ))}
+
         {filtered ? (
           <Button
             variant="ghost"
@@ -389,6 +458,8 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
               setFacility("");
               setType("");
               setCourier("");
+              setFrom("");
+              setTo("");
               setQ("");
             }}
           >

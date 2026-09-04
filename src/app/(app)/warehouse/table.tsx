@@ -122,7 +122,11 @@ const COLUMNS: { key: SortKey | null; label: string; align?: "right"; sortable: 
  * Re-measure before changing a number here; they are not taste.
  */
 const GRID =
-  "md:grid-cols-[2rem_minmax(0,1.17fr)_minmax(0,1.91fr)_minmax(0,1.1fr)_minmax(0,1.03fr)_minmax(0,.46fr)_minmax(0,.49fr)_minmax(0,1.3fr)_minmax(0,.75fr)_minmax(0,1.06fr)_minmax(0,1.77fr)]";
+  // Handover .75 -> 1.05 and WH Processing 1.06 -> 1.25, paid for by Store
+  // (1.91 -> 1.75) and Action (1.77 -> 1.54), so the total is unchanged. Those
+  // two were the only tracks whose CONTENT could not fit at any truncation: the
+  // Handover chip rendered as "Overdu" and the timestamp as "10 Jul, 6:00 ...".
+  "md:grid-cols-[2rem_minmax(0,1.17fr)_minmax(0,1.75fr)_minmax(0,1.1fr)_minmax(0,1.03fr)_minmax(0,.46fr)_minmax(0,.49fr)_minmax(0,1.3fr)_minmax(0,1.05fr)_minmax(0,1.25fr)_minmax(0,1.54fr)]";
 
 /**
  * EVERY TRACK ABOVE IS minmax(0, …) AND MUST STAY THAT WAY.
@@ -548,11 +552,15 @@ export function QueueTable({
                     onClick={() => toggleSort(c.key!)}
                     aria-label={`Sort by ${c.label}`}
                     className={cn(
-                      "inline-flex items-center gap-1 uppercase tracking-[0.04em] transition-colors duration-150 ease-ui hover:text-ink",
+                      // max-w-full + a truncating label: an inline-flex button
+                      // has an auto minimum, so without this the header text
+                      // ignored its track and overlapped its neighbour --
+                      // "HANDOVER" sat on top of "WH PROCESSING".
+                      "inline-flex max-w-full items-center gap-1 uppercase tracking-[0.04em] transition-colors duration-150 ease-ui hover:text-ink",
                       active && "text-ink",
                     )}
                   >
-                    {c.label}
+                    <span className="truncate">{c.label}</span>
                     <Icon
                       name="alt-arrow-down-bold"
                       size={11}
@@ -595,13 +603,19 @@ export function QueueTable({
                 className={cn(
                   "rail grid grid-cols-1 border-b border-line px-3 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:items-center",
                   GRID,
+                  "row-skip",
                   density === "compact" ? "md:py-0" : "md:py-1",
                   i === 0 && "max-md:rounded-t-card",
                   i === sorted.length - 1 && "rounded-b-card",
                   isSel && "bg-paper",
                   rejected[r.so] && "animate-breachArrive",
                 )}
-                style={{ "--rail": r.due === "overdue" ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
+                style={{
+                  "--rail": r.due === "overdue" ? TONE.failed.hex : railOf(v),
+                  // Estimate only; contain-intrinsic-size:auto replaces it with
+                  // the real height once a row has rendered once.
+                  "--row-h": density === "compact" ? "46px" : "64px",
+                } as React.CSSProperties}
               >
                 <div className={cn(CELL, "flex items-center max-md:pt-4")}>
                   {canEdit ? (

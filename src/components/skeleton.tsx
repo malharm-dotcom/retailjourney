@@ -50,48 +50,54 @@ export function StatStripSkeleton({ items = 4 }: { items?: number }) {
   );
 }
 
-/** The warehouse board: fixed-width lanes with a few cards each. */
-export function BoardSkeleton({ lanes = 7, cards = 3 }: { lanes?: number; cards?: number }) {
+/**
+ * The chip + control row that sits above every one of these tables.
+ *
+ * No loading state included this, so each route change painted heading-then-
+ * table and the real page then INSERTED a filter bar, shoving the table down by
+ * ~120px. That shift is the thing these placeholders exist to prevent, and it
+ * happened on every navigation.
+ */
+export function FilterBarSkeleton({ chips = 5, controls = 0 }: { chips?: number; controls?: number }) {
   return (
-    <div
-      role="status"
-      aria-label="Loading board"
-      className="mb-4 flex flex-col gap-2.5 overflow-hidden lg:h-[calc(100dvh-var(--chrome-h))] lg:flex-row lg:gap-3"
-    >
-      {Array.from({ length: lanes }).map((_, i) => (
-        <section key={i} className="flex flex-col lg:h-full lg:w-[264px] lg:min-w-[264px] lg:flex-none">
-          <div className="mb-2.5 flex items-center gap-2 rounded-xl bg-card px-3 py-2.5 shadow-card">
-            <Skeleton className="h-4 w-4 rounded" />
-            <Skeleton className="h-3.5 w-[96px]" />
-            <Skeleton className="ml-auto h-4 w-6" />
-          </div>
-          <div className="flex flex-col gap-2">
-            {Array.from({ length: cards }).map((_, j) => (
-              <div key={j} className="rounded-xl bg-card p-3 shadow-card">
-                <Skeleton className="h-3.5 w-[110px]" />
-                <Skeleton className="mt-2 h-3.5 w-[150px]" />
-                <Skeleton className="mt-2 h-3 w-[120px]" />
-                <Skeleton className="mt-3 h-[30px] w-full rounded-lg" />
-              </div>
-            ))}
-          </div>
-        </section>
-      ))}
+    <div aria-hidden className="mb-4 flex flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-2.5">
+        {Array.from({ length: chips }).map((_, i) => (
+          <Skeleton key={i} className="h-[34px] w-[104px] rounded-full" />
+        ))}
+        <Skeleton className="ml-auto h-[38px] w-[132px] rounded-control" />
+      </div>
+      {controls > 0 ? (
+        <div className="flex flex-wrap items-center gap-2.5">
+          <Skeleton className="h-[38px] w-[240px] rounded-control" />
+          {Array.from({ length: controls }).map((_, i) => (
+            <Skeleton key={i} className="h-[38px] w-[136px] rounded-control" />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
 
-/** Generic table screen (in-transit, logistics, rulebook, reports). */
-export function TableSkeleton({ rows = 8 }: { rows?: number }) {
+/**
+ * Generic table screen (warehouse, in-transit, logistics, rulebook, reports).
+ *
+ * `rowHeight` matters: a 48px placeholder row under a 96px real row means the
+ * table grows as it lands, which reads as the page still loading after it has
+ * finished. Callers pass the height their rows actually render at.
+ */
+export function TableSkeleton({ rows = 8, rowHeight = 64 }: { rows?: number; rowHeight?: number }) {
   return (
     <div role="status" aria-label="Loading" className="overflow-hidden rounded-card bg-card shadow-card">
       <div className="flex items-center gap-3 border-b border-line bg-paper px-5 py-3.5">
         <Skeleton className="h-3.5 w-[140px]" />
+        <Skeleton className="h-3.5 w-[110px]" />
+        <Skeleton className="hidden h-3.5 w-[90px] sm:block" />
         <Skeleton className="ml-auto h-3.5 w-[90px]" />
       </div>
       <div className="divide-y divide-line">
         {Array.from({ length: rows }).map((_, i) => (
-          <div key={i} className="flex items-center gap-4 px-5 py-3.5">
+          <div key={i} className="flex items-center gap-4 px-5" style={{ height: rowHeight }}>
             <Skeleton className="h-3.5 w-[110px]" />
             <Skeleton className="h-3.5 w-[170px]" />
             <Skeleton className="hidden h-3.5 w-[90px] sm:block" />

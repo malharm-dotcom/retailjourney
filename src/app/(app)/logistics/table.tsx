@@ -569,14 +569,14 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     // overflow-hidden is the backstop: with every track able to
                     // shrink, nothing should exceed its cell — and if something
                     // ever does, it clips instead of widening the page.
-                    "rail grid grid-cols-1 overflow-hidden border-b border-line px-3 transition-colors duration-150 ease-ui hover:bg-paper md:items-center",
+                    "rail row-skip grid grid-cols-1 overflow-hidden border-b border-line px-3 transition-colors duration-150 ease-ui hover:bg-paper md:items-center",
                     GRID,
                     density === "compact" ? "md:py-0" : "md:py-1",
                     i === 0 && "max-md:rounded-t-card",
                     isLast && !expanded && "rounded-b-card border-b-0",
                     expanded && "bg-paper",
                   )}
-                  style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
+                  style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v), "--row-h": density === "compact" ? "56px" : "76px" } as React.CSSProperties}
                 >
                   <div className={cn(CELL, "flex items-center max-md:pt-3")}>
                     <button

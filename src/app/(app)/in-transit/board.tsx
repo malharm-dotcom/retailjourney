@@ -363,7 +363,7 @@ export function TransitBoard({
               <div
                 key={r.so}
                 className={cn(
-                  "rail grid grid-cols-1 gap-0 border-b border-line px-5 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:items-start",
+                  "rail row-skip grid grid-cols-1 gap-0 border-b border-line px-5 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:items-start",
                   GRID,
                   // The header is `hidden` below `md`, so on mobile the first
                   // row is the card's actual top edge and needs the corner the
@@ -376,7 +376,7 @@ export function TransitBoard({
                   breached.has(r.so) && "animate-breachArrive",
                   arrived.has(r.so) && "animate-arrive",
                 )}
-                style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v) } as React.CSSProperties}
+                style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v), "--row-h": "96px" } as React.CSSProperties}
               >
                 <div className={cn(CELL, "min-w-0 pb-1 pt-4 md:py-4")}>
                   <Link
@@ -416,7 +416,7 @@ export function TransitBoard({
                     {r.lr && r.lr !== r.awb ? ` · LR ${r.lr}` : ""}
                   </span>
                 </div>
-                <div className={cn(CELL, "py-1 md:py-4")}>
+                <div className={cn(CELL, "min-w-0 py-1 md:py-4")}>
                   <StatusPill visual={v} source={r.source} />
                 </div>
                 <div className={cn(CELL, "min-w-0 py-1 text-ui leading-snug text-ink-soft md:py-4")}>

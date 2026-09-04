@@ -29,7 +29,7 @@
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
-import { recordNdr, updateShipmentManually } from "@/app/actions";
+import { overrideOrderFields, recordNdr, updateShipmentManually } from "@/app/actions";
 import { Icon } from "@/components/icon";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
 import { Button, Field, Input } from "@/components/ui/primitives";
@@ -46,6 +46,27 @@ function forwardTargets(current?: ShipmentStatus): ShipmentStatus[] {
   return SHIPMENT_LADDER.filter((_, i) => from === undefined || i > from);
 }
 
+/** The paperwork a dispatch accumulates. Editable here; the identifiers the
+ *  shipment was BOOKED on are not, and are not in this shape at all. */
+export interface Paperwork {
+  dcNumber?: string;
+  lrNumber?: string;
+  vehicleNumber?: string;
+  eWayBill?: string;
+  /** Logistics Delivery EDD — the courier's own promised date. */
+  expectedDate?: string;
+  podLink?: string;
+}
+
+const PAPERWORK_FIELDS: { key: keyof Paperwork; label: string; type?: string; placeholder?: string }[] = [
+  { key: "dcNumber", label: "DC number" },
+  { key: "lrNumber", label: "LR number" },
+  { key: "vehicleNumber", label: "Vehicle no." },
+  { key: "eWayBill", label: "e-Way bill" },
+  { key: "expectedDate", label: "Logistics Delivery EDD", type: "date" },
+  { key: "podLink", label: "POD link", placeholder: "https://…" },
+];
+
 export function ShipmentDialog({
   soNumber,
   current,
@@ -53,7 +74,10 @@ export function ShipmentDialog({
   store,
   lr,
   courier,
+  awb,
   pickup,
+  paperwork,
+  canEdit = true,
   children,
 }: {
   soNumber: string;
@@ -64,9 +88,14 @@ export function ShipmentDialog({
   store?: string;
   lr?: string;
   courier?: string;
+  /** Shown read-only: the shipment was booked on this and eShipz tracks it. */
+  awb?: string;
   /** Already-recorded pickup date. Present = set-once has fired and the field
    *  is closed; the server would ignore a second value anyway. */
   pickup?: string;
+  /** Current paperwork values. Omit to hide the section entirely. */
+  paperwork?: Paperwork;
+  canEdit?: boolean;
   children: React.ReactNode;
 }) {
   const router = useRouter();
@@ -75,6 +104,7 @@ export function ShipmentDialog({
   const [pickupDate, setPickupDate] = useState("");
   const [confirming, setConfirming] = useState<ShipmentStatus | null>(null);
   const [pending, startTransition] = useTransition();
+  const [form, setForm] = useState<Paperwork>({});
 
   const targets = forwardTargets(current);
   const onward = targets.filter((s) => s !== "DELIVERED");
@@ -86,7 +116,39 @@ export function ShipmentDialog({
     setNote("");
     setPickupDate("");
     setConfirming(null);
+    setForm({});
   };
+
+  /** Seed the paperwork form from the row when the dialog opens, so an edit
+   *  starts from what is actually on the order rather than from blank. */
+  const onOpenChange = (o: boolean) => {
+    setOpen(o);
+    if (o) setForm({ ...paperwork });
+    else close();
+  };
+
+  /** Paperwork only. Sends just the fields the operator CHANGED — a blanket
+   *  patch of every field would re-assert unchanged values as fresh manual
+   *  edits, and a manual edit outranks the sync forever after. */
+  const savePaperwork = () =>
+    startTransition(async () => {
+      const patch: Record<string, string | undefined> = {};
+      for (const { key } of PAPERWORK_FIELDS) {
+        const next = (form[key] ?? "").trim();
+        const before = (paperwork?.[key] ?? "").trim();
+        if (next !== before) patch[key] = next === "" ? undefined : next;
+      }
+      if (Object.keys(patch).length === 0) {
+        toast.info("Nothing changed");
+        return;
+      }
+      const res = await overrideOrderFields(soNumber, patch, "Logistics assignment edit");
+      if (!res.ok) {
+        toast.error(res.error);
+        return;
+      }
+      done(`${soNumber} updated`);
+    });
 
   const done = (msg: string) => {
     toast.success(msg);
@@ -142,13 +204,7 @@ export function ShipmentDialog({
     );
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(o) => {
-        setOpen(o);
-        if (!o) close();
-      }}
-    >
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>{children}</DialogTrigger>
 
       {confirming ? (
@@ -204,6 +260,29 @@ export function ShipmentDialog({
               : "Manual edit — logged with your name. Status only moves forward."
           }
         >
+          {/* Booked on eShipz, so fixed. Shown rather than hidden: the operator
+              needs to read the AWB off to a courier, and an identifier that is
+              simply absent reads as missing data rather than as settled. */}
+          {awb || courier ? (
+            <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 rounded-control bg-paper px-4 py-3 text-ui">
+              {awb ? (
+                <>
+                  <dt className="text-mute">AWB</dt>
+                  <dd className="mono font-semibold">{awb}</dd>
+                </>
+              ) : null}
+              {courier ? (
+                <>
+                  <dt className="text-mute">Courier</dt>
+                  <dd className="font-semibold">{courier.replace(/_/g, " ")}</dd>
+                </>
+              ) : null}
+              <dd className="col-span-2 mt-0.5 text-cap text-mute">
+                Set when the shipment was booked on eShipz — not editable here.
+              </dd>
+            </dl>
+          ) : null}
+
           {/* Note first: it belongs to whichever action follows, and putting it
               last meant the action discarded it. */}
           <Field label="Note (optional)" hint="Attached to whichever update you pick below.">
@@ -213,6 +292,31 @@ export function ShipmentDialog({
               placeholder="e.g. store closed, reattempt tomorrow"
             />
           </Field>
+
+          {paperwork && canEdit ? (
+            <>
+              <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+                Dispatch paperwork
+              </p>
+              <div className="grid grid-cols-2 gap-3">
+                {PAPERWORK_FIELDS.map((f) => (
+                  <Field key={f.key} label={f.label}>
+                    <Input
+                      type={f.type}
+                      placeholder={f.placeholder}
+                      value={form[f.key] ?? ""}
+                      onChange={(e) => setForm((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    />
+                  </Field>
+                ))}
+              </div>
+              <div className="mt-3 flex justify-end">
+                <Button variant="outline" disabled={pending} onClick={savePaperwork}>
+                  {pending ? "Saving…" : "Save paperwork"}
+                </Button>
+              </div>
+            </>
+          ) : null}
 
           <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">Pickup date</p>
           {pickup ? (
@@ -276,21 +380,29 @@ export function ShipmentDialog({
             </>
           )}
 
-          <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
-            Something went wrong
-          </p>
-          {/* Not a stage move: this bumps the attempt counter and flags the
-              shipment. It is the one off-ladder write a human may make, because
-              a failed attempt is something the person at the door knows first. */}
-          <button
-            type="button"
-            disabled={pending}
-            onClick={ndr}
-            className={cn(optionClass(false), "w-full")}
-          >
-            <Icon name={SHIPMENT_VISUAL.DELIVERY_FAILED.icon} size={16} />
-            Record NDR — a failed attempt
-          </button>
+          {/* Not offered once the parcel is delivered. This dialog now opens on
+              delivered rows too (their POD link is added here), and a failed
+              attempt on a closed shipment is not a thing that can happen. */}
+          {current !== "DELIVERED" ? (
+            <>
+              <p className="mb-2 mt-4 text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+                Something went wrong
+              </p>
+              {/* Not a stage move: this bumps the attempt counter and flags the
+                  shipment. It is the one off-ladder write a human may make,
+                  because a failed attempt is something the person at the door
+                  knows first. */}
+              <button
+                type="button"
+                disabled={pending}
+                onClick={ndr}
+                className={cn(optionClass(false), "w-full")}
+              >
+                <Icon name={SHIPMENT_VISUAL.DELIVERY_FAILED.icon} size={16} />
+                Record NDR — a failed attempt
+              </button>
+            </>
+          ) : null}
 
           {canDeliver ? (
             <>

@@ -11,22 +11,18 @@
 // dispatch-date led, tracker naming. Thirteen columns are the ones the team
 // acts on; the rest of the tracker is on row-expand, and the full 50-column
 // file is the order-level download on the Reports desk. The edit paths are
-// unchanged — same overrideOrderFields, same guarded ShipmentDialog.
+// Every edit — paperwork and stage move alike — is behind ONE ShipmentDialog.
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useId, useMemo, useState, useTransition } from "react";
-import { toast } from "sonner";
-import { overrideOrderFields } from "@/app/actions";
+import { useId, useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { ShipmentDialog } from "@/components/shipment-dialog";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { StatusPill } from "@/components/ui/pill";
-import { Button, Chip, Field, Input, Select } from "@/components/ui/primitives";
+import { Button, Chip, Input, Select } from "@/components/ui/primitives";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import { fmtDate } from "@/lib/ist";
-import { LOGISTICS_PARTNERS, type OrderType, type ShipmentStatus, type Source } from "@/lib/types";
+import type { OrderType, ShipmentStatus, Source } from "@/lib/types";
 import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type Tone } from "@/lib/ui";
 import type { TatStatus } from "./tat";
 
@@ -202,7 +198,6 @@ const CSV_COLUMNS: CsvColumn<LogisticsRow>[] = [
 ];
 
 export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdit: boolean }) {
-  const router = useRouter();
   const [filter, setFilter] = useState<Filter>("open");
   const [q, setQ] = useState("");
   const [facility, setFacility] = useState("");
@@ -211,10 +206,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
   const [density, setDensity] = useState<Density>("comfortable");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "dispatch", dir: "desc" });
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const [editing, setEditing] = useState<LogisticsRow | null>(null);
-  const [form, setForm] = useState<Record<string, string>>({});
   const [announcement, setAnnouncement] = useState("");
-  const [pending, startTransition] = useTransition();
   const searchId = useId();
 
   // Facets come from what is actually in scope, so a picker never offers a
@@ -302,34 +294,6 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
     downloadCsv(stamped, toCsv(CSV_COLUMNS, shown));
     setAnnouncement(`Exported ${shown.length} dispatches to ${stamped}`);
   };
-
-  const openEdit = (r: LogisticsRow) => {
-    setForm({
-      dcNumber: r.dc ?? "",
-      lrNumber: r.lr ?? "",
-      logisticsPartner: r.courier ?? "",
-      vehicleNumber: r.vehicle ?? "",
-      eWayBill: r.eway ?? "",
-      expectedDate: r.courierEdd ?? "",
-      podLink: r.pod ?? "",
-    });
-    setEditing(r);
-  };
-
-  const saveEdit = () =>
-    startTransition(async () => {
-      if (!editing) return;
-      const patch: Record<string, string | undefined> = {};
-      for (const [k, v] of Object.entries(form)) patch[k] = v.trim() === "" ? undefined : v.trim();
-      const res = await overrideOrderFields(editing.so, patch, "Logistics assignment edit");
-      if (!res.ok) {
-        toast.error(res.error);
-        return;
-      }
-      toast.success(`${editing.so} updated`);
-      setEditing(null);
-      router.refresh();
-    });
 
   const filtered = Boolean(facility || type || courier || q.trim());
 
@@ -695,36 +659,37 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
 
                   <div className={cn(CELL, "flex items-center gap-1 max-md:pb-3 md:justify-end")}>
                     <JourneyLink so={r.so} />
+                    {/* ONE control. There were two — a pencil for paperwork and
+                        a van for the stage move — sitting adjacent in a dense
+                        row, which meant guessing which dialog held the field
+                        you wanted. Both live behind this one now. */}
                     {canEdit ? (
-                      <>
+                      <ShipmentDialog
+                        soNumber={r.so}
+                        current={r.shipment}
+                        self={r.self}
+                        store={r.store}
+                        lr={r.lr}
+                        courier={r.courier}
+                        awb={r.awb}
+                        pickup={r.pickup}
+                        paperwork={{
+                          dcNumber: r.dc,
+                          lrNumber: r.lr,
+                          vehicleNumber: r.vehicle,
+                          eWayBill: r.eway,
+                          expectedDate: r.courierEdd,
+                          podLink: r.pod,
+                        }}
+                      >
                         <button
                           type="button"
-                          aria-label={`Edit courier, LR and DC for ${r.so}`}
-                          onClick={() => openEdit(r)}
+                          aria-label={`Update shipment and dispatch paperwork for ${r.so}`}
                           className={ROW_ACTION}
                         >
-                          <Icon name="pen-2-linear" size={15} />
+                          <Icon name="delivery-bold-duotone" size={15} />
                         </button>
-                        {!r.delivered ? (
-                          <ShipmentDialog
-                            soNumber={r.so}
-                            current={r.shipment}
-                            self={r.self}
-                            store={r.store}
-                            lr={r.lr}
-                            courier={r.courier}
-                            pickup={r.pickup}
-                          >
-                            <button
-                              type="button"
-                              aria-label={`Update shipment status for ${r.so}`}
-                              className={ROW_ACTION}
-                            >
-                              <Icon name="delivery-bold-duotone" size={15} />
-                            </button>
-                          </ShipmentDialog>
-                        ) : null}
-                      </>
+                      </ShipmentDialog>
                     ) : null}
                   </div>
                 </div>
@@ -799,68 +764,6 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         <b className="font-semibold text-ink-soft">{rows.length}</b> dispatches
       </p>
 
-      <Dialog open={editing !== null} onOpenChange={(o) => !o && setEditing(null)}>
-        {editing ? (
-          <DialogContent
-            title={`Dispatch details · ${editing.invoice ?? editing.so}`}
-            description="Manual edits are logged with your name and win over the sync — a synced value will not overwrite what you enter here."
-          >
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                saveEdit();
-              }}
-            >
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="DC number">
-                  <Input value={form.dcNumber} onChange={(e) => setForm((f) => ({ ...f, dcNumber: e.target.value }))} />
-                </Field>
-                <Field label="LR number">
-                  <Input value={form.lrNumber} onChange={(e) => setForm((f) => ({ ...f, lrNumber: e.target.value }))} />
-                </Field>
-                <Field label="Logistics partner">
-                  <Select
-                    value={form.logisticsPartner}
-                    onChange={(e) => setForm((f) => ({ ...f, logisticsPartner: e.target.value }))}
-                  >
-                    <option value="">Select…</option>
-                    {LOGISTICS_PARTNERS.map((p) => (
-                      <option key={p} value={p}>
-                        {p}
-                      </option>
-                    ))}
-                  </Select>
-                </Field>
-                <Field label="Vehicle no.">
-                  <Input value={form.vehicleNumber} onChange={(e) => setForm((f) => ({ ...f, vehicleNumber: e.target.value }))} />
-                </Field>
-                <Field label="e-Way bill">
-                  <Input value={form.eWayBill} onChange={(e) => setForm((f) => ({ ...f, eWayBill: e.target.value }))} />
-                </Field>
-                {/* `expectedDate` — the courier's own promise. The grid's EDD
-                    column is the Store Delivery EDD, which is derived from the
-                    rulebook and so is not editable. */}
-                <Field label="Logistics Delivery EDD">
-                  <Input type="date" value={form.expectedDate} onChange={(e) => setForm((f) => ({ ...f, expectedDate: e.target.value }))} />
-                </Field>
-                <div className="col-span-2">
-                  <Field label="POD link">
-                    <Input value={form.podLink} onChange={(e) => setForm((f) => ({ ...f, podLink: e.target.value }))} placeholder="https://…" />
-                  </Field>
-                </div>
-              </div>
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setEditing(null)}>
-                  Cancel
-                </Button>
-                <Button type="submit" disabled={pending}>
-                  {pending ? "Saving…" : "Save changes"}
-                </Button>
-              </div>
-            </form>
-          </DialogContent>
-        ) : null}
-      </Dialog>
     </>
   );
 }

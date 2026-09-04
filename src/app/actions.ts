@@ -190,7 +190,12 @@ export async function runSyncNow(source?: SyncSource): Promise<ActionResult & { 
 }
 
 /** Admin: resolve an unmatched channel to a Store (sets Store.channelCode,
- *  clears the review-queue row). The next sync sweep ingests the held orders. */
+ *  clears the review-queue row).
+ *
+ *  A CONVENIENCE, never a gate. The orders on this channel are already ingested
+ *  and processing; mapping only restores the enrichment that hangs off a local
+ *  Store row (rulebook targets, area manager, QC flag). Nothing is admitted to
+ *  the floor by this action. */
 export async function mapChannelToStore(channel: string, storeId: string): Promise<ActionResult> {
   try {
     const user = await currentUser();

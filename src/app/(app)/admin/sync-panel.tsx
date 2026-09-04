@@ -348,18 +348,21 @@ export function UnmatchedChannels({
     }
     startTransition(async () => {
       const res = await mapChannelToStore(channel, storeId);
-      if (res.ok) toast.success(`Channel "${channel}" mapped — next sync ingests its orders`);
+      if (res.ok) toast.success(`Channel "${channel}" mapped — its orders regain rulebook targets on the next sync`);
       else toast.error(res.error);
     });
   };
 
   return (
     <section className="mb-6 overflow-hidden rounded-card bg-card shadow-card">
-      <header className="flex items-center gap-2.5 border-b border-line bg-ofd-bg px-5 py-3.5">
-        <Icon name="danger-triangle-bold-duotone" size={17} className="text-ofd" />
-        <h2 className="font-display text-sec font-bold">Unmatched channels — review queue</h2>
+      {/* Informational, not a warning: nothing on this panel blocks an order,
+          so it must not wear the danger triangle and the amber ground that the
+          genuinely-alarming panels use. */}
+      <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
+        <Icon name="info-circle-bold-duotone" size={17} className="text-mute" />
+        <h2 className="font-display text-sec font-bold">Unmatched channels — reconciliation aid</h2>
         <span className="ml-auto text-cap text-mute">
-          orders from these channels are held until mapped to a store
+          these orders already process normally — mapping only restores rulebook targets
         </span>
       </header>
       <div className="divide-y divide-line">
@@ -368,7 +371,8 @@ export function UnmatchedChannels({
             <div className="min-w-0 flex-1">
               <div className="mono text-ui font-bold">{u.channel}</div>
               <div className="mt-0.5 text-cap text-mute">
-                {u.orderCount} order{u.orderCount === 1 ? "" : "s"} · last seen {fmtDateTime(u.lastSeenAt)}
+                {u.orderCount} order{u.orderCount === 1 ? "" : "s"} processing · last seen{" "}
+                {fmtDateTime(u.lastSeenAt)}
                 {u.sampleSoNumbers.length ? ` · e.g. ${u.sampleSoNumbers.slice(0, 3).join(", ")}` : ""}
               </div>
             </div>

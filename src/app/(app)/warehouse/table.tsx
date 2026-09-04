@@ -72,6 +72,11 @@ export interface QueueRow {
   /** Spine RULEBOOK_COVERED = false: no real rulebook target, so the order runs
    *  on a fallback (eShipz EDD). It is VISIBLE — the old source hid these. */
   outOfRulebook?: boolean;
+  /** The store has no row in the local Store table, so the rulebook / area
+   *  manager / QC enrichment behind it is missing. The store NAME is still the
+   *  spine's resolved one. Advisory badge only — the order is on this queue and
+   *  fully actionable exactly like any other. */
+  storeUnmapped?: boolean;
 }
 
 /** Moves that end the order. Separated in the menu and confirmed in red. */
@@ -621,6 +626,17 @@ export function QueueTable({
                   <span className="block truncate text-ui font-semibold text-ink" title={r.store}>
                     {r.store}
                   </span>
+                  {/* A FLAG, not a gate — same shape as "out of rulebook"
+                      below. The order is here and fully actionable; only its
+                      rulebook/AM enrichment is missing. */}
+                  {r.storeUnmapped ? (
+                    <span
+                      className="mt-1 inline-block rounded-md bg-pending-bg px-1.5 py-0.5 text-meta font-bold text-pending"
+                      title="This store has no row in the app's store list, so rulebook targets and the area manager are missing. The order is unaffected — it processes normally."
+                    >
+                      store unmapped
+                    </span>
+                  ) : null}
                   {density === "comfortable" ? (
                     <span className="block truncate text-cap text-mute" title={r.campaign}>
                       {r.facility}

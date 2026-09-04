@@ -23,7 +23,7 @@ import {
   type DistributionRow,
 } from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
-import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type ShipmentStatus, type Source, type Store } from "../types";
+import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type Ownership, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
 import type { TrackingUpdate } from "./types";
 
@@ -286,9 +286,12 @@ export function guardedStatus(current: Order["status"], next?: Order["status"]):
 
 /** Unmatched channels are collected in-memory per run, then flushed once.
  *  orderCount is SET to the run's distinct-order count — never incremented —
- *  so the number always means "orders currently held for this channel", not
- *  cumulative sync attempts (previous inflated counts self-correct on the
- *  next run). */
+ *  so the number always means "orders on this channel with no local Store row",
+ *  not cumulative sync attempts (previous inflated counts self-correct on the
+ *  next run).
+ *
+ *  These orders are NOT held. They are ingested and fully actionable; the count
+ *  measures a reconciliation gap in the local Store table, nothing more. */
 type UnmatchedMap = Map<string, Set<string>>;
 
 function noteUnmatched(map: UnmatchedMap, channel: string, soNumber: string): void {
@@ -307,11 +310,19 @@ async function flushUnmatched(map: UnmatchedMap, resolves: (channel: string) => 
       update: { lastSeenAt: new Date(), orderCount: sos.size, sampleSoNumbers: sample },
     });
   }
-  // Queue rows whose channel now resolves to a store (mapped in Admin or bulk
-  // loaded) are done reviewing — drop them so the queue only shows live gaps.
+  // Drop a queue row when its channel now resolves to a store (mapped in Admin
+  // or bulk loaded), AND when this run did not see the channel at all.
+  //
+  // The second case is what expires ghosts. The 45-day sweep is OR'd into
+  // every run's WHERE clause, so a channel absent from `map` is genuinely gone
+  // from the window — usually renamed upstream ("CITY CENTER NASHIK" became
+  // "NASHIK"), leaving a stale row that could never resolve and so lived
+  // forever, double-counting orders the live row already listed.
   const rows = await db.unmatchedChannel.findMany();
   for (const u of rows) {
-    if (resolves(u.channel)) await db.unmatchedChannel.delete({ where: { id: u.id } });
+    if (resolves(u.channel) || !map.has(u.channel)) {
+      await db.unmatchedChannel.delete({ where: { id: u.id } });
+    }
   }
 }
 
@@ -716,7 +727,64 @@ async function applyQcInheritance(
   m.patch.tatInheritedFrom = r.parent.finalStore;
 }
 
-async function createOrderFromSnowflake(m: MappedOrder, store: Store): Promise<void> {
+const OWNERSHIPS: readonly string[] = ["COCO", "FOCO", "COFO", "MFC", "SUVIDHA"];
+
+/**
+ * The store-shaped columns Order requires, resolved WITHOUT depending on the
+ * app's local Store table.
+ *
+ * The spine already did the authoritative resolution: its STORE column IS
+ * gs_store_details.store_name_format, joined on LEFT(order_name,6) = so_code.
+ * So an order whose store has no row in the local Store table — a static,
+ * hand-seeded list that nothing reconciles against gs_store_details — still
+ * knows exactly which store it is for. A missing local row costs the rulebook
+ * / QC / area-manager enrichment that hangs off it. It must never cost the
+ * order its place on the floor.
+ *
+ * storeId is "" when there is no local Store row, and that is the ONLY marker
+ * of an unmapped store: no schema change, and ruleFor() misses on it the same
+ * way it already misses an unknown id.
+ *
+ * (Exported for the fail-open tests only.)
+ */
+export function storeFieldsFor(m: MappedOrder, store?: Store): Partial<Order> {
+  if (store) {
+    return {
+      channel: store.channel,
+      storeId: store.id,
+      storeNameFormat: store.storeName,
+      finalStore: store.finalStore,
+      ownership: store.ownership,
+      state: store.storeState,
+    };
+  }
+  // "SNITCH - COCO - PACIFIC JASOLA" — the same three-part shape seed/stores.ts
+  // builds, read back out: finalStore verbatim, storeName without the banner
+  // prefix, ownership from the middle segment.
+  const finalStore = m.storeKey?.trim() || "(store unmapped)";
+  const parts = finalStore.split(" - ").map((p) => p.trim());
+  const ownership = OWNERSHIPS.includes(parts[1]) ? (parts[1] as Ownership) : undefined;
+  // The spine's own STORE_CHANNEL first; the ownership code behind it. COCO is
+  // company-owned, every other code is a franchise arrangement.
+  const channel: Order["channel"] =
+    m.patch.storeChannel === "OWN"
+      ? "OWN_STORE"
+      : m.patch.storeChannel === "FRANCHISE"
+        ? "FRANCHISE_STORE"
+        : ownership === "COCO"
+          ? "OWN_STORE"
+          : "FRANCHISE_STORE";
+  return {
+    channel,
+    storeId: "",
+    storeNameFormat: parts.slice(1).join(" - ") || finalStore,
+    finalStore,
+    ownership,
+    state: m.patch.receiverState ?? "",
+  };
+}
+
+async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<void> {
   const db = prisma();
   const status: OrderStatus = m.shipments.length
     ? "DISPATCHED_TO_STORE"
@@ -730,16 +798,14 @@ async function createOrderFromSnowflake(m: MappedOrder, store: Store): Promise<v
     soNumber: m.soNumber,
     orderDate: m.patch.orderDate ?? istToday(),
     orderTimestamp: m.patch.orderTimestamp ?? nowIso(),
-    channel: store.channel,
-    storeId: store.id,
-    storeNameFormat: store.storeName,
-    finalStore: store.finalStore,
-    ownership: store.ownership,
-    state: store.storeState,
+    ...storeFieldsFor(m, store),
     type: "OTHER",
     qty: 0,
     ...m.patch,
-    facility: isKnownFacility(m.patch.facility) ? m.patch.facility : store.facility,
+    // WAREHOUSE_NAME is populated on every spine row (verified: 0 of 5883 in
+    // the 45-day window are blank), so this resolves from the spine alone. The
+    // local Store row is only a fallback, and is absent for an unmapped store.
+    facility: isKnownFacility(m.patch.facility) ? m.patch.facility : store?.facility,
     status,
     statusSource: "SYNCED_SNOWFLAKE",
     deliveryAttempts: primary?.deliveryAttempts ?? 0,
@@ -1147,15 +1213,34 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
           }
         }
 
+        // ADVISORY ONLY, and recorded for EVERY order whose store has no local
+        // Store row — new or already ingested. That makes the queue a live
+        // reconciliation list ("these orders are missing their rulebook / area
+        // manager / QC enrichment") recomputed from scratch each run, rather
+        // than a record of what intake refused. Noting only new orders would
+        // empty the queue the moment they were ingested.
+        //
+        // Nothing here holds the order: it is created on the next line either
+        // way. This branch used to `continue`, which meant 140 live orders
+        // across 9 stores never became rows at all.
+        if (!store) noteUnmatched(unmatched, m.storeKey || "(no store)", m.soNumber);
+
         if (!existingRow) {
-          if (!store) {
-            // Admin review queue — an unmatched STORE is never dropped silently.
-            noteUnmatched(unmatched, m.storeKey || "(no store)", m.soNumber);
-            continue;
-          }
           await createOrderFromSnowflake(m, store);
           summary.upserted += 1;
         } else {
+          // Backfill: a store that has since gained a local Store row (seeded,
+          // bulk-loaded, or mapped from the Admin panel) lands on the orders
+          // that were ingested without one, restoring their rulebook / area
+          // manager / QC enrichment.
+          //
+          // Load-bearing now that nothing is held. Mapping a channel used to
+          // take effect by letting intake finally CREATE the order; those
+          // orders already exist, so without this the Assign button would be
+          // inert for every one of them.
+          if (store && existingRow.storeId === "") {
+            Object.assign(m.patch, storeFieldsFor(m, store));
+          }
           const existingChildren = (
             await db.orderShipment.findMany({ where: { soNumber: m.soNumber } })
           ).map(shipmentToDomain);

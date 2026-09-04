@@ -44,6 +44,11 @@ export default async function WarehousePage({
       return {
         so: r.order.soNumber,
         store: r.order.storeNameFormat,
+        // No local Store row (storeId ""). The order still carries the spine's
+        // resolved store name, so the label above is real — this only flags
+        // that the rulebook/AM enrichment behind it is missing. Advisory: it
+        // never affects whether the row is here or what can be done to it.
+        storeUnmapped: r.order.storeId === "",
         qty: r.order.qty,
         type: r.order.type,
         channel: r.order.channel,

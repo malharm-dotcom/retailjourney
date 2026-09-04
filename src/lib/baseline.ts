@@ -14,11 +14,13 @@ export async function ensureBaseline(): Promise<void> {
 
   for (const s of STORES) {
     const { channelCode: _ignored, ...data } = s;
-    // branchCode is excluded from the update: real branch codes loaded from
-    // the store-branch-codes file must survive the boot upsert (the seed's
-    // synthetic SN1xx values are create-time placeholders only).
-    const { branchCode: _seedCode, ...update } = data;
-    await db.store.upsert({ where: { id: s.id }, create: data, update });
+    // CREATE-ONLY, exactly like Users below. gs_store_details is now the store
+    // master (reconcileStoreMaster, run at the head of every Snowflake sync),
+    // so re-asserting these prototype values on every boot would fight it —
+    // resetting real names, branch codes and channels to seed placeholders
+    // until the next sync corrected them again. The seed's job ends at
+    // bootstrapping an empty database.
+    await db.store.upsert({ where: { id: s.id }, create: data, update: {} });
   }
 
   for (const u of USERS) {

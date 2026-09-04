@@ -23,6 +23,7 @@ import {
   type DistributionRow,
 } from "../snowflake";
 import { readRulebookSnapshot } from "../snowflake-rulebook";
+import { mapStoreMaster, readStoreFacilities, readStoreMaster } from "../snowflake-stores";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type Ownership, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
 import type { TrackingUpdate } from "./types";
@@ -727,6 +728,70 @@ async function applyQcInheritance(
   m.patch.tatInheritedFrom = r.parent.finalStore;
 }
 
+/**
+ * Reconcile the local Store table against gs_store_details — the sheet the
+ * spine itself resolves STORE from. Runs at the head of every Snowflake sync,
+ * so the store map built immediately after already sees anything new.
+ *
+ * UPSERT, never replace. Two rules make that safe:
+ *
+ *  - Only the columns gs_store_details is authoritative for are updated
+ *    (branch code, names, ownership, channel, city, state). facility, zone,
+ *    areaManager, merchandiser, rank, sales30d and channelCode are left exactly
+ *    as they are: the sheet does not carry them, and the spine's per-order
+ *    values are patchy enough (ZONE is null for a third of stores) that
+ *    writing them would degrade rows that already hold good ones.
+ *  - isQuickCommerce is set on CREATE only. Flipping it on an existing store
+ *    would silently rewire QC TAT inheritance, which is not this sync's call.
+ *
+ * Nothing is ever deleted. Local rows with no master match — the 17 prototype
+ * fictions, which no order references — are left alone rather than cleaned up
+ * behind the operator's back.
+ */
+async function reconcileStoreMaster(): Promise<{ created: number; updated: number; skipped: number }> {
+  const db = prisma();
+  const [master, facilities] = await Promise.all([readStoreMaster(), readStoreFacilities()]);
+  const mapped = mapStoreMaster(master, normStoreKey);
+
+  const existing = await db.store.findMany();
+  const byKey = new Map(existing.map((s) => [normStoreKey(s.finalStore), s]));
+  // Facilities arrive keyed by the raw spine STORE string; the master is keyed
+  // by store_name_format. They are the same value, but only after the same
+  // whitespace/hyphen normalisation the order lookup already uses.
+  const facilityByKey = new Map([...facilities].map(([store, f]) => [normStoreKey(store), f]));
+
+  let created = 0;
+  let updated = 0;
+  let skipped = 0;
+
+  for (const m of mapped) {
+    const key = normStoreKey(m.finalStore);
+    const found = byKey.get(key);
+    const { soCode, isQuickCommerce, ...owned } = m;
+
+    if (found) {
+      await db.store.update({ where: { id: found.id }, data: owned });
+      updated += 1;
+      continue;
+    }
+    // A new store needs a facility, and Store.facility is NOT NULL. The
+    // dominant warehouse is the least-wrong answer available; a store that has
+    // not ordered in the window offers no signal at all, so it waits rather
+    // than being created against a guess. Its orders would still process —
+    // intake fails open — it simply has no local row until it trades.
+    const facility = facilityByKey.get(key);
+    if (!facility) {
+      skipped += 1;
+      continue;
+    }
+    await db.store.create({
+      data: { id: `gs_${soCode}`, ...owned, isQuickCommerce, facility },
+    });
+    created += 1;
+  }
+  return { created, updated, skipped };
+}
+
 const OWNERSHIPS: readonly string[] = ["COCO", "FOCO", "COFO", "MFC", "SUVIDHA"];
 
 /**
@@ -1162,6 +1227,30 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
         `never moved stay unreachable until the column lands.`;
     if (degradedNote) console.error(`[sync:snowflake] ${degradedNote}`);
 
+    // Store master FIRST, so the lookup built below already contains anything
+    // that appeared in gs_store_details since the last run — a new store is
+    // enriched on the same run its first order arrives, not the one after.
+    //
+    // A NOTE on failure, never an error: the store master is enrichment, and
+    // flipping ok:false would freeze the watermark and punish the entire order
+    // sync for a stale sheet. Orders resolve fine without it — intake fails
+    // open on an unmapped store.
+    const storeNotes: string[] = [];
+    try {
+      const s = await reconcileStoreMaster();
+      if (s.created || s.skipped) {
+        storeNotes.push(
+          `store master: ${s.created} created, ${s.updated} updated` +
+            (s.skipped ? `, ${s.skipped} awaiting a first order (no facility signal yet)` : ""),
+        );
+      }
+      console.log(`[sync:snowflake] store master created=${s.created} updated=${s.updated} skipped=${s.skipped}`);
+    } catch (e) {
+      const msg = `store master sync failed (${e instanceof Error ? e.message : String(e)}) — store list unchanged this run`;
+      storeNotes.push(msg);
+      console.error(`[sync:snowflake] ${msg}`);
+    }
+
     const rows = await queryRetailJourneySpine(priorWatermark, hasEventTs);
     summary.fetched = rows.length;
     const mapped = mapDistributionRows(rows);
@@ -1293,7 +1382,8 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
       summary,
       // The degraded-read warning leads the note so it is the first thing an
       // operator sees on the Admin card, ahead of routine QC chatter.
-      [...(degradedNote ? [degradedNote] : []), ...cancelNotes, ...qcNotes].join(" | ") || undefined,
+      [...(degradedNote ? [degradedNote] : []), ...storeNotes, ...cancelNotes, ...qcNotes].join(" | ") ||
+        undefined,
       newWatermark,
     );
     return summary;

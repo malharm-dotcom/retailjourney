@@ -7,6 +7,8 @@
 
 import { describe, expect, it } from "vitest";
 import { handoverSql, planFacilities, planSection, processingSql, type PlanSourceRow } from "./daily-plan";
+import { normOrderType } from "./distribution-map";
+import { slaState } from "./sla";
 import type { User } from "./types";
 
 const user = (facilities: string[]): Pick<User, "role" | "facilities"> =>
@@ -129,5 +131,40 @@ describe("row flags", () => {
     const [r] = planSection([row({ PICKUP_TAT: "NULL" })]).rows;
     expect(r.pickupTat).toBeUndefined();
     expect(r.whProcessingTat).toBe("2026-08-25 18:00:00.000");
+  });
+});
+
+describe("NSO — New Store Opening", () => {
+  it("is excluded from the derived +2d processing TAT", () => {
+    // NSO has no rulebook timeline and no fulfilment TAT by definition. The
+    // +2d fallback exists to surface off-rulebook orders that would otherwise
+    // be invisible; applying it here would invent a deadline the floor is not
+    // working to, and put a store opening on the list beside orders that have
+    // real ones.
+    const sql = processingSql(["SAPL-WH2"]);
+    expect(sql).toContain("WHEN UPPER(ORDER_TYPE) = 'NSO' THEN NULL");
+    // Ahead of the fallback, so the NSO branch wins over it.
+    expect(sql.indexOf("'NSO'")).toBeLessThan(sql.indexOf("RULEBOOK_COVERED = FALSE"));
+  });
+
+  it("applies the same exclusion to the handover list", () => {
+    // HANDOVER_DATE coalesces onto the processing TAT, so the exclusion has to
+    // reach both lists or NSO would reappear on one of them.
+    expect(handoverSql(["SAPL-WH2"])).toContain("WHEN UPPER(ORDER_TYPE) = 'NSO' THEN NULL");
+  });
+});
+
+describe("NSO order type", () => {
+  it("maps from the spine instead of collapsing into OTHER", () => {
+    expect(normOrderType("NSO")).toBe("NSO");
+    expect(normOrderType("nso")).toBe("NSO");
+    // Still the catch-all for anything genuinely unrecognised.
+    expect(normOrderType("SOMETHING_ELSE")).toBe("OTHER");
+  });
+
+  it("never derives an SLA deadline, so it can never read as breaching", () => {
+    // No target on either side -> slaState returns null -> isBreaching false.
+    expect(slaState(undefined, undefined)).toBeNull();
+    expect(slaState(undefined, "2026-09-04T12:00:00.000Z")).toBeNull();
   });
 });

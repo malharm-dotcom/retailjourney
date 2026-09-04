@@ -8,7 +8,7 @@ import { LOGISTICS_PARTNERS } from "@/lib/types";
 import { visualByLabel } from "@/lib/ui";
 import type { ReportTableData } from "@/lib/reports";
 
-const TYPES = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "OTHER"];
+const TYPES = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "NSO", "OTHER"];
 
 export function ReportTable({
   slug,

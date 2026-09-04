@@ -1,0 +1,18 @@
+-- AlterEnum
+-- NSO — New Store Opening. Its own order type rather than falling into OTHER,
+-- where it was indistinguishable from every other unrecognised value.
+--
+-- NSO carries NO rulebook timeline and no fulfilment TAT. That is a property of
+-- the order type, not missing data, so nothing derives a deadline for it: the
+-- Daily Plan's order-date + 2d fallback explicitly skips NSO, and with no
+-- target at all slaState() returns null, which isBreaching() never counts. An
+-- NSO order therefore appears on the floor and in the queue, and simply has no
+-- clock against it.
+--
+-- BEFORE 'OTHER' so the Postgres enum sort order keeps OTHER last, matching the
+-- declaration order in schema.prisma.
+--
+-- Additive only: appends a value, rewrites no rows, and nothing uses it until
+-- the spine starts emitting ORDER_TYPE = 'NSO' (it emits only FRESH and RPL
+-- today, verified over the 45-day window).
+ALTER TYPE "OrderType" ADD VALUE IF NOT EXISTS 'NSO' BEFORE 'OTHER';

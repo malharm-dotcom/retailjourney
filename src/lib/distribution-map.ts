@@ -34,10 +34,12 @@ export function isPollableAwb(awb?: string | null, courier?: string | null): boo
   return true;
 }
 
-const ORDER_TYPES: OrderType[] = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "OTHER"];
+const ORDER_TYPES: OrderType[] = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "NSO", "OTHER"];
 const ZONES: Zone[] = ["NORTH", "WEST", "SOUTH", "EAST", "UNMAPPED"];
 
-function normOrderType(v?: string | null): OrderType {
+/** Spine ORDER_TYPE to the app vocabulary; anything unrecognised is OTHER.
+ *  (Exported for the order-type tests only.) */
+export function normOrderType(v?: string | null): OrderType {
   const t = (v ?? "").toUpperCase().replace(/[^A-Z]+/g, "_").replace(/^_|_$/g, "") as OrderType;
   return ORDER_TYPES.includes(t) ? t : "OTHER";
 }

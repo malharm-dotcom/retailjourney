@@ -20,6 +20,9 @@ enum OrderType {
   Q_COMM
   ACC
   NON_TRADING
+  /// New Store Opening. No rulebook timeline and no fulfilment TAT — nothing
+  /// derives a deadline for it; see the 20260904120000_order_type_nso migration.
+  NSO
   OTHER
 }
 

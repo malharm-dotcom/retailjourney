@@ -46,11 +46,19 @@ import { FACILITIES, type Facility, type User } from "./types";
  * (173 in the same window): those already carry a real courier appointment and
  * their existing deadline stands. Malhar's call.
  *
+ * NSO (New Store Opening) is excluded from the fallback entirely, ahead of both
+ * branches. It has no rulebook timeline and no fulfilment TAT BY DEFINITION, so
+ * the +2d fabrication would invent a deadline the floor is not working to and
+ * put a store opening on a list beside orders that have real ones. With a NULL
+ * processing TAT it drops out of this list and is worked from the Warehouse
+ * queue, which needs no deadline. Also Malhar's call.
+ *
  * The spine happens to compute the same +2d value for this group today, but it
  * is stated here rather than inherited — the spine's fallback is its own and
  * could move, and this list must not change shape when it does.
  */
 const WH_PROCESSING_TAT = `CASE
+    WHEN UPPER(ORDER_TYPE) = 'NSO' THEN NULL
     WHEN RULEBOOK_COVERED = FALSE AND PICKUP_TAT IS NULL
       THEN DATEADD(hour, 18, DATEADD(day, 2, TO_TIMESTAMP_NTZ(ORDER_DATE)))
     ELSE HANDOVER_DEADLINE_TS

@@ -5,7 +5,9 @@ export const FACILITIES = ["SAPL-NORTH-TAURU", "SAPL-WH1", "SAPL-WH2"] as const;
 export type Facility = (typeof FACILITIES)[number];
 export type FacilityScope = Facility | "ALL";
 
-export type OrderType = "FRESH" | "RPL" | "Q_COMM" | "ACC" | "NON_TRADING" | "OTHER";
+/** NSO = New Store Opening: no rulebook timeline and no fulfilment TAT, so
+ *  nothing derives a processing deadline for it. */
+export type OrderType = "FRESH" | "RPL" | "Q_COMM" | "ACC" | "NON_TRADING" | "NSO" | "OTHER";
 export type Channel = "FRANCHISE_STORE" | "OWN_STORE";
 /** MFC = quick-commerce micro-fulfilment centre (normal store, normal rulebook
  *  lookup). SUVIDHA = external Suvidha-branded destination (tracked like a

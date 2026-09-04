@@ -30,7 +30,7 @@ const GROUPS: { title: string; icon: string; fields: FieldDef[] }[] = [
     title: "Merchandising",
     icon: "tag-bold-duotone",
     fields: [
-      { key: "type", label: "Order type", right: "merch", kind: "select", options: ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "OTHER"] },
+      { key: "type", label: "Order type", right: "merch", kind: "select", options: ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "NSO", "OTHER"] },
       { key: "priority", label: "Priority", right: "merch", kind: "select", options: ["", "HIGH"] },
       { key: "campaignTag", label: "Campaign tag", right: "merch" },
     ],

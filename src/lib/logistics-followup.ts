@@ -14,7 +14,7 @@
 import { toCsv, type CsvColumn } from "./csv";
 import type { OrderRow } from "./data";
 import { daysBetween, istToday } from "./ist";
-import { isDeadShipment } from "./journey";
+import { courierOf, isDeadShipment } from "./journey";
 import type { Order } from "./types";
 
 export type EddSource = "courier" | "store";
@@ -66,13 +66,6 @@ export function inTransitDockets(rows: OrderRow[]): OrderRow[] {
   return rows.filter(
     (r) => r.order.overallStatus === "IN_TRANSIT" && !isDeadShipment(r.order.shipmentStatus),
   );
-}
-
-/** Manual first, synced behind it — the app's precedence rule, and the same
- *  fallback the Logistics queue uses. `logisticsPartner` alone is NULL on every
- *  spine-synced order, which would read as one giant "—" courier here. */
-export function courierOf(o: Pick<Order, "logisticsPartner" | "courierPartner">): string {
-  return o.logisticsPartner ?? o.courierPartner ?? "—";
 }
 
 /** The selected EDD. Neither name exists as a column: "Store Delivery EDD" is

@@ -4,7 +4,7 @@
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
 import { istToday, daysBetween } from "@/lib/ist";
-import { isDeadShipment } from "@/lib/journey";
+import { courierOf, isDeadShipment, isSelfDelivery } from "@/lib/journey";
 import { requireSession } from "@/lib/session";
 import { transitEndDate } from "@/lib/transit-anchor";
 import { TONE, type Tone } from "@/lib/ui";
@@ -94,8 +94,11 @@ export default async function InTransitPage() {
         // number when no child carries one yet.
         awb: r.awb ?? o.trackingNumber ?? o.lrNumber,
         awbCount: r.awbCount,
-        courier: o.logisticsPartner,
-        self: o.logisticsPartner === "SELF",
+        // Both read through the shared helper. `logisticsPartner` is NULL on
+        // every order, so binding it directly rendered an empty Courier column
+        // and a `self` flag that was never once true on this board.
+        courier: courierOf(o),
+        self: isSelfDelivery(o),
         overall: o.overallStatus,
         shipment: o.shipmentStatus,
         source: o.shipmentSource ?? (o.overallStatus === "PICKUP_PENDING" ? o.statusSource : undefined),

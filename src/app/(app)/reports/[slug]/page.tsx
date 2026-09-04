@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
+import { courierOf } from "@/lib/journey";
 import { buildReport, reportBySlug } from "@/lib/reports";
 import { requireSession } from "@/lib/session";
 import type { OrderType } from "@/lib/types";
@@ -31,7 +32,9 @@ export default async function ReportPage({
 
   let rows = await scopedOrders(scope, user);
   if (searchParams.type) rows = rows.filter((r) => r.order.type === (searchParams.type as OrderType));
-  if (searchParams.courier) rows = rows.filter((r) => r.order.logisticsPartner === searchParams.courier);
+  // Same resolved carrier the scorecard groups on -- filtering on
+  // `logisticsPartner` alone matched nothing, since it is NULL everywhere.
+  if (searchParams.courier) rows = rows.filter((r) => courierOf(r.order) === searchParams.courier);
   if (searchParams.from) rows = rows.filter((r) => r.order.orderDate >= searchParams.from!);
   if (searchParams.to) rows = rows.filter((r) => r.order.orderDate <= searchParams.to!);
 

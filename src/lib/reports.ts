@@ -4,7 +4,7 @@
 import type { OrderRow } from "./data";
 import { daysBetween, istToday, weekdayOf } from "./ist";
 import { LEG_LABEL, SLA_LABEL, ageingBucket, type SlaLeg, type SlaState } from "./sla";
-import { OVERALL_LABEL, STATUS_LABEL } from "./journey";
+import { OVERALL_LABEL, STATUS_LABEL, courierOf } from "./journey";
 import type { AnchorSource } from "./transit-anchor";
 
 /**
@@ -178,7 +178,7 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
           .map(({ r, days }) => [
             r.order.soNumber,
             r.order.storeNameFormat,
-            r.order.logisticsPartner ?? "—",
+            courierOf(r.order),
             r.order.lrNumber ?? "—",
             r.anchor.date ?? "—",
             r.anchor.source ? ANCHOR_LABEL[r.anchor.source] : "—",
@@ -192,10 +192,15 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
     case "courier-scorecard": {
       const partners = new Map<string, OrderRow[]>();
       for (const r of rows) {
-        if (!r.order.logisticsPartner) continue;
-        const list = partners.get(r.order.logisticsPartner) ?? [];
+        // Was `if (!r.order.logisticsPartner) continue`, which skipped EVERY
+        // order — that field is NULL on all of them — so this scorecard
+        // rendered zero rows in production. Group on the resolved carrier and
+        // drop only the orders that genuinely have none.
+        const partner = courierOf(r.order);
+        if (partner === "—") continue;
+        const list = partners.get(partner) ?? [];
         list.push(r);
-        partners.set(r.order.logisticsPartner, list);
+        partners.set(partner, list);
       }
       return {
         // "Avg days to deliver" rather than "Avg transit days": for a

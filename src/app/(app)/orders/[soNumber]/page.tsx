@@ -8,7 +8,7 @@ import { Icon } from "@/components/icon";
 import { StatusPill, SourceBadge } from "@/components/ui/pill";
 import { orderBySo } from "@/lib/data";
 import { fmtDate, fmtDateTime } from "@/lib/ist";
-import { OVERALL_LABEL, RECEIPT_LABEL, SHIPMENT_LABEL, STATUS_LABEL } from "@/lib/journey";
+import { OVERALL_LABEL, RECEIPT_LABEL, SHIPMENT_LABEL, STATUS_LABEL, courierOf, isSelfDelivery } from "@/lib/journey";
 import { LEG_LABEL, type SlaLeg } from "@/lib/sla";
 import { policyOf } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
@@ -320,7 +320,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
               <header className="flex items-center gap-2.5 border-b border-line bg-paper px-5 py-3.5">
                 <Icon name="routing-2-bold-duotone" size={17} className="text-sage" />
                 <h2 className="font-display text-sec font-bold">Tracking</h2>
-                {o.logisticsPartner === "SELF" ? (
+                {isSelfDelivery(o) ? (
                   <span className="ml-auto rounded-full bg-ofd-bg px-2 py-0.5 text-meta font-bold text-ofd">
                     manual lane — no eShipz feed
                   </span>
@@ -333,7 +333,7 @@ export default async function OrderPage({ params }: { params: { soNumber: string
                 </div>
                 <div className="flex justify-between gap-3">
                   <span className="text-mute">Courier</span>
-                  <span className="font-semibold">{o.logisticsPartner?.replace("_", " ")}</span>
+                  <span className="font-semibold">{courierOf(o).replace(/_/g, " ")}</span>
                 </div>
                 <div className="flex justify-between gap-3">
                   <span className="text-mute">Latest</span>

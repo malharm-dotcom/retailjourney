@@ -31,7 +31,7 @@ import {
 } from "./reports-dashboard";
 import { querySnowflake } from "./snowflake";
 import { LEG_LABEL, SLA_LABEL, type SlaLeg } from "./sla";
-import { OVERALL_LABEL, STATUS_LABEL } from "./journey";
+import { OVERALL_LABEL, STATUS_LABEL, courierOf } from "./journey";
 import { entitledFacilities, resolveScope } from "./rbac";
 import { FACILITIES, type Facility, type FacilityScope, type User } from "./types";
 
@@ -227,7 +227,7 @@ const ORDER_COLUMNS: CsvColumn<OrderRow>[] = [
   { header: "WH Status", value: (r) => STATUS_LABEL[r.order.status] },
   { header: "Overall Status", value: (r) => OVERALL_LABEL[r.order.overallStatus] },
   { header: "Lane Classification", value: (r) => r.order.laneClassification },
-  { header: "Logistics Partner", value: (r) => r.order.logisticsPartner },
+  { header: "Courier Partner", value: (r) => courierOf(r.order) },
   { header: "Courier Partner", value: (r) => r.order.courierPartner },
   { header: "DC Number", value: (r) => r.order.dcNumber },
   { header: "LR Number", value: (r) => r.order.lrNumber },

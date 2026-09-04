@@ -444,7 +444,13 @@ export async function runEshipzSync(): Promise<SyncSummary> {
         AND: [
           { OR: [{ trackingNumber: { not: null } }, { lrNumber: { not: null } }] },
           { OR: [{ shipmentStatus: null }, { shipmentStatus: { not: "DELIVERED" } }] },
+          // Both carrier columns, because this clause narrowed nothing:
+          // logisticsPartner is NULL on every order, so the `null` branch
+          // always matched and self-delivery rows were fetched anyway. The
+          // isPollableAwb filter below already discarded them by courier name,
+          // so the OUTCOME is unchanged — this just stops loading them first.
           { OR: [{ logisticsPartner: null }, { logisticsPartner: { not: "SELF" } }] },
+          { OR: [{ courierPartner: null }, { courierPartner: { not: "SELF_DELIVERY" } }] },
         ],
       },
     });

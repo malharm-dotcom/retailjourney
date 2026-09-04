@@ -13,9 +13,9 @@ import { PageHead } from "@/components/shell/page-head";
 import { Input, Select } from "@/components/ui/primitives";
 import { scopedOrders } from "@/lib/data";
 import { addDays, fmtDate, istToday } from "@/lib/ist";
+import { courierOf } from "@/lib/journey";
 import {
   buildPivot,
-  courierOf,
   inTransitDockets,
   NO_EDD,
   type ColumnMode,

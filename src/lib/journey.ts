@@ -212,6 +212,31 @@ export function isDeadShipment(s: ShipmentStatus | undefined): boolean {
   return s !== undefined && DEAD_SHIPMENT_STATUSES.includes(s);
 }
 
+/**
+ * Who is carrying the shipment. ONE definition, because there are two columns
+ * for one real-world fact and only one of them is ever filled.
+ *
+ * `logisticsPartner` is manual-entry only and is NULL on all 8,381 orders —
+ * nothing has ever written it. `courierPartner` comes from the spine and is set
+ * on 6,678 of them (COURIER_PARTNER is populated on every spine row that has an
+ * AWB). Reading `logisticsPartner` alone therefore renders one uninterrupted
+ * "—", which is what emptied the In-Transit courier column, the order detail's
+ * partner, the report exports and the whole courier scorecard.
+ *
+ * Manual still leads, per the app's precedence rule — it just happens to be
+ * absent today.
+ */
+export function courierOf(o: Pick<Order, "logisticsPartner" | "courierPartner">): string {
+  return o.logisticsPartner ?? o.courierPartner ?? "—";
+}
+
+/** Self-delivery / porter — no eShipz feed, so the spine is its transit
+ *  authority. The manual field says "SELF"; the spine says "SELF_DELIVERY".
+ *  Matching only the former meant this was never once true in production. */
+export function isSelfDelivery(o: Pick<Order, "logisticsPartner" | "courierPartner">): boolean {
+  return /self|porter/i.test(`${o.logisticsPartner ?? ""} ${o.courierPartner ?? ""}`);
+}
+
 export function rollupOverall(o: Pick<Order, "status" | "shipmentStatus">): OverallStatus {
   if (o.shipmentStatus === "DELIVERED") return "DELIVERED";
   // Dead label → off the board. Both of these used to fall through to the bare

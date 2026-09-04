@@ -10,6 +10,7 @@
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
 import { istDateOf, istToday, daysBetween, weekdayOf } from "@/lib/ist";
+import { courierOf, isSelfDelivery } from "@/lib/journey";
 import type { AnchorSource } from "@/lib/transit-anchor";
 import { policyOf } from "@/lib/rbac";
 import { requireSession } from "@/lib/session";
@@ -57,13 +58,9 @@ export default async function LogisticsPage() {
       // delivery target already behind it for out-of-rulebook orders. The
       // courier's EDD — `expectedDate`, present on 59% — is on row-expand.
       const edd = o.idealDeliveryDate;
-      // Manual first, synced behind it — the app's precedence rule everywhere
-      // else. `logisticsPartner` is what the edit dialog writes and is NULL on
-      // every spine-synced order, which is why this column read "—" on every
-      // live row and why the self-delivery filter matched nothing; falling
-      // through to `courierPartner` fixes that without making a manual
-      // correction invisible.
-      const courier = o.logisticsPartner ?? o.courierPartner;
+      // This queue fixed the NULL-logisticsPartner problem locally; the same
+      // fix now lives in journey.ts and every screen reads it from there.
+      const courier = courierOf(o);
       const delivery = r.sla.legs.find((l) => l.leg === "DELIVERY")?.state;
       const logisticsDelivery = r.sla.legs.find((l) => l.leg === "LOGISTICS_DELIVERY")?.state;
       return {
@@ -76,7 +73,7 @@ export default async function LogisticsPage() {
         zone: o.zone,
         lane: o.laneClassification,
         courier,
-        self: /self/i.test(courier ?? ""),
+        self: isSelfDelivery(o),
         awb: r.awb ?? o.trackingNumber,
         awbCount: r.awbCount,
         pickup,

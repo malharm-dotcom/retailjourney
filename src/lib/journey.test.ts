@@ -4,7 +4,7 @@
 // satisfy the check without re-entry.
 
 import { beforeAll, describe, expect, it } from "vitest";
-import { REQUIRED_CAPTURES } from "./journey";
+import { REQUIRED_CAPTURES, courierOf, isSelfDelivery } from "./journey";
 import { repo } from "./repo";
 import type { Order } from "./types";
 
@@ -80,5 +80,40 @@ describe("transitions at the new placement (in-memory repo)", () => {
     });
     expect(next.status).toBe("RTS_LOGIC");
     expect(next.boxCount).toBe(7);
+  });
+});
+
+describe("courierOf / isSelfDelivery", () => {
+  const o = (logisticsPartner?: string, courierPartner?: string) =>
+    ({ logisticsPartner, courierPartner }) as Pick<Order, "logisticsPartner" | "courierPartner">;
+
+  it("falls through to the synced courier — the only one ever populated", () => {
+    // The live shape: logisticsPartner NULL on all 8,381 orders, courierPartner
+    // set on 6,678. Reading the manual field alone rendered "—" everywhere.
+    expect(courierOf(o(undefined, "MUDITA_CARGO"))).toBe("MUDITA_CARGO");
+    expect(courierOf(o(undefined, "BLUEDART"))).toBe("BLUEDART");
+  });
+
+  it("still lets a manual correction win", () => {
+    expect(courierOf(o("MOVEMATE", "BLUEDART"))).toBe("MOVEMATE");
+  });
+
+  it("reads as an em dash only when genuinely absent", () => {
+    expect(courierOf(o(undefined, undefined))).toBe("—");
+  });
+
+  it("detects self-delivery under BOTH vocabularies", () => {
+    // The manual field says SELF, the spine says SELF_DELIVERY. Matching only
+    // the former was never true in production.
+    expect(isSelfDelivery(o("SELF", undefined))).toBe(true);
+    expect(isSelfDelivery(o(undefined, "SELF_DELIVERY"))).toBe(true);
+    expect(isSelfDelivery(o(undefined, "PORTER"))).toBe(true);
+  });
+
+  it("does not mistake a real courier for self-delivery", () => {
+    for (const c of ["MUDITA_CARGO", "MOVEMATE", "BLUEDART", "XPINDIA", "EKART_B2B_CARGO"]) {
+      expect(isSelfDelivery(o(undefined, c)), c).toBe(false);
+    }
+    expect(isSelfDelivery(o(undefined, undefined))).toBe(false);
   });
 });

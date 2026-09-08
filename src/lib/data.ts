@@ -1,6 +1,7 @@
 // Read-side composition: orders joined with their rulebook rule + computed SLA.
 // Pages call this with the *validated* scope from requireSession().
 
+import type { OrderSearch } from "./order-search";
 import { repo } from "./repo";
 import { computeOrderSla, isBreaching, ruleFor, type OrderSla } from "./sla";
 import { primaryAwb, transitAnchor, type BoardShipment, type TransitAnchor } from "./transit-anchor";
@@ -32,9 +33,19 @@ function boxesOf(children: BoardShipment[] = []): number | undefined {
   return counted.length ? counted.reduce((a, c) => a + (c.packageCount ?? 0), 0) : undefined;
 }
 
-export async function scopedOrders(scope: FacilityScope, user: User): Promise<OrderRow[]> {
+/**
+ * `search` is opt-in. Omitted — every board and every report — the read is
+ * exactly what it always was: unwindowed, so no CSV export or KPI count is
+ * silently truncated. Passed (even empty) it applies the /orders list's
+ * 30-day default window and its search lift.
+ */
+export async function scopedOrders(
+  scope: FacilityScope,
+  user: User,
+  search?: OrderSearch,
+): Promise<OrderRow[]> {
   const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
-  const [rules, orders] = await Promise.all([repo.listRules(), repo.listOrders(scope, am)]);
+  const [rules, orders] = await Promise.all([repo.listRules(), repo.listOrders(scope, am, search)]);
   // One batched query for the whole page — never one per row.
   const anchorShipments = await repo.listAnchorShipments(orders.map((o) => o.soNumber));
   return orders.map((order) => {
@@ -55,6 +66,25 @@ export async function scopedOrders(scope: FacilityScope, user: User): Promise<Or
       boxes: boxesOf(children),
     };
   });
+}
+
+/**
+ * The /orders list: plain orders, no rulebook join, no SLA, no shipment
+ * batch-join. A search can reach every order ever synced, and paying the
+ * board's per-row enrichment across all of history to render six columns
+ * would be the one thing that makes historical search too slow to use.
+ *
+ * Scoped through the SAME two predicates as `scopedOrders` — the facility
+ * comes from the validated session scope, never from a client param, and a
+ * Retail Head still sees only their own area.
+ */
+export async function searchOrders(
+  scope: FacilityScope,
+  user: User,
+  search: OrderSearch,
+): Promise<Order[]> {
+  const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
+  return repo.listOrders(scope, am, search);
 }
 
 /**

@@ -67,7 +67,10 @@ const DATE_SET = new Set<string>(ORDER_DATE_FIELDS);
 const iso = (d: Date): string => d.toISOString();
 /** @db.Date comes back as UTC midnight of the stored calendar date. */
 const day = (d: Date): string => d.toISOString().slice(0, 10);
-const toDay = (s: string): Date => new Date(`${s}T00:00:00.000Z`);
+/** IST business date -> the UTC-midnight Date a @db.Date column round-trips.
+ *  Exported so query builders bound `orderDate` exactly as writes store it. */
+export const dayToDb = (s: string): Date => new Date(`${s}T00:00:00.000Z`);
+const toDay = dayToDb;
 
 function undef<T>(v: T | null): T | undefined {
   return v === null ? undefined : v;

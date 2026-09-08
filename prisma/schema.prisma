@@ -242,6 +242,9 @@ model Order {
   updatedAt DateTime     @updatedAt
 
   @@index([facility, overallStatus])
+  /// Serves BOTH reads on the /orders list: the 30-day default floor and a
+  /// date-range search, each already scoped to one facility.
+  @@index([facility, orderDate])
   @@index([shipmentStatus])
   @@index([areaManager])
   @@index([storeId, orderDate])

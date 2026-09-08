@@ -5,7 +5,8 @@
 
 import { databaseConfigured } from "./db";
 import { PrismaRepo } from "./repo-prisma";
-import { atIstCutoff, istDateOf, nowIso } from "./ist";
+import { atIstCutoff, istDateOf, istToday, nowIso } from "./ist";
+import { matchesSearch, orderDateFloor, type OrderSearch } from "./order-search";
 import {
   REQUIRED_CAPTURES,
   STATUS_TIMESTAMPS,
@@ -48,7 +49,10 @@ export interface ManualShipmentInput {
 }
 
 export interface OrderRepo {
-  listOrders(scope: FacilityScope, areaManager?: string): Promise<Order[]>;
+  /** Every order in scope. `search` is the /orders list contract: pass it
+   *  (even empty) to get the 30-day default window plus the search lift.
+   *  OMIT it for the boards, which stay unwindowed exactly as they were. */
+  listOrders(scope: FacilityScope, areaManager?: string, search?: OrderSearch): Promise<Order[]>;
   getOrder(soNumber: string): Promise<Order | undefined>;
   listEvents(orderId: string): Promise<OrderEvent[]>;
   listAllEvents(): Promise<OrderEvent[]>;
@@ -135,10 +139,14 @@ function mustGet(d: Db, soNumber: string): Order {
 const val = (v: unknown): string => (v == null ? "" : String(v));
 
 class InMemoryRepo implements OrderRepo {
-  async listOrders(scope: FacilityScope, areaManager?: string): Promise<Order[]> {
+  async listOrders(scope: FacilityScope, areaManager?: string, search?: OrderSearch): Promise<Order[]> {
     let all = [...db().orders.values()];
     if (scope !== "ALL") all = all.filter((o) => o.facility === scope);
     if (areaManager) all = all.filter((o) => o.areaManager === areaManager);
+    if (search) {
+      const floor = orderDateFloor(search, istToday());
+      all = all.filter((o) => matchesSearch(o, search, floor));
+    }
     return all.sort((a, b) => (a.orderTimestamp < b.orderTimestamp ? 1 : -1));
   }
 

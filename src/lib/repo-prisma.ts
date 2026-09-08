@@ -5,7 +5,8 @@
 // `manualFields` so sync never overwrites them (manual wins, PRD §2).
 
 import { prisma } from "./db";
-import { atIstCutoff, istDateOf, nowIso } from "./ist";
+import { atIstCutoff, istDateOf, istToday, nowIso } from "./ist";
+import { orderDateFloor, type OrderSearch } from "./order-search";
 import {
   REQUIRED_CAPTURES,
   STATUS_TIMESTAMPS,
@@ -15,6 +16,7 @@ import {
   rollupOverall,
 } from "./journey";
 import {
+  dayToDb,
   eventToDomain,
   orderToDb,
   orderToDomain,
@@ -66,12 +68,49 @@ function mergeManual(existing: string[], added: string[]): string[] {
   return [...new Set([...existing, ...added])];
 }
 
+/**
+ * The search pushed down into Postgres, so the database does the narrowing
+ * rather than the process filtering a full table in memory.
+ *
+ * `orderDateFloor` returns the 30-day default ONLY when nothing is being
+ * searched; any facet lifts it to undefined and the query then reaches every
+ * order ever synced. That is the whole masking contract, in one line.
+ */
+function searchWhere(search: OrderSearch) {
+  const floor = orderDateFloor(search, istToday());
+  const lower = search.from || floor;
+  return {
+    ...(lower || search.to
+      ? {
+          orderDate: {
+            ...(lower ? { gte: dayToDb(lower) } : {}),
+            ...(search.to ? { lte: dayToDb(search.to) } : {}),
+          },
+        }
+      : {}),
+    ...(search.status ? { status: search.status } : {}),
+    ...(search.store ? { storeNameFormat: search.store } : {}),
+    ...(search.q
+      ? {
+          OR: [
+            { soNumber: { contains: search.q, mode: "insensitive" as const } },
+            { storeNameFormat: { contains: search.q, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+}
+
 export class PrismaRepo implements OrderRepo {
-  async listOrders(scope: FacilityScope, areaManager?: string): Promise<Order[]> {
+  async listOrders(scope: FacilityScope, areaManager?: string, search?: OrderSearch): Promise<Order[]> {
     const rows = await prisma().order.findMany({
       where: {
+        // Facility scoping is applied HERE, from the session-validated scope —
+        // never from anything the client sent. Search only ever narrows what
+        // is already in scope; no facet of it can widen the facility.
         ...(scope !== "ALL" ? { facility: scope } : {}),
         ...(areaManager ? { areaManager } : {}),
+        ...(search ? searchWhere(search) : {}),
       },
       orderBy: { orderTimestamp: "desc" },
     });

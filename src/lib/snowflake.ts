@@ -221,6 +221,24 @@ export const SPINE_QUERY = `${SPINE_SELECT}${EVENT_TS_SELECT}${FROM_SPINE}
 WHERE ${SWEEP_CLAUSE}
 ${SPINE_ORDER_BY}`;
 
+/**
+ * The same SELECT the sync reads, over an arbitrary ORDER_DATE window.
+ *
+ * Exists so the reconciliation harness compares against the EXACT column list
+ * and row grain the sync consumes — a second column list maintained beside
+ * this one would drift, and a reconciliation that drifts from the thing it
+ * reconciles reports its own bugs as data errors.
+ *
+ * READ-ONLY callers only. Not part of the sync path: the sync must stay on
+ * SPINE_SWEEP_DAYS, whose size is a deliberate cost/coverage trade.
+ */
+export function spineWindowQuery(days: number): string {
+  const n = Math.max(1, Math.round(days));
+  return `${SPINE_SELECT}${FROM_SPINE}
+WHERE ORDER_DATE >= DATEADD(day, -${n}, CURRENT_DATE)
+${SPINE_ORDER_BY}`;
+}
+
 /** IST wall-clock NTZ string as Snowflake itself renders it
  *  ("YYYY-MM-DD HH:mm:ss" or with a fractional-seconds suffix). Validated
  *  before interpolation since this becomes literal SQL text. */

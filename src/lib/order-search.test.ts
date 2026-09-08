@@ -18,6 +18,7 @@ const row = (over: Partial<Parameters<typeof matchesSearch>[0]> = {}) => ({
   storeNameFormat: "COFO - DAHISAR",
   orderDate: "2026-09-01",
   status: "DISPATCHED_TO_STORE",
+  type: "RPL",
   ...over,
 });
 
@@ -34,6 +35,7 @@ describe("orderDateFloor", () => {
       { to: "2024-06-30" },
       { status: "CANCELLED" as const },
       { store: "COFO - DAHISAR" },
+      { type: "NSO" as const },
     ]) {
       expect(orderDateFloor({ ...EMPTY_SEARCH, ...s }, TODAY)).toBeUndefined();
       expect(isSearching({ ...EMPTY_SEARCH, ...s })).toBe(true);
@@ -62,6 +64,17 @@ describe("matchesSearch", () => {
     expect(matchesSearch(row(), s, undefined)).toBe(true);
     expect(matchesSearch(row({ orderDate: "2026-08-31" }), s, undefined)).toBe(false);
     expect(matchesSearch(row({ orderDate: "2026-09-02" }), s, undefined)).toBe(false);
+  });
+
+  it("isolates NSO, which is the reason the type facet exists", () => {
+    const nso = row({ type: "NSO" });
+    const s = { ...EMPTY_SEARCH, type: "NSO" as const };
+    expect(matchesSearch(nso, s, undefined)).toBe(true);
+    expect(matchesSearch(row(), s, undefined)).toBe(false);
+    // …and it reaches history like every other facet: a store opening from
+    // last year must still be findable.
+    expect(orderDateFloor(s, TODAY)).toBeUndefined();
+    expect(matchesSearch(row({ type: "NSO", orderDate: "2025-02-02" }), s, undefined)).toBe(true);
   });
 
   it("narrows on status and store exactly", () => {

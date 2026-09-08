@@ -7,7 +7,8 @@
 // was ever synced becomes unfindable (Artifact C).
 
 import { addDays } from "./ist";
-import type { OrderStatus } from "./types";
+import { ORDER_TYPES } from "./types";
+import type { OrderStatus, OrderType } from "./types";
 
 /** How many days of orders the default (unsearched) list paints. */
 export const DEFAULT_WINDOW_DAYS = 30;
@@ -21,9 +22,13 @@ export interface OrderSearch {
   status: OrderStatus | "";
   /** Exact storeNameFormat, as the boards name a store. */
   store: string;
+  /** Order type — NSO (New Store Opening) is the one this facet exists for:
+   *  those orders carry no TAT and no rulebook, so they are watched as their
+   *  own population rather than read beside orders that have deadlines. */
+  type: OrderType | "";
 }
 
-export const EMPTY_SEARCH: OrderSearch = { q: "", from: "", to: "", status: "", store: "" };
+export const EMPTY_SEARCH: OrderSearch = { q: "", from: "", to: "", status: "", store: "", type: "" };
 
 export const SEARCHABLE_STATUSES: OrderStatus[] = [
   "NOT_STARTED",
@@ -37,6 +42,8 @@ export const SEARCHABLE_STATUSES: OrderStatus[] = [
   "UNFULFILLABLE",
 ];
 
+
+
 /** IST business date, YYYY-MM-DD. Anything else is treated as "not set" rather
  *  than thrown — a hand-edited URL should widen the list, never error it. */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -44,7 +51,7 @@ const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 /** Is the user actually searching? Drives the window lift, so it must be true
  *  for EVERY facet — narrowing by status alone still has to reach history. */
 export function isSearching(s: OrderSearch): boolean {
-  return Boolean(s.q || s.from || s.to || s.status || s.store);
+  return Boolean(s.q || s.from || s.to || s.status || s.store || s.type);
 }
 
 /**
@@ -72,12 +79,13 @@ export function searchFromParams(params: Record<string, string | string[] | unde
     // genuinely empty result, so it degrades to "every status".
     status: (SEARCHABLE_STATUSES.includes(status as OrderStatus) ? status : "") as OrderStatus | "",
     store: one("store"),
+    type: (ORDER_TYPES.includes(one("type") as OrderType) ? one("type") : "") as OrderType | "",
   };
 }
 
 /** In-memory equivalent of the pushed-down predicate, for the seed repo. */
 export function matchesSearch(
-  o: { soNumber: string; storeNameFormat: string; orderDate: string; status: string },
+  o: { soNumber: string; storeNameFormat: string; orderDate: string; status: string; type: string },
   s: OrderSearch,
   floor?: string,
 ): boolean {
@@ -86,6 +94,7 @@ export function matchesSearch(
   if (s.to && o.orderDate > s.to) return false;
   if (s.status && o.status !== s.status) return false;
   if (s.store && o.storeNameFormat !== s.store) return false;
+  if (s.type && o.type !== s.type) return false;
   if (s.q) {
     const needle = s.q.toLowerCase();
     if (![o.soNumber, o.storeNameFormat].some((v) => v.toLowerCase().includes(needle))) return false;

@@ -103,6 +103,13 @@ export const REPORTS: ReportDef[] = [
     description: "Self-serve rollup for leadership — orders, breaches, open recon.",
     icon: "shop-bold-duotone",
   },
+  {
+    slug: "nso-openings",
+    title: "New store openings (NSO)",
+    description:
+      "Store-opening orders on their own — no TAT column, because they have no deadline to miss.",
+    icon: "shop-2-bold-duotone",
+  },
 ];
 
 export function reportBySlug(slug: string): ReportDef | undefined {
@@ -137,6 +144,52 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
           r.order.orderDate,
           r.order.deliveredDate ?? "—",
         ]),
+      };
+    }
+
+    /**
+     * NSO is watched as its own population, not filtered out of a list built
+     * for orders that have deadlines.
+     *
+     * There is deliberately NO TAT, due-date or breach column here. An NSO
+     * order has no rulebook timeline and no fulfilment TAT by definition —
+     * delivery is driven by the store's actual opening date — so every one of
+     * those columns would read "—" on every row, and any that did not would be
+     * a fabricated deadline the floor is not working to.
+     *
+     * What replaces them is progress: how far the order has physically got,
+     * and when it was anchored, which is the only question a store opening
+     * actually asks.
+     */
+    case "nso-openings": {
+      const nso = rows.filter((r) => r.order.type === "NSO");
+      const needle = (q ?? "").trim().toLowerCase();
+      const hits = needle
+        ? nso.filter((r) =>
+            [r.order.soNumber, r.order.storeNameFormat, r.order.finalStore]
+              .filter(Boolean)
+              .some((v) => v!.toLowerCase().includes(needle)),
+          )
+        : nso;
+      return {
+        columns: ["SO", "Store", "Facility", "Items", "Ordered", "WH status", "Overall", "Anchored on", "Anchor", "Delivered"],
+        linkCol: 0,
+        rows: hits
+          // Newest opening first: the one being prepared now matters more than
+          // one that shipped a month ago.
+          .sort((a, b) => (a.order.orderDate < b.order.orderDate ? 1 : -1))
+          .map((r) => [
+            r.order.soNumber,
+            r.order.storeNameFormat,
+            r.order.facility,
+            r.order.qty,
+            r.order.orderDate,
+            STATUS_LABEL[r.order.status],
+            OVERALL_LABEL[r.order.overallStatus],
+            r.anchor.date ?? "—",
+            r.anchor.source ? ANCHOR_LABEL[r.anchor.source] : "—",
+            r.order.deliveredDate ?? "—",
+          ]),
       };
     }
 

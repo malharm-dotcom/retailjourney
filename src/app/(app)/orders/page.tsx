@@ -21,15 +21,27 @@ import {
   searchFromParams,
 } from "@/lib/order-search";
 import { repo } from "@/lib/repo";
+import { ORDER_TYPES } from "@/lib/types";
 import { requireSession } from "@/lib/session";
 
 export const metadata = { title: "Orders" };
 export const dynamic = "force-dynamic";
 
+export function NsoBadge() {
+  return (
+    <span
+      className="inline-flex items-center rounded-control bg-ink/10 px-1.5 py-0.5 text-cap font-semibold text-ink"
+      title="New Store Opening — no rulebook timeline and no fulfilment TAT, so this order has no deadline and can never read as breaching."
+    >
+      NSO
+    </span>
+  );
+}
+
 /** Column widths as one grid template, shared by the header and every row so
  *  the two can never disagree. Fixed columns first, store takes the slack —
  *  the 1304px lesson: nothing here is free to grow past its share. */
-const COLS = "grid-cols-[minmax(9rem,1.1fr)_6.5rem_minmax(8rem,1.4fr)_4rem_8rem_9rem]";
+const COLS = "grid-cols-[minmax(9rem,1.1fr)_6.5rem_minmax(8rem,1.4fr)_4rem_5.5rem_8rem_9rem]";
 
 export default async function OrdersPage({
   searchParams,
@@ -123,6 +135,22 @@ export default async function OrdersPage({
         </label>
 
         <label className="flex flex-col gap-1">
+          <span className="text-cap font-semibold uppercase tracking-[0.04em] text-mute">Type</span>
+          <select
+            name="type"
+            defaultValue={search.type}
+            className="min-w-[9rem] rounded-control border border-line-control bg-paper px-3 py-2 text-ui"
+          >
+            <option value="">Any type</option>
+            {ORDER_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {t}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
           <span className="text-cap font-semibold uppercase tracking-[0.04em] text-mute">Store</span>
           <select
             name="store"
@@ -156,7 +184,7 @@ export default async function OrdersPage({
 
       <div className="rounded-card bg-card shadow-card">
         <div className="overflow-x-auto">
-          <div className="min-w-[46rem]">
+          <div className="min-w-[52rem]">
             <div
               className={`grid ${COLS} gap-3 border-b border-line px-5 py-2.5 text-cap font-semibold uppercase tracking-[0.04em] text-mute`}
             >
@@ -164,6 +192,7 @@ export default async function OrdersPage({
               <span>Order date</span>
               <span>Store</span>
               <span className="text-right">Qty</span>
+              <span>Type</span>
               <span>Stage</span>
               <span>Journey</span>
             </div>
@@ -185,6 +214,9 @@ export default async function OrdersPage({
                   <span className="text-ui text-mute">{fmtDate(o.orderDate)}</span>
                   <span className="truncate text-ui">{o.storeNameFormat}</span>
                   <span className="mono text-right text-ui">{o.qty}</span>
+                  <span className="truncate text-ui">
+                    {o.type === "NSO" ? <NsoBadge /> : <span className="text-mute">{o.type}</span>}
+                  </span>
                   <span className="truncate text-ui text-mute">{STATUS_LABEL[o.status]}</span>
                   <span className="truncate text-ui text-mute">
                     {OVERALL_LABEL[o.overallStatus]}

@@ -8,6 +8,9 @@ export type FacilityScope = Facility | "ALL";
 /** NSO = New Store Opening: no rulebook timeline and no fulfilment TAT, so
  *  nothing derives a processing deadline for it. */
 export type OrderType = "FRESH" | "RPL" | "Q_COMM" | "ACC" | "NON_TRADING" | "NSO" | "OTHER";
+/** Every order type, in the order a picker should offer them. One list, so a
+ *  new type cannot appear in the mapper and be missing from a filter. */
+export const ORDER_TYPES: OrderType[] = ["FRESH", "RPL", "NSO", "Q_COMM", "ACC", "NON_TRADING", "OTHER"];
 export type Channel = "FRANCHISE_STORE" | "OWN_STORE";
 /** MFC = quick-commerce micro-fulfilment centre (normal store, normal rulebook
  *  lookup). SUVIDHA = external Suvidha-branded destination (tracked like a

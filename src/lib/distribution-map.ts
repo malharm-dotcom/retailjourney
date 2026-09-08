@@ -9,6 +9,7 @@
 import { isoFromIstNtz, istDateFromNtz } from "./ist";
 import { statusForShipment } from "./integrations/eshipz-map";
 import type { DistributionRow } from "./snowflake";
+import { ORDER_TYPES } from "./types";
 import type {
   Facility,
   Order,
@@ -34,7 +35,6 @@ export function isPollableAwb(awb?: string | null, courier?: string | null): boo
   return true;
 }
 
-const ORDER_TYPES: OrderType[] = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "NSO", "OTHER"];
 const ZONES: Zone[] = ["NORTH", "WEST", "SOUTH", "EAST", "UNMAPPED"];
 
 /** Spine ORDER_TYPE to the app vocabulary; anything unrecognised is OTHER.

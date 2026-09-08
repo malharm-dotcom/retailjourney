@@ -671,7 +671,21 @@ export function QueueTable({
 
                 <div className={CELL}>
                   <MobileLabel>Type</MobileLabel>
-                  <span className="text-ui text-ink-soft">{r.type}</span>
+                  {/* NSO reads differently from every other row on this table
+                      and must be recognisable at a glance: a store opening has
+                      no deadline to work to and an order quantity an order of
+                      magnitude larger, so treating it like a replenishment is
+                      how the floor mis-plans a day. */}
+                  {r.type === "NSO" ? (
+                    <span
+                      className="inline-block rounded-md bg-ink/10 px-1.5 py-0.5 text-meta font-bold text-ink"
+                      title="New Store Opening — no rulebook timeline and no fulfilment TAT, so it carries no deadline and can never read as breaching. Delivery is driven by the store's opening date."
+                    >
+                      NSO
+                    </span>
+                  ) : (
+                    <span className="text-ui text-ink-soft">{r.type}</span>
+                  )}
                   {density === "comfortable" ? (
                     <span className="block truncate text-cap text-mute">
                       {(r.channel ?? "—").replace("_", " ").toLowerCase()}

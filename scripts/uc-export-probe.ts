@@ -76,7 +76,9 @@ const COLUMNS = [
   "displayOrderDateTime", // order timestamp
   "updated", // the incremental watermark itself
   "packingtimeinvoiceuser", // candidate for packed_timestamp — label unverified
-  "fulfillmentTat",
+  // NOT requested: `fulfillmentTat` and `ewbNo`. Malhar's call — the TAT comes
+  // from the rulebook via the spine, and the e-way bill is not needed for
+  // store orders, so neither is worth pulling from UC for this use case.
   "dispatchDate",
   // NOT requested: `deliveryTime` came back 0/28632 filled over a full day at
   // WH2, and `itemCode` ("Item Details") likewise. UC also returns "Channel

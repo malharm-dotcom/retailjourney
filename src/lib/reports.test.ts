@@ -149,3 +149,33 @@ describe("rulebook adherence (verdict-dependent — untouched)", () => {
     expect(t.rows).toHaveLength(0);
   });
 });
+
+describe("nso-openings", () => {
+  const nso = row(
+    { soNumber: "HESARA10003", type: "NSO", qty: 600, status: "PICKING", orderDate: daysAgo(2) },
+    {},
+  );
+  const rpl = row({ soNumber: "RAJAJI16691", type: "RPL", orderDate: daysAgo(1) }, {});
+
+  it("shows only store-opening orders", () => {
+    const out = buildReport("nso-openings", [nso, rpl]);
+    expect(out.rows).toHaveLength(1);
+    expect(out.rows[0][0]).toBe("HESARA10003");
+  });
+
+  it("carries NO deadline column — an NSO order has no TAT to miss", () => {
+    const { columns } = buildReport("nso-openings", [nso]);
+    // Whole words, not substrings: "WH status" contains "tat", which is the
+    // kind of match that makes a guard like this quietly meaningless.
+    const words = columns.flatMap((c) => c.toLowerCase().split(/[^a-z]+/));
+    for (const banned of ["tat", "due", "deadline", "breach", "breaching", "sla", "overdue"]) {
+      expect(words).not.toContain(banned);
+    }
+  });
+
+  it("puts the newest opening first", () => {
+    const older = row({ soNumber: "OLD-1", type: "NSO", orderDate: daysAgo(30) }, {});
+    const out = buildReport("nso-openings", [older, nso]);
+    expect(out.rows.map((r) => r[0])).toEqual(["HESARA10003", "OLD-1"]);
+  });
+});

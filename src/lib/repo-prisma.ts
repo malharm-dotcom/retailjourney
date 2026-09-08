@@ -90,6 +90,7 @@ function searchWhere(search: OrderSearch) {
       : {}),
     ...(search.status ? { status: search.status } : {}),
     ...(search.store ? { storeNameFormat: search.store } : {}),
+    ...(search.type ? { type: search.type } : {}),
     ...(search.q
       ? {
           OR: [

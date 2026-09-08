@@ -44,3 +44,4 @@ snowflake.log
 .impeccable/
 skills-lock.json
 scripts/data/reconciliation/
+scripts/data/uc-export/

@@ -31,10 +31,70 @@ const POLL_INTERVAL_MS = 5_000;
 const POLL_MAX_ATTEMPTS = 36; // ~3 minutes, the cadence the old client proved
 const OUT_DIR = join(process.cwd(), "scripts", "data", "uc-export");
 
-/** The channels store orders arrive on. Recorded here so the probe reads the
- *  same slice the intake will; not applied as a filter yet — the point of this
- *  run is to see EVERY column the export returns. */
+/** The channels store orders arrive on. */
 const STORE_CHANNELS = ["FRANCHISE_STORE_B2B", "OWN_STORE", "FRANCHISE_STORE", "OWN_STORE_B2B"];
+
+/**
+ * The columns requested, as UC's own internal keys.
+ *
+ * `exportColums: []` is rejected outright ("exportColums can not be empty" /
+ * INVALID_EXPORT_JOB_COLUMN), so the set has to be named up front. These keys
+ * come from the browser's own create call — the full vocabulary is much
+ * larger, and everything financial, tax-bearing or personal is deliberately
+ * absent rather than fetched and discarded. Store orders do not need a
+ * customer address, so the safest place to drop that data is before it is
+ * ever requested.
+ *
+ * NOT requested, on purpose: every address/phone/email field, MRP and all
+ * prices, subtotal/discount/charges, the whole GST/CGST/SGST/IGST/UTGST/CESS/
+ * TCS family, GSTIN/TIN, IMEI, IRN, e-way bill, payment instructions and
+ * store credit.
+ */
+const COLUMNS = [
+  // Identity + grain
+  "soicode", // Sale Order Item Code — the dedupe/upsert key
+  "displayorderCode", // Display Order Code — the app's soNumber
+  "saleOrderCode",
+  "ShippingPackageCode",
+  // Placement + routing
+  "channel",
+  "facility",
+  "saleOrderCustomFields_Order_Type", // Order_Type — RPL for store orders
+  // The spine claims UC's own STORE__CODE is "NA"/garbage and that the store
+  // must come from LEFT(order_name,6) instead. Requested ONCE so the probe can
+  // confirm that on live data rather than inheriting the claim; it is not part
+  // of the intake set either way.
+  "saleOrderCustomFields_STORE__CODE",
+  // Lifecycle
+  "status", // Sale Order Status
+  "SoiStatus", // Sale Order Item Status
+  "shippingPackageStatusCode",
+  "onhold",
+  "cancellationReason",
+  // Timing
+  "created", // UC_CREATED
+  "displayOrderDateTime", // order timestamp
+  "updated", // the incremental watermark itself
+  "packingtimeinvoiceuser", // candidate for packed_timestamp — label unverified
+  "fulfillmentTat",
+  "dispatchDate",
+  // NOT requested: `deliveryTime` came back 0/28632 filled over a full day at
+  // WH2, and `itemCode` ("Item Details") likewise. UC also returns "Channel
+  // Shipping" unrequested, so the returned column list is not exactly the
+  // requested one — the intake must map by HEADER, never by position.
+  // Line content + the RTS-Logic weight capture
+  "skuCode",
+  "skuName",
+  "itemTypeName",
+  "itemTypeColor",
+  "itemTypeSize",
+  "actualWeight",
+  // Transit identity (no cost, no PII)
+  "TrackingNumber",
+  "shippingCourier",
+  "shippingProvider",
+  "invoiceCode", // a document number, not an amount
+];
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -76,8 +136,14 @@ async function main() {
     facility,
     body: {
       exportJobTypeName: jobType,
-      exportColums: [],
-      exportFilters: [{ id: "updatedAt", dateRange: { start, end } }],
+      exportColums: COLUMNS,
+      exportFilters: [
+        // `updatedOn`, as the browser's own call names it — NOT the `updatedAt`
+        // the pre-removal client sent. This is the field the intake watermark
+        // will advance on.
+        { id: "updatedOn", dateRange: { start, end } },
+        { id: "channelFilter", selectedValues: STORE_CHANNELS },
+      ],
       frequency: "ONETIME",
     },
   });

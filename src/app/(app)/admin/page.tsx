@@ -10,6 +10,7 @@ import { databaseConfigured } from "@/lib/db";
 import { eshipzConfigured, eshipzWebhookConfigured } from "@/lib/integrations/eshipz-source";
 import { getSyncHealth } from "@/lib/integrations/sync";
 import { snowflakeConfigured } from "@/lib/snowflake";
+import { ucIntakeConfigured } from "@/lib/integrations/sync";
 import { fmtDateTime } from "@/lib/ist";
 import { ROLE_POLICY } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
@@ -79,6 +80,17 @@ export default async function AdminPage() {
       icon: "database-bold-duotone",
       configured: snowflakeConfigured(),
       lastRun: toRunView(health.lastRuns.SNOWFLAKE),
+    },
+    {
+      source: "UC",
+      name: "Unicommerce",
+      // Named as the FAST path, not as a second order source. An operator
+      // debugging a missing order needs to know this one only gets there
+      // first, and that the spine still owns everything about it afterwards.
+      detail: "Direct intake — new orders ahead of the spine (every 30 min)",
+      icon: "bolt-circle-bold-duotone",
+      configured: ucIntakeConfigured(),
+      lastRun: toRunView(health.lastRuns.UC),
     },
     {
       source: "ESHIPZ_WEBHOOK",

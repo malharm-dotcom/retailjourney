@@ -10,7 +10,7 @@ import { hash } from "bcryptjs";
 import type { Prisma } from "@/generated/prisma/client";
 import { advanceOne } from "@/lib/advance";
 import { databaseConfigured, prisma } from "@/lib/db";
-import { runAllSyncs, runEshipzSync, runSnowflakeSync, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
+import { runAllSyncs, runEshipzSync, runSnowflakeSync, runUcIntake, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
 import { FACILITY_COOKIE, currentUser } from "@/lib/session";
@@ -181,6 +181,7 @@ export async function runSyncNow(source?: SyncSource): Promise<ActionResult & { 
     let summaries: SyncSummary[];
     if (source === "ESHIPZ") summaries = [await runEshipzSync()];
     else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync()];
+    else if (source === "UC") summaries = [await runUcIntake()];
     else summaries = await runAllSyncs();
     revalidatePath("/", "layout");
     return { ok: true, summaries };

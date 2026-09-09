@@ -30,7 +30,7 @@ export interface UnmatchedChannelView {
 }
 
 export interface SourceCard {
-  source: "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
+  source: "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE" | "UC";
   name: string;
   detail: string;
   icon: string;
@@ -44,7 +44,7 @@ export function SyncHealthCards({ cards, dbReady }: { cards: SourceCard[]; dbRea
   const [pending, startTransition] = useTransition();
   const [running, setRunning] = useState<string | null>(null);
 
-  const trigger = (source: "ESHIPZ" | "SNOWFLAKE") => {
+  const trigger = (source: "ESHIPZ" | "SNOWFLAKE" | "UC") => {
     setRunning(source);
     startTransition(async () => {
       const res = await runSyncNow(source);

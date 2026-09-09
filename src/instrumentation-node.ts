@@ -7,6 +7,7 @@
 const g = globalThis as unknown as {
   __retailjourneySyncTimer?: ReturnType<typeof setInterval>;
   __retailjourneySnowflakeTimer?: ReturnType<typeof setInterval>;
+  __retailjourneyUcTimer?: ReturnType<typeof setInterval>;
 };
 
 const PROD_DB_HOST = "168.144.81.147";
@@ -71,11 +72,12 @@ export function bootNode(): void {
   console.log("[sync] schedulers ARMED (deployed environment confirmed)");
   startSyncScheduler();
   startSnowflakeScheduler();
+  startUcScheduler();
   void (async () => {
     try {
       const { recordSchedulerBoot } = await import("./lib/integrations/sync");
       await recordSchedulerBoot(
-        `schedulers armed — eShipz ${process.env.SYNC_INTERVAL_MINUTES ?? 15}m, Snowflake ${process.env.SNOWFLAKE_SYNC_INTERVAL_MINUTES ?? 60}m`,
+        `schedulers armed — eShipz ${process.env.SYNC_INTERVAL_MINUTES ?? 15}m, Snowflake ${process.env.SNOWFLAKE_SYNC_INTERVAL_MINUTES ?? 60}m, UC intake ${process.env.UC_SYNC_INTERVAL_MINUTES ?? 30}m`,
       );
     } catch (e) {
       console.error("[boot] scheduler boot marker failed:", e instanceof Error ? e.message : e);
@@ -132,6 +134,58 @@ export function startSnowflakeScheduler(): void {
   console.log(`[sync] snowflake scheduler started — every ${minutes} min`);
   // First run shortly after boot, offset from the eShipz poller first tick.
   setTimeout(tick, 60 * 1000);
+}
+
+/**
+ * Direct Unicommerce intake — the Phase-A fast path, on its own 30-minute
+ * cadence. UC_SYNC_INTERVAL_MINUTES overrides (default 30; <=0 disables).
+ *
+ * 30 minutes is a deliberate trade, not a default: the export is async and
+ * facility-level, so one run creates three jobs and spends minutes polling
+ * them. Halving the interval doubles the load on the UC tenant to buy back
+ * lag the spine will close within the hour anyway.
+ */
+export function startUcScheduler(): void {
+  if (g.__retailjourneyUcTimer) return;
+
+  const minutes = Number(process.env.UC_SYNC_INTERVAL_MINUTES ?? 30);
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    console.log("[sync] UC intake scheduler disabled (UC_SYNC_INTERVAL_MINUTES <= 0)");
+    return;
+  }
+
+  const tick = async () => {
+    try {
+      const { databaseConfigured } = await import("./lib/db");
+      if (!databaseConfigured()) {
+        console.error("[sync] UC tick skipped — DATABASE_URL absent (cannot record this)");
+        return;
+      }
+      const { recordFailedRun, runUcIntake, ucIntakeConfigured } = await import("./lib/integrations/sync");
+      if (!ucIntakeConfigured()) {
+        await recordFailedRun("UC", "tick skipped — Unicommerce is not configured (missing UC_* env)");
+        return;
+      }
+      const s = await runUcIntake();
+      console.log(
+        `[sync] ${s.source}: ${s.ok ? "ok" : "FAILED"} fetched=${s.fetched} upserted=${s.upserted} errors=${s.errors.length}`,
+      );
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("[sync] UC intake failed:", msg);
+      try {
+        const { recordFailedRun } = await import("./lib/integrations/sync");
+        await recordFailedRun("UC", msg);
+      } catch {
+        /* database unreachable — the log line above is all we have */
+      }
+    }
+  };
+
+  g.__retailjourneyUcTimer = setInterval(tick, minutes * 60 * 1000);
+  console.log(`[sync] UC intake scheduler started — every ${minutes} min`);
+  // Offset from both other pollers so three integrations never contend on boot.
+  setTimeout(tick, 90 * 1000);
 }
 
 export function startSyncScheduler(): void {

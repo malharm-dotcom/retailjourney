@@ -125,7 +125,9 @@ run the one line via `psql` then `npx prisma migrate resolve --applied 202607221
 | `SNOWFLAKE_*` (account, username, private key, passphrase, role, warehouse, db, schema) | Spine reader (already set). |
 | `ESHIPZ_API_TOKEN` | eShipz poller/webhook (already set). |
 | ~~`RETAILJOURNEY_DEV_PERSONA`~~ | **REMOVE it.** Now unused, and it was the flag that enabled the passwordless bypass. |
-| ~~`UC_*`~~ | Dead — the UC integration was removed (`1a89b50`). Safe to drop. |
+| `UC_BASE_URL`, `UC_CLIENT_ID`, `UC_USERNAME`, `UC_PASSWORD` | **Live again.** The direct Unicommerce intake (Artifact E) — the Phase-A fast path that gets an order into Postgres ahead of the hourly spine. OAuth2 password grant; the token is cached in-process and never logged. ⚠️ Currently a PERSONAL login: it dies on a password rotation or offboarding. Move to a service account before relying on it. |
+| `UC_SYNC_INTERVAL_MINUTES` | UC intake cadence. Default 30; `<=0` disables the scheduler. |
+| `UC_EXPORT_JOB_TYPE` | Optional. Defaults to `4mclothingllp Sale Orders`. |
 
 ### First-run after deploy
 **There is no self-signup.** Create the first admin before anyone tries to log in, or nobody (including you) can:

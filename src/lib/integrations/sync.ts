@@ -26,9 +26,17 @@ import { readRulebookSnapshot } from "../snowflake-rulebook";
 import { mapStoreMaster, readStoreFacilities, readStoreMaster } from "../snowflake-stores";
 import { FACILITIES, type Order, type OrderShipment, type OrderStatus, type OverallStatus, type Ownership, type ShipmentStatus, type Source, type Store } from "../types";
 import { EshipzTrackingSource, eshipzConfigured, fetchShipmentMeta, mapShipment, type EshipzShipment } from "./eshipz-source";
+import {
+  aggregateUcOrders,
+  parseUcExport,
+  runUcExport,
+  ucInitialStatus,
+  type UcItemRow,
+  type UcOrder,
+} from "./uc-export";
 import type { TrackingUpdate } from "./types";
 
-export type SyncSource = "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE";
+export type SyncSource = "ESHIPZ" | "ESHIPZ_WEBHOOK" | "SNOWFLAKE" | "UC";
 
 export interface SyncSummary {
   source: SyncSource;
@@ -818,17 +826,21 @@ const OWNERSHIPS: readonly string[] = ["COCO", "FOCO", "COFO", "MFC", "SUVIDHA"]
  *
  * (Exported for the fail-open tests only.)
  */
+/** The store columns an order copies off its matched Store row. Shared so the
+ *  spine sync and the UC intake cannot describe "the store" differently. */
+export function fieldsFromStore(store: Store): Partial<Order> {
+  return {
+    channel: store.channel,
+    storeId: store.id,
+    storeNameFormat: store.storeName,
+    finalStore: store.finalStore,
+    ownership: store.ownership,
+    state: store.storeState,
+  };
+}
+
 export function storeFieldsFor(m: MappedOrder, store?: Store): Partial<Order> {
-  if (store) {
-    return {
-      channel: store.channel,
-      storeId: store.id,
-      storeNameFormat: store.storeName,
-      finalStore: store.finalStore,
-      ownership: store.ownership,
-      state: store.storeState,
-    };
-  }
+  if (store) return fieldsFromStore(store);
   // "SNITCH - COCO - PACIFIC JASOLA" — the same three-part shape seed/stores.ts
   // builds, read back out: finalStore verbatim, storeName without the banner
   // prefix, ownership from the middle segment.
@@ -1457,6 +1469,248 @@ export async function runEshipzWebhook(shipments: EshipzShipment[]): Promise<Syn
 
 /** The 15-min tick (eShipz poller). Snowflake runs on its OWN hourly
  *  cadence (instrumentation-node.ts) — never merged into this slot. */
+// ---------------------------------------------------------------------------
+// Unicommerce direct intake (Artifact E) — the Phase-A fast path.
+
+/** How far back the FIRST run reaches, with no watermark to resume from.
+ *  Deliberately short: this is a lag-reduction path, not a backfill, and the
+ *  spine already owns every order older than this. */
+const UC_FIRST_RUN_HOURS = 6;
+
+/** Overlap re-read on every incremental run. UC stamps `updatedOn` to the
+ *  second and a job takes minutes to produce its file, so resuming exactly at
+ *  the previous high-water mark can skip a row written mid-export. Re-reading
+ *  is free — intake is idempotent. */
+const UC_WATERMARK_OVERLAP_MS = 5 * 60 * 1000;
+
+export function ucIntakeConfigured(): boolean {
+  return Boolean(process.env.UC_BASE_URL && process.env.UC_USERNAME && process.env.UC_PASSWORD);
+}
+
+async function getUcWatermark(): Promise<number | undefined> {
+  const run = await prisma().syncRun.findFirst({
+    where: { source: "UC", ok: true, watermark: { not: null } },
+    orderBy: { startedAt: "desc" },
+  });
+  const t = run?.watermark ? Date.parse(run.watermark) : NaN;
+  return Number.isNaN(t) ? undefined : t;
+}
+
+/**
+ * Fields the UC intake is allowed to write, and nothing else.
+ *
+ * Everything here is INTAKE data — what the order is and where it got to.
+ * Absent on purpose: every spine-enrichment column (area manager, zone, rank,
+ * rulebook, all TAT/deadline/SLA fields) and every app-operational column
+ * (box counts, DC/LR numbers, dispatch details entered on the floor). Intake
+ * never has an opinion about those.
+ */
+const UC_INTAKE_FIELDS = [
+  "orderDate",
+  "orderTimestamp",
+  "facility",
+  "channel",
+  "storeId",
+  "storeNameFormat",
+  "finalStore",
+  "ownership",
+  "state",
+  "type",
+  "qty",
+  "createdTs",
+  "packedTs",
+  "dispatchedTs",
+  "dispatchedDate",
+  "weightKg",
+  "saleInvoiceNumber",
+] as const satisfies readonly (keyof Order)[];
+
+/**
+ * Direct-from-Unicommerce intake. COMPLEMENTS the spine sync; never competes
+ * with it.
+ *
+ * On an order the spine has not reached yet, this creates the row — that is
+ * the whole point, and where the lag saving comes from. On an order that
+ * already exists it fills NULLS ONLY: it never advances a status, never
+ * touches a transit field, and never overwrites a value the spine or the floor
+ * has set. Furthest-forward wins across sources, and intake is by definition
+ * the least-informed source once anything else has spoken.
+ *
+ * NSO is INCLUDED. Store openings have no rulebook timeline and no fulfilment
+ * TAT, which the app already handles by giving them no deadline at all — they
+ * are ordinary orders here.
+ */
+export async function runUcIntake(): Promise<SyncSummary> {
+  if (!databaseConfigured()) throw new Error("UC intake requires DATABASE_URL");
+  if (!ucIntakeConfigured()) {
+    throw new Error("UC intake requires UC_BASE_URL / UC_USERNAME / UC_PASSWORD");
+  }
+
+  const run = await startRun("UC");
+  const summary: SyncSummary = { source: "UC", ok: false, fetched: 0, upserted: 0, conflicts: 0, errors: [] };
+  const db = prisma();
+  const notes: string[] = [];
+
+  try {
+    const prior = await getUcWatermark();
+    const end = Date.now();
+    const start = prior
+      ? prior - UC_WATERMARK_OVERLAP_MS
+      : end - UC_FIRST_RUN_HOURS * 60 * 60 * 1000;
+
+    // The export is FACILITY-LEVEL: one job per warehouse, unioned. A facility
+    // that fails is an ERROR (its orders are missing this run) but never stops
+    // the others — a wedged export at one WH must not blind the whole estate.
+    const items: UcItemRow[] = [];
+    for (const facility of FACILITIES) {
+      try {
+        const csv = await runUcExport(facility, start, end);
+        const parsed = parseUcExport(csv);
+        items.push(...parsed);
+        console.log(`[sync:uc] ${facility}: ${parsed.length} item rows`);
+      } catch (e) {
+        summary.errors.push(`${facility}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    summary.fetched = items.length;
+    const orders = aggregateUcOrders(items);
+    notes.push(`${items.length} item rows → ${orders.length} orders`);
+
+    // Store resolution is LEFT(order_name,6) against the store master's SO
+    // code, which reconcileStoreMaster already persists as the Store row id
+    // ("gs_<SO_CODE>"). Measured 176/178 on live data; the misses were a
+    // genuinely new store, which is exactly what fail-open is for.
+    //
+    // UC's own STORE-CODE is deliberately NOT used. It is not the "NA garbage"
+    // it was believed to be — it resolves against gs_store_details.BRANCH_CODE
+    // on 144 of 178 orders — but where both resolve it DISAGREES with the
+    // prefix on 11 of them. A conflicting second opinion is worse than none.
+    const stores = await db.store.findMany();
+    const byPrefix = new Map(
+      stores.map((s) => [s.id.replace(/^gs_/, "").trim().toUpperCase(), storeToDomain(s)]),
+    );
+
+    let created = 0;
+    let filled = 0;
+    let unmappedStore = 0;
+
+    for (const o of orders) {
+      try {
+        const store = byPrefix.get(o.storePrefix);
+        if (!store) unmappedStore += 1;
+        const existing = await db.order.findUnique({ where: { soNumber: o.soNumber } });
+
+        // Facility comes from UC itself and is independent of the store match,
+        // so an unmapped store costs enrichment and never blocks intake.
+        const facility = o.facility ?? store?.facility;
+        if (!facility) {
+          summary.errors.push(`${o.soNumber}: no facility on the UC row and no store match`);
+          continue;
+        }
+
+        const intake: Partial<Order> = {
+          orderDate: o.orderDate,
+          orderTimestamp: o.orderTimestamp,
+          facility,
+          type: o.type,
+          qty: o.qty,
+          createdTs: o.createdTs,
+          packedTs: o.packedTs,
+          dispatchedTs: o.dispatchedTs,
+          dispatchedDate: o.dispatchedTs ? istDateOf(o.dispatchedTs) : undefined,
+          weightKg: o.weightKg,
+          saleInvoiceNumber: o.saleInvoiceNumber,
+          ...(store ? fieldsFromStore(store) : { channel: o.channel, storeId: "" }),
+        };
+
+        if (!existing) {
+          const status = ucInitialStatus(o);
+          const row = await db.order.create({
+            data: orderToDb({
+              ...intake,
+              soNumber: o.soNumber,
+              orderDate: o.orderDate ?? istToday(),
+              orderTimestamp: o.orderTimestamp ?? nowIso(),
+              storeNameFormat: intake.storeNameFormat ?? "(store unmapped)",
+              finalStore: intake.finalStore ?? "(store unmapped)",
+              state: intake.state ?? "",
+              zone: store?.zone ?? "UNMAPPED",
+              channel: intake.channel ?? "OWN_STORE",
+              storeId: intake.storeId ?? "",
+              status,
+              statusSource: "SYNCED_UC",
+              overallStatus: rollupOverall({ status, shipmentStatus: undefined }),
+            }) as never,
+          });
+          await db.orderEvent.create({
+            data: {
+              orderId: row.id,
+              field: "status",
+              fromValue: null,
+              toValue: status,
+              source: "SYNCED_UC",
+              actorId: null,
+              note: "Order ingested direct from Unicommerce, ahead of the spine.",
+            },
+          });
+          created += 1;
+          summary.upserted += 1;
+          continue;
+        }
+
+        // EXISTING ROW — fill NULLs only. No status, no transit field, no
+        // overwrite of anything the spine or an operator already decided.
+        const patch: Partial<Order> = {};
+        for (const f of UC_INTAKE_FIELDS) {
+          const current = (existing as Record<string, unknown>)[f];
+          const next = (intake as Record<string, unknown>)[f];
+          const blank = current == null || current === "";
+          if (blank && next != null && next !== "") (patch as Record<string, unknown>)[f] = next;
+        }
+        // storeId "" means "no local Store row" and is a real value, not a
+        // gap — but it IS the one blank worth replacing once the store exists.
+        if (existing.storeId === "" && store) Object.assign(patch, fieldsFromStore(store));
+
+        if (Object.keys(patch).length) {
+          await db.order.update({ where: { id: existing.id }, data: orderToDb(patch) });
+          filled += 1;
+          summary.upserted += 1;
+        }
+      } catch (e) {
+        summary.errors.push(`${o.soNumber}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+
+    notes.push(`${created} created ahead of the spine, ${filled} back-filled`);
+    if (unmappedStore) {
+      notes.push(`${unmappedStore} orders had no store match (ingested anyway — fail-open)`);
+    }
+
+    summary.ok = summary.errors.length === 0;
+    // Advance only on a clean run, and only to the newest row actually seen.
+    const newest = latestUcUpdate(orders);
+    const watermark = summary.ok && newest ? new Date(newest).toISOString() : undefined;
+    console.log(
+      `[sync:uc] ${summary.ok ? "ok" : "FAILED"} fetched=${summary.fetched} orders=${orders.length} created=${created} filled=${filled} errors=${summary.errors.length}`,
+    );
+    await finishRun(run.id, summary, notes.join(" | ") || undefined, watermark);
+    return summary;
+  } catch (e) {
+    summary.errors.push(e instanceof Error ? e.message : String(e));
+    summary.ok = false;
+    await finishRun(run.id, summary, notes.join(" | ") || undefined);
+    return summary;
+  }
+}
+
+/** Newest `updated` stamp across the orders this run saw, as epoch ms. */
+function latestUcUpdate(orders: UcOrder[]): number | undefined {
+  const stamps = orders
+    .map((o) => (o.updatedTs ? Date.parse(o.updatedTs) : NaN))
+    .filter((n) => !Number.isNaN(n));
+  return stamps.length ? Math.max(...stamps) : undefined;
+}
+
 export async function runAllSyncs(): Promise<SyncSummary[]> {
   const out: SyncSummary[] = [];
   if (eshipzConfigured()) out.push(await runEshipzSync());
@@ -1469,10 +1723,11 @@ export async function getSyncHealth() {
     return { lastRuns: {} as Record<SyncSource, undefined>, recentRuns: [], unmatched: [] };
   }
   const db = prisma();
-  const [eshipz, webhook, snowflake, recentRuns, unmatched] = await Promise.all([
+  const [eshipz, webhook, snowflake, uc, recentRuns, unmatched] = await Promise.all([
     db.syncRun.findFirst({ where: { source: "ESHIPZ" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "ESHIPZ_WEBHOOK" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findFirst({ where: { source: "SNOWFLAKE" }, orderBy: { startedAt: "desc" } }),
+    db.syncRun.findFirst({ where: { source: "UC" }, orderBy: { startedAt: "desc" } }),
     db.syncRun.findMany({ orderBy: { startedAt: "desc" }, take: 20 }),
     db.unmatchedChannel.findMany({ orderBy: { lastSeenAt: "desc" } }),
   ]);
@@ -1481,6 +1736,7 @@ export async function getSyncHealth() {
       ESHIPZ: eshipz ?? undefined,
       ESHIPZ_WEBHOOK: webhook ?? undefined,
       SNOWFLAKE: snowflake ?? undefined,
+      UC: uc ?? undefined,
     },
     recentRuns,
     unmatched,

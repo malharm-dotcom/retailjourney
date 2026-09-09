@@ -1,0 +1,15 @@
+-- AlterEnum
+-- SYNCED_UC — written by the direct Unicommerce intake (Artifact E).
+--
+-- A source of its own rather than reusing SYNCED, which already means eShipz:
+-- the journey timeline names who wrote every field, and two integrations
+-- sharing one label would make that record unreadable exactly where it
+-- matters — an order created by UC ahead of the spine, then enriched by the
+-- spine, then corrected by an operator.
+--
+-- BEFORE 'MANUAL' so the enum sort order keeps MANUAL last, matching the
+-- declaration order in schema.prisma.
+--
+-- Additive only: appends a value, rewrites no rows, and nothing writes it
+-- until the UC intake scheduler is armed.
+ALTER TYPE "Source" ADD VALUE IF NOT EXISTS 'SYNCED_UC' BEFORE 'MANUAL';

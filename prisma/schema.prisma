@@ -83,6 +83,7 @@ enum EntryStatus {
 enum Source {
   SYNCED
   SYNCED_SNOWFLAKE
+  SYNCED_UC
   MANUAL
 }
 

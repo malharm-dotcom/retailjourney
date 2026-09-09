@@ -73,7 +73,7 @@ export type ShipmentStatus =
 export type ReceiptStatus = "RECEIVED" | "INWARDED" | "CLOSED";
 
 export type EntryStatus = "OPEN" | "CLOSED";
-export type Source = "SYNCED" | "SYNCED_SNOWFLAKE" | "MANUAL";
+export type Source = "SYNCED" | "SYNCED_SNOWFLAKE" | "SYNCED_UC" | "MANUAL";
 
 export type Role =
   | "ADMIN"

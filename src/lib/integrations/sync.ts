@@ -1562,6 +1562,7 @@ export async function runUcIntake(): Promise<SyncSummary> {
     // that fails is an ERROR (its orders are missing this run) but never stops
     // the others — a wedged export at one WH must not blind the whole estate.
     const items: UcItemRow[] = [];
+    const failures: { facility: string; message: string }[] = [];
     for (const facility of FACILITIES) {
       try {
         const csv = await runUcExport(facility, start, end);
@@ -1569,8 +1570,17 @@ export async function runUcIntake(): Promise<SyncSummary> {
         items.push(...parsed);
         console.log(`[sync:uc] ${facility}: ${parsed.length} item rows`);
       } catch (e) {
-        summary.errors.push(`${facility}: ${e instanceof Error ? e.message : String(e)}`);
+        failures.push({ facility, message: e instanceof Error ? e.message : String(e) });
       }
+    }
+    // Every facility failing for the SAME reason is one problem, not three.
+    // Recorded once, named for all of them — three copies of an identical
+    // paragraph is how a sync log stops being read.
+    const distinct = new Set(failures.map((f) => f.message));
+    if (failures.length && distinct.size === 1) {
+      summary.errors.push(`all facilities (${failures.map((f) => f.facility).join(", ")}): ${failures[0].message}`);
+    } else {
+      for (const f of failures) summary.errors.push(`${f.facility}: ${f.message}`);
     }
     summary.fetched = items.length;
     const orders = aggregateUcOrders(items);

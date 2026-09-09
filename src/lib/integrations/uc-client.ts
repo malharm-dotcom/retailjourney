@@ -71,10 +71,49 @@ export async function ucPost<T>(path: string, opts: UcRequestOptions = {}): Prom
     res = await doFetch(await getToken(true));
   }
   if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`UC ${path} failed: HTTP ${res.status} ${text.slice(0, 300)}`);
+    throw new Error(`UC ${path} failed: ${await describeFailure(res)}`);
   }
   return (await res.json()) as T;
+}
+
+/**
+ * Turn a failed UC response into something an operator can act on.
+ *
+ * The distinction that matters is JSON vs HTML. Unicommerce's API answers a
+ * genuine API problem in JSON ("Illegal Access, facility is required"), and
+ * that text is worth quoting verbatim. An HTML body means the request never
+ * reached the API at all — it was stopped by a gateway, WAF or login redirect
+ * in front of it — and quoting that is worse than useless: a 300-character
+ * slice of a stylesheet and a postMessage shim fills the sync log and the
+ * admin toast with noise while hiding the one fact that matters.
+ *
+ * The IP is called out because it is nearly always the difference. The same
+ * credentials and the same endpoint succeed from a developer machine and fail
+ * from the deploy host when only one of the two is allowlisted on the tenant.
+ */
+export async function describeFailure(res: Response): Promise<string> {
+  const body = await res.text().catch(() => "");
+  const looksHtml = /^\s*(<!doctype|<html|<script)/i.test(body) || /<\/html>/i.test(body);
+  if (!looksHtml) return `HTTP ${res.status} ${body.trim().slice(0, 300)}`;
+
+  // Whatever readable text the page carries — usually a title or a one-line
+  // reason — with the markup stripped out.
+  const gist = body
+    .replace(/<script[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style[\s\S]*?<\/style>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 120);
+
+  return (
+    `HTTP ${res.status} — an HTML error page, not an API response, so the request was blocked BEFORE it reached ` +
+    `the Unicommerce API. Credentials are not the problem: the OAuth token was issued successfully. ` +
+    `The usual cause is the calling host's public IP not being allowlisted on the tenant — the same call ` +
+    `succeeds from an allowlisted machine. Find this host's egress IP with \`curl -s ifconfig.me\` from inside ` +
+    `the container and have it added.` +
+    (gist ? ` Page said: "${gist}"` : "")
+  );
 }
 
 /** Download a UC export file (absolute URL from the export-job status). */

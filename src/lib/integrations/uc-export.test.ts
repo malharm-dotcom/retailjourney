@@ -12,6 +12,7 @@ import {
   parseUcExport,
   ucInitialStatus,
 } from "./uc-export";
+import { describeFailure } from "./uc-client";
 
 /** The real header row, in the real order UC returned it. */
 const HEADERS = [
@@ -208,5 +209,34 @@ describe("ucInitialStatus", () => {
     expect(
       ucInitialStatus({ ...base, packageStatuses: [], onHold: false, packedTs: undefined }),
     ).toBe("NOT_STARTED");
+  });
+});
+
+describe("describeFailure", () => {
+  const res = (status: number, body: string) => new Response(body, { status });
+
+  it("quotes a real API error verbatim — that text is the diagnosis", async () => {
+    const out = await describeFailure(res(403, "Illegal Access, facility is required"));
+    expect(out).toBe("HTTP 403 Illegal Access, facility is required");
+  });
+
+  it("recognises an HTML page as a block BEFORE the API, not an API error", async () => {
+    // The live shape: a postMessage shim, then an XHTML doctype.
+    const html =
+      '<script type="text/javascript"> if(window.top !== window.self){ window.top.postMessage({type:"Error403",val:""}, \'*\'); } </script>' +
+      '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN"><html><body><h1>403 Forbidden</h1></body></html>';
+    const out = await describeFailure(res(403, html));
+
+    expect(out).toContain("blocked BEFORE it reached");
+    expect(out).toContain("allowlisted");
+    // The point of the branch: no markup, no script, reaches the operator.
+    expect(out).not.toContain("<script");
+    expect(out).not.toContain("postMessage");
+    expect(out).toContain("403 Forbidden");
+  });
+
+  it("never lets a page body run away with the log", async () => {
+    const out = await describeFailure(res(403, `<html><body>${"x".repeat(5000)}</body></html>`));
+    expect(out.length).toBeLessThan(700);
   });
 });

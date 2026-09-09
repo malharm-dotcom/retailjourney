@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { advanceOrderStatus } from "@/app/actions";
 import { advanceOrdersBulk } from "@/app/bulk-actions";
 import { Icon } from "@/components/icon";
+import { NsoBadge } from "@/components/nso-badge";
 import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
@@ -677,12 +678,7 @@ export function QueueTable({
                       magnitude larger, so treating it like a replenishment is
                       how the floor mis-plans a day. */}
                   {r.type === "NSO" ? (
-                    <span
-                      className="inline-block rounded-md bg-ink/10 px-1.5 py-0.5 text-meta font-bold text-ink"
-                      title="New Store Opening — no rulebook timeline and no fulfilment TAT, so it carries no deadline and can never read as breaching. Delivery is driven by the store's opening date."
-                    >
-                      NSO
-                    </span>
+                    <NsoBadge />
                   ) : (
                     <span className="text-ui text-ink-soft">{r.type}</span>
                   )}

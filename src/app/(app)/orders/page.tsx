@@ -10,6 +10,7 @@
 // native form and <input type="date"> already do all of it.
 
 import Link from "next/link";
+import { NsoBadge } from "@/components/nso-badge";
 import { PageHead } from "@/components/shell/page-head";
 import { searchOrders } from "@/lib/data";
 import { fmtDate } from "@/lib/ist";
@@ -26,17 +27,6 @@ import { requireSession } from "@/lib/session";
 
 export const metadata = { title: "Orders" };
 export const dynamic = "force-dynamic";
-
-export function NsoBadge() {
-  return (
-    <span
-      className="inline-flex items-center rounded-control bg-ink/10 px-1.5 py-0.5 text-cap font-semibold text-ink"
-      title="New Store Opening — no rulebook timeline and no fulfilment TAT, so this order has no deadline and can never read as breaching."
-    >
-      NSO
-    </span>
-  );
-}
 
 /** Column widths as one grid template, shared by the header and every row so
  *  the two can never disagree. Fixed columns first, store takes the slack —

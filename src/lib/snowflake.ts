@@ -294,7 +294,7 @@ export function snowflakeConfigured(): boolean {
   return Boolean(
     process.env.SNOWFLAKE_ACCOUNT &&
       process.env.SNOWFLAKE_USERNAME &&
-      process.env.SNOWFLAKE_PRIVATE_KEY,
+      (process.env.SNOWFLAKE_PAT || process.env.SNOWFLAKE_PRIVATE_KEY),
   );
 }
 
@@ -359,7 +359,7 @@ function destroyAsync(conn: SnowflakeConnectionLike): Promise<void> {
 /** Run one arbitrary query on a fresh IST session (dry-run tooling). */
 export async function querySnowflake<T>(sqlText: string): Promise<T[]> {
   if (!snowflakeConfigured()) {
-    throw new Error("Snowflake requires SNOWFLAKE_ACCOUNT / SNOWFLAKE_USERNAME / SNOWFLAKE_PRIVATE_KEY");
+    throw new Error("Snowflake requires SNOWFLAKE_ACCOUNT / SNOWFLAKE_USERNAME / (SNOWFLAKE_PAT or SNOWFLAKE_PRIVATE_KEY)");
   }
   // Lazy import — keeps the SDK out of every page's server bundle; only the
   // hourly sync (and dry-run tooling) pays the load cost.
@@ -373,8 +373,14 @@ export async function querySnowflake<T>(sqlText: string): Promise<T[]> {
   const options: Record<string, unknown> = {
     account: process.env.SNOWFLAKE_ACCOUNT!,
     username: process.env.SNOWFLAKE_USERNAME!,
-    authenticator: "SNOWFLAKE_JWT",
-    privateKey: decryptedPrivateKeyPem(),
+    // Key-pair is rejected for this TYPE=PERSON user by the account MFA
+    // authentication policy ("Authentication attempt rejected by the current
+    // authentication policy"), so a PAT is the working path until the reader
+    // gets its own TYPE=SERVICE user. Key-pair stays the default when no PAT
+    // is set. ponytail: swap back to key-pair once the SERVICE user exists.
+    ...(process.env.SNOWFLAKE_PAT
+      ? { authenticator: "PROGRAMMATIC_ACCESS_TOKEN", token: process.env.SNOWFLAKE_PAT }
+      : { authenticator: "SNOWFLAKE_JWT", privateKey: decryptedPrivateKeyPem() }),
     role: process.env.SNOWFLAKE_ROLE || undefined,
     warehouse: process.env.SNOWFLAKE_WAREHOUSE || undefined,
     database: process.env.SNOWFLAKE_DATABASE || undefined,

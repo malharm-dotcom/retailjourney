@@ -446,32 +446,26 @@ export async function runEshipzSync(): Promise<SyncSummary> {
   try {
     // Every non-delivered order that has an AWB (trackingNumber, falling back
     // to lrNumber) — regardless of WH stage, so pickup-pending shipments are
-    // tracked too. SELF (self-delivery) has no eShipz feed.
+    // tracked too.
+    //
+    // Self-delivery is no longer carved out here. The two carrier clauses that
+    // excluded it, and the set of already-stored isPollable=false AWBs that
+    // backed them up, both rested on "SELF has no eShipz feed" — measured
+    // false (see isPollableAwb). Dropping the stored-flag filter too is
+    // deliberate: those 1,516 rows only flip to isPollable=true on their next
+    // Snowflake upsert, and reading the flag here would keep them silent until
+    // then for no reason the live probe supports.
     const rows = await db.order.findMany({
       where: {
         AND: [
           { OR: [{ trackingNumber: { not: null } }, { lrNumber: { not: null } }] },
           { OR: [{ shipmentStatus: null }, { shipmentStatus: { not: "DELIVERED" } }] },
-          // Both carrier columns, because this clause narrowed nothing:
-          // logisticsPartner is NULL on every order, so the `null` branch
-          // always matched and self-delivery rows were fetched anyway. The
-          // isPollableAwb filter below already discarded them by courier name,
-          // so the OUTCOME is unchanged — this just stops loading them first.
-          { OR: [{ logisticsPartner: null }, { logisticsPartner: { not: "SELF" } }] },
-          { OR: [{ courierPartner: null }, { courierPartner: { not: "SELF_DELIVERY" } }] },
         ],
       },
     });
-    // Skip non-pollable shipments entirely — self-delivery/porter pseudo-AWBs
-    // ("SN417") have no eShipz feed; Snowflake is their transit authority.
-    const nonPollableAwbs = new Set(
-      (
-        await db.orderShipment.findMany({ where: { isPollable: false }, select: { awb: true } })
-      ).map((r) => r.awb),
-    );
     const orders = rows.map(orderToDomain).filter((o) => {
       const awb = o.trackingNumber ?? o.lrNumber!;
-      return isPollableAwb(awb, o.courierPartner ?? o.logisticsPartner) && !nonPollableAwbs.has(awb);
+      return isPollableAwb(awb, o.courierPartner ?? o.logisticsPartner);
     });
     const byAwb = new Map<string, Order>();
     for (const o of orders) {
@@ -867,6 +861,32 @@ export function storeFieldsFor(m: MappedOrder, store?: Store): Partial<Order> {
   };
 }
 
+/**
+ * The store's own inward booking OUTRANKS an unclosed courier leg.
+ *
+ * The spine's per-AWB STATUS is not a reliable close signal: measured live
+ * 2026-09-11, 87 of 144 InfoReceived rows and 42 of 52 OutForDelivery rows
+ * already carried an INWARDED_DATE. Those lanes simply never post a final
+ * courier scan. OVERALL_STATUS=INWARDED is a different kind of fact — the
+ * destination store has physically received the stock and booked it in — and
+ * nothing a courier feed fails to say can contradict it.
+ *
+ * Before this, the INWARDED seed was consulted ONLY for childless orders, so
+ * the moment an order had an AWB the one authoritative field was discarded and
+ * the order aged forever against a delivery that had already happened: 114 open
+ * orders, 1,415 order-days of phantom pendency, every one of them with a child.
+ * SARJAP15631 rendered "Pickup Pending · awaiting first scan · 65d late" while
+ * its own row held inwardedDate 2026-07-14.
+ *
+ * CLOSED is the one verdict it will not overturn. A dead label is off the
+ * ladder entirely (see the schema note on OverallStatus), so an inward stamp
+ * landing against RETURNED stock must not read as a delivery.
+ */
+export function withInwardSeed(rollup: OverallStatus, seed?: OverallStatus): OverallStatus {
+  if (seed !== "INWARDED" || rollup === "CLOSED") return rollup;
+  return "INWARDED";
+}
+
 async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<void> {
   const db = prisma();
   const status: OrderStatus = m.shipments.length
@@ -898,7 +918,7 @@ async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<
     ...phaseASla(m.patch),
   };
   base.overallStatus = m.shipments.length
-    ? rollupOverall({ status, shipmentStatus: shipRollup })
+    ? withInwardSeed(rollupOverall({ status, shipmentStatus: shipRollup }), m.overallStatusSeed)
     : (m.overallStatusSeed ?? rollupOverall({ status, shipmentStatus: undefined }));
   // A lone non-pollable shipment makes Snowflake the transit authority from birth.
   const pollable = m.shipments.some((s) => s.isPollable);
@@ -907,7 +927,10 @@ async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<
       base,
       transitPatchFromChild({ ...(base as Order), manualFields: [] }, primary as OrderShipment),
     );
-    base.overallStatus = rollupOverall({ status, shipmentStatus: base.shipmentStatus });
+    base.overallStatus = withInwardSeed(
+      rollupOverall({ status, shipmentStatus: base.shipmentStatus }),
+      m.overallStatusSeed,
+    );
   }
 
   const row = await db.order.create({ data: orderToDb(base) as never });
@@ -1010,14 +1033,17 @@ async function syncSnowflakeOrder(
         ? (existing.shipmentStatus ?? c.shipmentStatus)
         : c.shipmentStatus,
     );
-    overallOverride = rollupOverall({
-      status: patch.status ?? existing.status,
-      // A reconciled terminal verdict speaks for the order directly. The
-      // blended `states` above deliberately prefers the ORDER-level status for
-      // the poller-tracked AWB, which is the stale value we just overrode —
-      // feeding it back in would undo the reconciliation we just made.
-      shipmentStatus: spineTerminal ?? rollupShipments(states),
-    });
+    overallOverride = withInwardSeed(
+      rollupOverall({
+        status: patch.status ?? existing.status,
+        // A reconciled terminal verdict speaks for the order directly. The
+        // blended `states` above deliberately prefers the ORDER-level status
+        // for the poller-tracked AWB, which is the stale value we just
+        // overrode — feeding it back in would undo the reconciliation.
+        shipmentStatus: spineTerminal ?? rollupShipments(states),
+      }),
+      m.overallStatusSeed,
+    );
   } else if (m.overallStatusSeed) {
     // Zero children: Snowflake's OVERALL_STATUS is used verbatim (seed only).
     overallOverride = m.overallStatusSeed;

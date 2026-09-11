@@ -59,10 +59,10 @@ describe("ist NTZ conversion", () => {
 });
 
 describe("isPollableAwb", () => {
-  it("rejects pseudo-AWBs and self/porter couriers", () => {
-    expect(isPollableAwb("SN417", "SELF_DELIVERY")).toBe(false);
-    expect(isPollableAwb("SN4130", null)).toBe(false); // pseudo pattern alone suffices
-    expect(isPollableAwb("12345678901", "Porter")).toBe(false);
+  it("polls every AWB, self-delivery included (eShipz tracks them: 40/40 live)", () => {
+    expect(isPollableAwb("SN417", "SELF_DELIVERY")).toBe(true);
+    expect(isPollableAwb("SN4130", null)).toBe(true);
+    expect(isPollableAwb("12345678901", "Porter")).toBe(true);
     expect(isPollableAwb(null, "BLUEDART")).toBe(false);
     expect(isPollableAwb("", "BLUEDART")).toBe(false);
   });
@@ -159,7 +159,7 @@ describe("mapDistributionRows — grain", () => {
     expect(mapped[0].shipments).toHaveLength(2); // the null-AWB bill adds no child
   });
 
-  it("self-delivery maps isPollable=false; a WH-stage row maps zero shipments", () => {
+  it("self-delivery maps isPollable=true; a WH-stage row maps zero shipments", () => {
     const mapped = mapDistributionRows([
       row({
         ORDER_NAME: "SPX1",
@@ -170,7 +170,7 @@ describe("mapDistributionRows — grain", () => {
       row({ ORDER_NAME: "SPX2", MANIFESTED_TIMESTAMP: "2026-07-09 10:00:00.000" }),
     ]);
     expect(mapped).toHaveLength(2);
-    expect(mapped[0].shipments[0].isPollable).toBe(false);
+    expect(mapped[0].shipments[0].isPollable).toBe(true);
     expect(mapped[0].shipments[0].shipmentStatus).toBe("DELIVERED"); // same normalizer
     expect(mapped[1].shipments).toHaveLength(0);
     expect(mapped[1].patch.manifestedTs).toBe("2026-07-09T04:30:00.000Z");

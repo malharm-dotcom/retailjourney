@@ -21,18 +21,26 @@ import type {
   Zone,
 } from "./types";
 
-/** Self-delivery/porter pseudo-AWB (observed live: "SN417", "SN4130"). Real
- *  pollable AWBs: BlueDart 11-digit, Mudita 8-digit, Ekart 10-digit numeric,
- *  Movemate alnum like "BNG26CST00791". */
-export const PSEUDO_AWB = /^SN\d+$/;
-export const NON_POLLABLE_COURIER = /self|porter/i;
-
-/** TRUE only when the AWB is worth an eShipz call. */
+/**
+ * TRUE when the AWB is worth an eShipz call — which is whenever there IS one.
+ *
+ * This used to exclude the "SN####" series and any courier matching
+ * /self|porter/, on the premise that self-delivery has no eShipz feed. That
+ * premise was false. Probed live 2026-09-11: eShipz returned tracking for 40
+ * of 40 sampled SELF_DELIVERY SN-series AWBs, with full scan histories. The
+ * rule was silencing 1,516 shipments — SN4151 rendered "awaiting first scan,
+ * 65d late" on the board while eShipz held its Delivered scans and the spine
+ * held its inward date.
+ *
+ * Nothing replaces the exclusion, because nothing needs to: an order with no
+ * AWB has nothing to ask about, and an order with one can always be asked.
+ * The `isPollable` column stays — it is the one named place to re-add an
+ * exclusion should a lane ever genuinely have no feed — and existing rows flip
+ * on their next Snowflake sync, which rewrites the field on every upsert.
+ */
 export function isPollableAwb(awb?: string | null, courier?: string | null): boolean {
-  if (!awb || !awb.trim()) return false;
-  if (PSEUDO_AWB.test(awb.trim())) return false;
-  if (courier && NON_POLLABLE_COURIER.test(courier)) return false;
-  return true;
+  void courier; // kept in the signature: the decision is per-lane by nature
+  return Boolean(awb && awb.trim());
 }
 
 const ZONES: Zone[] = ["NORTH", "WEST", "SOUTH", "EAST", "UNMAPPED"];

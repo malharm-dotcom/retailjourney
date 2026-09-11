@@ -15,6 +15,7 @@ import {
   resolveOverallStatus,
   spineTerminalChild,
   transitPatchFromChild,
+  withInwardSeed,
 } from "./sync";
 import type { Order, OrderShipment } from "../types";
 
@@ -43,17 +44,26 @@ function child(over: Partial<OrderShipment>): OrderShipment {
   return { id: "s1", soNumber: "TEST15001", awb: "SN4001", isPollable: false, source: "SNOWFLAKE", ...over } as OrderShipment;
 }
 
-describe("isPollableAwb — the poller/Snowflake authority split", () => {
-  it("skips exactly the self-delivery/porter pseudo-AWBs (live vocab)", () => {
-    expect(isPollableAwb("SN4001", "SELF_DELIVERY")).toBe(false);
-    expect(isPollableAwb("SN399", null)).toBe(false); // pseudo shape alone
-    expect(isPollableAwb("12345678", "PORTER")).toBe(false);
+describe("isPollableAwb — an AWB is an AWB", () => {
+  it("polls the self-delivery SN-series that used to be skipped", () => {
+    // Probed live 2026-09-11: eShipz returned tracking for 40 of 40 sampled
+    // SELF_DELIVERY "SN####" AWBs. The old rule asserted these had no feed at
+    // all and silenced 1,516 shipments — SN4151 sat on the board as "awaiting
+    // first scan, 65d late" while eShipz held its full Delivered scan history.
+    expect(isPollableAwb("SN4001", "SELF_DELIVERY")).toBe(true);
+    expect(isPollableAwb("SN4151", "SELF_DELIVERY")).toBe(true);
+    expect(isPollableAwb("SN399", null)).toBe(true);
+    expect(isPollableAwb("12345678", "PORTER")).toBe(true);
   });
   it("keeps every real courier pollable (verified: 0 real AWBs skipped live)", () => {
     expect(isPollableAwb("53669035803", "BLUEDART")).toBe(true);
     expect(isPollableAwb("90641870", "MUDITA_CARGO")).toBe(true);
     expect(isPollableAwb("BNG26CST00803", "MOVEMATE")).toBe(true);
     expect(isPollableAwb("1234567890", "EKART_B2B_CARGO")).toBe(true);
+  });
+  it("a missing or blank AWB is still nothing to poll", () => {
+    expect(isPollableAwb(null, "BLUEDART")).toBe(false);
+    expect(isPollableAwb("   ", "BLUEDART")).toBe(false);
   });
 });
 
@@ -258,5 +268,36 @@ describe("maxSpineEventTs — the watermark advanced after a Snowflake run", () 
     // string max would hit here: the .5 row is 500ms later and must win.
     const rows = [row("2026-07-30 03:04:07.000"), row("2026-07-30 03:04:07.5")];
     expect(maxSpineEventTs(rows)).toBe("2026-07-30 03:04:07.5");
+  });
+});
+
+describe("withInwardSeed — the store's inward booking outranks an unclosed courier leg", () => {
+  // THE pendency bug, measured live 2026-09-11: 114 open orders carried a spine
+  // OVERALL_STATUS=INWARDED (and an INWARDED_DATE) while the app still showed
+  // them Pickup Pending / In Transit, aging 1,415 order-days in aggregate. All
+  // 114 had an AWB child, which is exactly the case where the old code threw
+  // the seed away. SARJAP15631 read "awaiting first scan, 65d late" on the
+  // board while its own row held inwardedDate 2026-07-14.
+  it("INWARDED wins over a rollup that never left the courier leg", () => {
+    expect(withInwardSeed("PICKUP_PENDING", "INWARDED")).toBe("INWARDED");
+    expect(withInwardSeed("IN_TRANSIT", "INWARDED")).toBe("INWARDED");
+    expect(withInwardSeed("WH_PROCESSING", "INWARDED")).toBe("INWARDED");
+  });
+
+  it("leaves every non-INWARDED seed alone — the rollup still decides", () => {
+    // The per-AWB STATUS is unreliable in BOTH directions; only the inward
+    // booking is a physical receipt. A spine that merely says DISPATCHED or
+    // IN_TRANSIT must not override the app's own rollup.
+    expect(withInwardSeed("IN_TRANSIT", "PICKUP_PENDING")).toBe("IN_TRANSIT");
+    expect(withInwardSeed("PICKUP_PENDING", "IN_TRANSIT")).toBe("PICKUP_PENDING");
+    expect(withInwardSeed("IN_TRANSIT", undefined)).toBe("IN_TRANSIT");
+    expect(withInwardSeed("DELIVERED", "DELIVERED")).toBe("DELIVERED");
+  });
+
+  it("never pulls a CLOSED dead label back onto the ladder", () => {
+    // A dead label is off the ladder entirely (schema: CLOSED is not a rung
+    // above INWARDED). An RTO'd order whose spine row later gets an inward
+    // stamp for the RETURNED stock must stay closed, not read as delivered.
+    expect(withInwardSeed("CLOSED", "INWARDED")).toBe("CLOSED");
   });
 });

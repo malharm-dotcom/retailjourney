@@ -6,7 +6,7 @@
 import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
 import { prisma, databaseConfigured } from "../db";
 import { isoFromEpochMs, isoFromIstNtz, istDateOf, nowIso, istToday } from "../ist";
-import { TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, isDeadShipment, rollupOverall, rollupShipments } from "../journey";
+import { PAST_WAREHOUSE, TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, isDeadShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
 import { buildInheritedTat, normStoreKey, resolveQcParent, shouldInheritQcTat, type TatTemplate } from "../qc-tat";
 import { flattenRulebook, rulebookTemplateFor, type RulebookOrderType, type RulebookViewRow } from "../rulebook-map";
@@ -205,6 +205,28 @@ async function applySyncPatch(
   // Resolved BEFORE the no-op check: a moved overallStatus is itself a change
   // worth writing, even when no other field differs.
   const overall = resolveOverallStatus(o, data as Partial<Order>, overallStatusOverride);
+
+  // Delivered or inwarded proves the stock left the building, and that
+  // evidence outranks a MANUAL warehouse status — else the order sits in the
+  // Warehouse queue for good (live 2026-09-15: 377 orders, every one manual).
+  const evidenced = evidenceStatus((data.status as OrderStatus | undefined) ?? o.status, overall.next);
+  if (evidenced) {
+    const i = events.findIndex((e) => e.field === "status" && e.note === "sync conflict — manual value kept");
+    if (i >= 0) {
+      events.splice(i, 1);
+      conflicts -= 1;
+    }
+    data.status = evidenced;
+    data.statusSource = source;
+    events.push({
+      field: "status",
+      fromValue: val(o.status),
+      toValue: evidenced,
+      source,
+      actorId: null,
+      note: "delivered/inwarded — evidence outranks the warehouse status",
+    });
+  }
   if (Object.keys(data).length === 0 && events.length === 0 && !overall.changed) {
     return { changed: false, conflicts };
   }
@@ -301,6 +323,13 @@ export function guardedStatus(current: Order["status"], next?: Order["status"]):
   const nxt = WH_FLOW.indexOf(next);
   if (nxt <= cur) return undefined;
   return next;
+}
+
+/** The warehouse status that delivered/inwarded evidence proves, whatever a
+ *  manual status says. Forward-only via guardedStatus, so ON_HOLD and terminal
+ *  orders are left alone. (Exported for the precedence tests and the resync.) */
+export function evidenceStatus(current: OrderStatus, overall: OverallStatus): OrderStatus | undefined {
+  return overall === "DELIVERED" || overall === "INWARDED" ? guardedStatus(current, "DISPATCHED_TO_STORE") : undefined;
 }
 
 /** Unmatched channels are collected in-memory per run, then flushed once.
@@ -896,8 +925,6 @@ export function withInwardSeed(rollup: OverallStatus, seed?: OverallStatus): Ove
   if (seed !== "INWARDED" || rollup === "CLOSED") return rollup;
   return "INWARDED";
 }
-
-const PAST_WAREHOUSE: OverallStatus[] = ["IN_TRANSIT", "DELIVERED", "INWARDED"];
 
 /**
  * The warehouse stage the spine proves an order reached. An AWB child OR a

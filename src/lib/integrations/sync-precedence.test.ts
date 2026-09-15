@@ -18,6 +18,7 @@ import {
   withInwardSeed,
   frozenOverall,
   inferredWhStatus,
+  evidenceStatus,
 } from "./sync";
 import type { Order, OrderShipment } from "../types";
 
@@ -375,5 +376,22 @@ describe("inferredWhStatus — a milk run with no AWB still leaves the warehouse
     expect(inferredWhStatus(m({ patch: manifested, overallStatusSeed: "PICKUP_PENDING" }))).toBe("RTS_LOGIC");
     expect(inferredWhStatus(m({ patch: manifested }))).toBe("RTS_LOGIC");
     expect(inferredWhStatus(m({ overallStatusSeed: "WH_PROCESSING" }))).toBeUndefined();
+  });
+});
+
+describe("evidenceStatus — delivered or inwarded outranks a manual warehouse status", () => {
+  it("dispatches an order a human left at an earlier stage (377 live, all manual RTS/PACKING/...)", () => {
+    expect(evidenceStatus("RTS_LOGIC", "DELIVERED")).toBe("DISPATCHED_TO_STORE");
+    expect(evidenceStatus("PACKING", "INWARDED")).toBe("DISPATCHED_TO_STORE");
+  });
+
+  it("in transit is not delivery evidence — the manual status stands", () => {
+    expect(evidenceStatus("RTS_LOGIC", "IN_TRANSIT")).toBeUndefined();
+  });
+
+  it("never pulls an order out of ON_HOLD or a terminal state, and no-ops once dispatched", () => {
+    expect(evidenceStatus("ON_HOLD", "DELIVERED")).toBeUndefined();
+    expect(evidenceStatus("CANCELLED", "INWARDED")).toBeUndefined();
+    expect(evidenceStatus("DISPATCHED_TO_STORE", "DELIVERED")).toBeUndefined();
   });
 });

@@ -17,7 +17,7 @@ import { querySnowflake, spineWindowQuery, type DistributionRow } from "../src/l
 import { mapDistributionRows } from "../src/lib/distribution-map";
 import { orderToDomain, shipmentToDomain } from "../src/lib/prisma-map";
 import { rollupOverall, rollupShipments } from "../src/lib/journey";
-import { syncSnowflakeOrder, withInwardSeed, frozenOverall, guardedStatus, inferredWhStatus } from "../src/lib/integrations/sync";
+import { syncSnowflakeOrder, withInwardSeed, frozenOverall, guardedStatus, inferredWhStatus, evidenceStatus } from "../src/lib/integrations/sync";
 
 const WINDOW_DAYS = 120;
 
@@ -43,7 +43,8 @@ async function main() {
       : withInwardSeed(rollupOverall({ status: row.status, shipmentStatus: rollupShipments(m.shipments.map((s) => s.shipmentStatus)) }), m.overallStatusSeed);
 
     const locked = frozen || row.manualFields.includes("status");
-    const status = (locked ? undefined : guardedStatus(row.status, inferredWhStatus(m))) ?? row.status;
+    const synced = (locked ? undefined : guardedStatus(row.status, inferredWhStatus(m))) ?? row.status;
+    const status = evidenceStatus(synced, predicted) ?? synced;
     if (!apply) { console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${predicted}   status ${row.status} -> ${status}   (spine seed ${m.overallStatusSeed ?? "∅"})`); continue; }
 
     const res = await syncSnowflakeOrder(m, orderToDomain(row), kids);

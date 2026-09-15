@@ -14,6 +14,7 @@
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
 import { istDateOf, istToday } from "@/lib/ist";
+import { PAST_WAREHOUSE } from "@/lib/journey";
 import { policyOf } from "@/lib/rbac";
 import { requireSession } from "@/lib/session";
 import type { OrderStatus } from "@/lib/types";
@@ -37,6 +38,9 @@ export default async function WarehousePage({
 
   const all: QueueRow[] = rows
     .filter((r) => QUEUE_STAGES.includes(r.order.status))
+    // Past the warehouse by its own overall status → not warehouse pendency,
+    // whatever the WH status still reads. The Orders tab still lists it.
+    .filter((r) => !PAST_WAREHOUSE.includes(r.order.overallStatus))
     // Dispatched only shows freshly-dispatched (still pickup-pending) so it reads as an outbox.
     .filter((r) => r.order.status !== "DISPATCHED_TO_STORE" || r.order.overallStatus === "PICKUP_PENDING")
     .map((r) => {

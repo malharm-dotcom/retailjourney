@@ -22,6 +22,9 @@ export const WH_FLOW: OrderStatus[] = [
 
 export const TERMINAL_STATUSES: OrderStatus[] = ["CANCELLED", "UNFULFILLABLE"];
 
+/** Overall stages that prove the stock has left the warehouse. */
+export const PAST_WAREHOUSE: OverallStatus[] = ["IN_TRANSIT", "DELIVERED", "INWARDED"];
+
 /** Allowed Phase A transitions. ON_HOLD is reversible; CANCELLED/UNFULFILLABLE terminal. */
 export const WH_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
   NOT_STARTED: ["PICKING", "ON_HOLD", "CANCELLED", "UNFULFILLABLE"],

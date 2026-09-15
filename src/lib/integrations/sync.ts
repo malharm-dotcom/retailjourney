@@ -887,6 +887,36 @@ export function withInwardSeed(rollup: OverallStatus, seed?: OverallStatus): Ove
   return "INWARDED";
 }
 
+/**
+ * The overallStatus of a FROZEN order — one the sync has already seen deliver
+ * (the order rolled up DELIVERED, or every one of its AWBs did).
+ *
+ * The freeze exists so the hourly sync never REOPENS a delivered order, and it
+ * still guarantees that. What it used to do besides was compute no verdict at
+ * all, which let the order-level rollup fall back to `shipmentStatus` — and a
+ * manually set shipmentStatus is never overwritten. Live 2026-09-15:
+ * BANASH16388 and AIRIAM16410 had every AWB delivered and a spine reading
+ * INWARDED, yet sat In Transit on a manual PICKED_UP / OUT_FOR_DELIVERY,
+ * because the one branch that knew they were delivered never said so.
+ *
+ * Frozen means delivered by definition, so for an order the freeze caught
+ * while still OPEN the verdict no longer depends on the order-level
+ * shipmentStatus: DELIVERED, lifted to INWARDED when the store has booked the
+ * stock in (withInwardSeed). The manual shipmentStatus itself is left
+ * untouched — manual still wins on the field a human set; it just no longer
+ * decides the order's stage.
+ *
+ * DELIVERED and INWARDED are returned AS-IS, deliberately. Lifting every
+ * delivered order with an inward stamp to INWARDED is a separate decision:
+ * dry-run 2026-09-15 it would reclassify 4,110 orders and pull 246 of them
+ * off the board's recent-deliveries rows early. This function only exists to
+ * stop an already-delivered order reading as pendency.
+ */
+export function frozenOverall(current: OverallStatus, seed?: OverallStatus): OverallStatus {
+  if (current === "DELIVERED" || current === "INWARDED") return current;
+  return withInwardSeed("DELIVERED", seed);
+}
+
 async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<void> {
   const db = prisma();
   const status: OrderStatus = m.shipments.length
@@ -991,6 +1021,7 @@ async function syncSnowflakeOrder(
 
   if (frozen) {
     for (const f of ORDER_TRANSIT_FIELDS) delete patch[f];
+    overallOverride = frozenOverall(existing.overallStatus, m.overallStatusSeed);
   } else if (children.length) {
     if (!hasPollable) {
       // Self-delivery/porter: Snowflake owns the order-level transit fields.

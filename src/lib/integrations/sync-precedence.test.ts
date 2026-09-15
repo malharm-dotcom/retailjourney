@@ -16,6 +16,7 @@ import {
   spineTerminalChild,
   transitPatchFromChild,
   withInwardSeed,
+  frozenOverall,
 } from "./sync";
 import type { Order, OrderShipment } from "../types";
 
@@ -299,5 +300,30 @@ describe("withInwardSeed — the store's inward booking outranks an unclosed cou
     // above INWARDED). An RTO'd order whose spine row later gets an inward
     // stamp for the RETURNED stock must stay closed, not read as delivered.
     expect(withInwardSeed("CLOSED", "INWARDED")).toBe("CLOSED");
+  });
+});
+
+describe("frozenOverall — a frozen order is delivered, whatever its manual shipmentStatus says", () => {
+  it("closes an order whose every AWB delivered but a manual status held open", () => {
+    // BANASH16388 / AIRIAM16410: all AWBs DELIVERED, spine INWARDED, order
+    // stuck In Transit on a manual PICKED_UP / OUT_FOR_DELIVERY.
+    expect(frozenOverall("IN_TRANSIT", "INWARDED")).toBe("INWARDED");
+    expect(frozenOverall("IN_TRANSIT", undefined)).toBe("DELIVERED");
+    expect(frozenOverall("PICKUP_PENDING", "DELIVERED")).toBe("DELIVERED");
+  });
+
+  it("never reopens a delivered order — the freeze's original promise", () => {
+    expect(frozenOverall("DELIVERED", undefined)).toBe("DELIVERED");
+    expect(frozenOverall("DELIVERED", "IN_TRANSIT")).toBe("DELIVERED");
+    expect(frozenOverall("DELIVERED", "PICKUP_PENDING")).toBe("DELIVERED");
+  });
+
+  it("leaves DELIVERED and INWARDED exactly as they are — no mass reclassification", () => {
+    // Lifting DELIVERED to INWARDED is deliberately NOT this function's job:
+    // dry-run it would have moved 4,110 delivered orders, 246 of them off the
+    // board's recent-deliveries rows.
+    expect(frozenOverall("DELIVERED", "INWARDED")).toBe("DELIVERED");
+    expect(frozenOverall("INWARDED", undefined)).toBe("INWARDED");
+    expect(frozenOverall("INWARDED", "DELIVERED")).toBe("INWARDED");
   });
 });

@@ -206,10 +206,14 @@ async function applySyncPatch(
   // worth writing, even when no other field differs.
   const overall = resolveOverallStatus(o, data as Partial<Order>, overallStatusOverride);
 
-  // Delivered or inwarded proves the stock left the building, and that
-  // evidence outranks a MANUAL warehouse status — else the order sits in the
-  // Warehouse queue for good (live 2026-09-15: 377 orders, every one manual).
-  const evidenced = evidenceStatus((data.status as OrderStatus | undefined) ?? o.status, overall.next);
+  // Delivered, inwarded or dispatched proves the stock left the building, and
+  // that evidence outranks a MANUAL warehouse status — else the order sits in
+  // the Warehouse queue for good (live 2026-09-15: 377 orders, every one manual).
+  const evidenced = evidenceStatus(
+    (data.status as OrderStatus | undefined) ?? o.status,
+    overall.next,
+    Boolean(data.dispatchedTs ?? o.dispatchedTs),
+  );
   if (evidenced) {
     const i = events.findIndex((e) => e.field === "status" && e.note === "sync conflict — manual value kept");
     if (i >= 0) {
@@ -224,13 +228,14 @@ async function applySyncPatch(
       toValue: evidenced,
       source,
       actorId: null,
-      note: "delivered/inwarded — evidence outranks the warehouse status",
+      note: "delivered/inwarded/dispatched — evidence outranks the warehouse status",
     });
   }
-  if (Object.keys(data).length === 0 && events.length === 0 && !overall.changed) {
+  const nextOverall = dispatchedOverall(overall.next, (data.status as OrderStatus | undefined) ?? o.status);
+  if (Object.keys(data).length === 0 && events.length === 0 && nextOverall === o.overallStatus) {
     return { changed: false, conflicts };
   }
-  data.overallStatus = overall.next;
+  data.overallStatus = nextOverall;
 
   const db = prisma();
   await db.$transaction([
@@ -326,11 +331,21 @@ export function guardedStatus(current: Order["status"], next?: Order["status"]):
   return next;
 }
 
-/** The warehouse status that delivered/inwarded evidence proves, whatever a
- *  manual status says. Forward-only via guardedStatus, so ON_HOLD and terminal
- *  orders are left alone. (Exported for the precedence tests and the resync.) */
-export function evidenceStatus(current: OrderStatus, overall: OverallStatus): OrderStatus | undefined {
-  return overall === "DELIVERED" || overall === "INWARDED" ? guardedStatus(current, "DISPATCHED_TO_STORE") : undefined;
+/** The warehouse status that delivered/inwarded evidence — or a dispatch
+ *  time — proves, whatever a manual status says. Forward-only via
+ *  guardedStatus, so ON_HOLD and terminal orders are left alone. (Exported for
+ *  the precedence tests and the resync.) */
+export function evidenceStatus(current: OrderStatus, overall: OverallStatus, dispatched = false): OrderStatus | undefined {
+  return dispatched || overall === "DELIVERED" || overall === "INWARDED"
+    ? guardedStatus(current, "DISPATCHED_TO_STORE")
+    : undefined;
+}
+
+/** A dispatched order has left the warehouse whatever a lagging spine seed
+ *  says. rollupOverall itself never pairs DISPATCHED_TO_STORE with
+ *  WH_PROCESSING — only a seed used verbatim can. */
+export function dispatchedOverall(overall: OverallStatus, status: OrderStatus): OverallStatus {
+  return status === "DISPATCHED_TO_STORE" && overall === "WH_PROCESSING" ? "PICKUP_PENDING" : overall;
 }
 
 /** Unmatched channels are collected in-memory per run, then flushed once.
@@ -930,14 +945,17 @@ export function withInwardSeed(rollup: OverallStatus, seed?: OverallStatus): Ove
 /**
  * The warehouse stage the spine proves an order reached. An AWB child OR a
  * spine OVERALL_STATUS already past the warehouse means the stock left the
- * building. Milk-run orders never get an AWB, so before the second test they
+ * building; so does a dispatch time — the manifest closed in UC, whatever
+ * MANIFESTED_TIMESTAMP says (JANAKP16765: dispatched 09-13, still Not Started
+ * on 09-15). Milk-run orders never get an AWB, so before the second test they
  * sat at RTS_LOGIC for good while the spine read INWARDED (live 2026-09-15:
  * 25 orders, e.g. CYBERH15597, 70+ days in the Warehouse tab).
  */
 export function inferredWhStatus(
   m: Pick<MappedOrder, "shipments" | "patch" | "overallStatusSeed">,
+  dispatchedTs = m.patch.dispatchedTs,
 ): OrderStatus | undefined {
-  if (m.shipments.length || (m.overallStatusSeed && PAST_WAREHOUSE.includes(m.overallStatusSeed))) {
+  if (m.shipments.length || dispatchedTs || (m.overallStatusSeed && PAST_WAREHOUSE.includes(m.overallStatusSeed))) {
     return "DISPATCHED_TO_STORE";
   }
   return m.patch.manifestedTs ? "RTS_LOGIC" : undefined;
@@ -987,6 +1005,7 @@ async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<
     type: "OTHER",
     qty: 0,
     ...m.patch,
+    manifestedTs: m.patch.manifestedTs ?? m.patch.dispatchedTs,
     // WAREHOUSE_NAME is populated on every spine row (verified: 0 of 5883 in
     // the 45-day window are blank), so this resolves from the spine alone. The
     // local Store row is only a fallback, and is absent for an unmapped store.
@@ -1001,7 +1020,7 @@ async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<
   };
   base.overallStatus = m.shipments.length
     ? withInwardSeed(rollupOverall({ status, shipmentStatus: shipRollup }), m.overallStatusSeed)
-    : (m.overallStatusSeed ?? rollupOverall({ status, shipmentStatus: undefined }));
+    : dispatchedOverall(m.overallStatusSeed ?? rollupOverall({ status, shipmentStatus: undefined }), status);
   // A lone non-pollable shipment makes Snowflake the transit authority from birth.
   const pollable = m.shipments.some((s) => s.isPollable);
   if (!pollable && primary) {
@@ -1059,8 +1078,13 @@ export async function syncSnowflakeOrder(
 
   const patch: Partial<Order> = { ...m.patch, ...phaseASla(m.patch, existing) };
   if (!isKnownFacility(patch.facility)) delete patch.facility;
+  // MANIFESTED_TIMESTAMP is NULL on every spine row: the dispatch stands in
+  // for it, filling a blank only — a real manifest time is never swapped out.
+  if (!patch.manifestedTs && !existing.manifestedTs) patch.manifestedTs = patch.dispatchedTs ?? existing.dispatchedTs;
 
-  patch.status = frozen ? undefined : guardedStatus(existing.status, inferredWhStatus(m));
+  patch.status = frozen
+    ? undefined
+    : guardedStatus(existing.status, inferredWhStatus(m, m.patch.dispatchedTs ?? existing.dispatchedTs));
   if (patch.status) patch.statusSource = "SYNCED_SNOWFLAKE";
 
   const hasPollable = children.some((c) => c.isPollable);
@@ -1637,7 +1661,8 @@ const UC_INTAKE_FIELDS = [
  *
  * On an order the spine has not reached yet, this creates the row — that is
  * the whole point, and where the lag saving comes from. On an order that
- * already exists it fills NULLS ONLY: it never advances a status, never
+ * already exists it fills NULLS ONLY, and the one status it moves is a UC
+ * dispatch — the warehouse stage is then done (2026-09-15). It never
  * touches a transit field, and never overwrites a value the spine or the floor
  * has set. Furthest-forward wins across sources, and intake is by definition
  * the least-informed source once anything else has spoken.
@@ -1787,8 +1812,37 @@ export async function runUcIntake(): Promise<SyncSummary> {
         // gap — but it IS the one blank worth replacing once the store exists.
         if (existing.storeId === "" && store) Object.assign(patch, fieldsFromStore(store));
 
+        // A dispatch UC reports is the warehouse done, whatever the spine has
+        // reached so far: it fills a blank manifest time and advances the stage
+        // (forward-only — ON_HOLD and terminal orders are left alone).
+        const dispatched = patch.dispatchedTs ?? existing.dispatchedTs?.toISOString();
+        if (dispatched && !existing.manifestedTs) patch.manifestedTs = dispatched;
+        const advanced = evidenceStatus(
+          existing.status as OrderStatus,
+          existing.overallStatus as OverallStatus,
+          Boolean(dispatched),
+        );
+        if (advanced) {
+          patch.status = advanced;
+          patch.statusSource = "SYNCED_UC";
+          patch.overallStatus = dispatchedOverall(existing.overallStatus as OverallStatus, advanced);
+        }
+
         if (Object.keys(patch).length) {
           await db.order.update({ where: { id: existing.id }, data: orderToDb(patch) });
+          if (advanced) {
+            await db.orderEvent.create({
+              data: {
+                orderId: existing.id,
+                field: "status",
+                fromValue: existing.status,
+                toValue: advanced,
+                source: "SYNCED_UC",
+                actorId: null,
+                note: "Dispatched in Unicommerce — the warehouse stage is complete.",
+              },
+            });
+          }
           filled += 1;
           summary.upserted += 1;
         }

@@ -220,6 +220,10 @@ function mapOrderPatch(r: DistributionRow): Partial<Order> {
     qty: int(r.QUANTITY),
     saleInvoiceNumber: str(r.INVOICE_NUMBER),
     manifestedTs: isoFromIstNtz(r.MANIFESTED_TIMESTAMP),
+    // UC's dispatch. MANIFESTED_TIMESTAMP is NULL on every spine row, so the
+    // sync also uses this as the manifest time (fill-only, never a swap).
+    dispatchedTs: isoFromIstNtz(r.UC_DISPATCHED_TIMESTAMP),
+    dispatchedDate: istDateFromNtz(r.UC_DISPATCHED_TIMESTAMP),
     merchandiser: str(r.MERCHANDISER),
     areaManager: str(r.AREA_MANAGER),
     sales30d: num(r.SALES_30D),

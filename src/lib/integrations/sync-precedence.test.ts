@@ -19,6 +19,7 @@ import {
   frozenOverall,
   inferredWhStatus,
   evidenceStatus,
+  dispatchedOverall,
 } from "./sync";
 import type { Order, OrderShipment } from "../types";
 
@@ -393,5 +394,31 @@ describe("evidenceStatus — delivered or inwarded outranks a manual warehouse s
     expect(evidenceStatus("ON_HOLD", "DELIVERED")).toBeUndefined();
     expect(evidenceStatus("CANCELLED", "INWARDED")).toBeUndefined();
     expect(evidenceStatus("DISPATCHED_TO_STORE", "DELIVERED")).toBeUndefined();
+  });
+});
+
+describe("a dispatch time is the warehouse done (JANAKP16765: dispatched 09-13, Not Started on 09-15)", () => {
+  type M = Parameters<typeof inferredWhStatus>[0];
+  const m = (over: Partial<M>): M => ({ shipments: [], patch: {}, ...over });
+
+  it("the spine's UC dispatch — or one the UC intake back-filled — dispatches a childless order", () => {
+    expect(inferredWhStatus(m({ patch: { dispatchedTs: "2026-09-13T00:33:15.000Z" }, overallStatusSeed: "PICKUP_PENDING" }))).toBe(
+      "DISPATCHED_TO_STORE",
+    );
+    expect(inferredWhStatus(m({ overallStatusSeed: "WH_PROCESSING" }), "2026-09-15T05:14:11.000Z")).toBe("DISPATCHED_TO_STORE");
+  });
+
+  it("outranks a manual warehouse status, but never an ON_HOLD or a terminal one", () => {
+    expect(evidenceStatus("NOT_STARTED", "PICKUP_PENDING", true)).toBe("DISPATCHED_TO_STORE");
+    expect(evidenceStatus("RTS_LOGIC", "WH_PROCESSING", true)).toBe("DISPATCHED_TO_STORE");
+    expect(evidenceStatus("ON_HOLD", "WH_PROCESSING", true)).toBeUndefined();
+    expect(evidenceStatus("CANCELLED", "WH_PROCESSING", true)).toBeUndefined();
+    expect(evidenceStatus("NOT_STARTED", "WH_PROCESSING", false)).toBeUndefined();
+  });
+
+  it("a dispatched order is never left reading WH Processing off a lagging seed", () => {
+    expect(dispatchedOverall("WH_PROCESSING", "DISPATCHED_TO_STORE")).toBe("PICKUP_PENDING");
+    expect(dispatchedOverall("WH_PROCESSING", "RTS_LOGIC")).toBe("WH_PROCESSING");
+    expect(dispatchedOverall("INWARDED", "DISPATCHED_TO_STORE")).toBe("INWARDED");
   });
 });

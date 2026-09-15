@@ -17,7 +17,7 @@ import { querySnowflake, spineWindowQuery, type DistributionRow } from "../src/l
 import { mapDistributionRows } from "../src/lib/distribution-map";
 import { orderToDomain, shipmentToDomain } from "../src/lib/prisma-map";
 import { rollupOverall, rollupShipments } from "../src/lib/journey";
-import { syncSnowflakeOrder, withInwardSeed, frozenOverall, guardedStatus, inferredWhStatus, evidenceStatus } from "../src/lib/integrations/sync";
+import { syncSnowflakeOrder, withInwardSeed, frozenOverall, guardedStatus, inferredWhStatus, evidenceStatus, dispatchedOverall } from "../src/lib/integrations/sync";
 
 const WINDOW_DAYS = 120;
 
@@ -43,13 +43,15 @@ async function main() {
       : withInwardSeed(rollupOverall({ status: row.status, shipmentStatus: rollupShipments(m.shipments.map((s) => s.shipmentStatus)) }), m.overallStatusSeed);
 
     const locked = frozen || row.manualFields.includes("status");
-    const synced = (locked ? undefined : guardedStatus(row.status, inferredWhStatus(m))) ?? row.status;
-    const status = evidenceStatus(synced, predicted) ?? synced;
-    if (!apply) { console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${predicted}   status ${row.status} -> ${status}   (spine seed ${m.overallStatusSeed ?? "∅"})`); continue; }
+    const synced = (locked ? undefined : guardedStatus(row.status, inferredWhStatus(m, m.patch.dispatchedTs ?? row.dispatchedTs?.toISOString()))) ?? row.status;
+    const status = evidenceStatus(synced, predicted, Boolean(m.patch.dispatchedTs ?? row.dispatchedTs)) ?? synced;
+    // A childless order takes the spine seed verbatim (then never WH Processing once dispatched).
+    const expected = dispatchedOverall(m.shipments.length || frozen ? predicted : (m.overallStatusSeed ?? predicted), status);
+    if (!apply) { console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${expected}   status ${row.status} -> ${status}   (spine seed ${m.overallStatusSeed ?? "∅"})`); continue; }
 
     const res = await syncSnowflakeOrder(m, orderToDomain(row), kids);
     const { overallStatus: after, status: afterStatus } = (await db.order.findUnique({ where: { soNumber: so }, select: { overallStatus: true, status: true } }))!;
-    console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${after.padEnd(10)} status ${row.status} -> ${afterStatus}   changed=${res.changed} conflicts=${res.conflicts}${after !== predicted ? `   !! predicted ${predicted}` : ""}`);
+    console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${after.padEnd(10)} status ${row.status} -> ${afterStatus}   changed=${res.changed} conflicts=${res.conflicts}${after !== expected ? `   !! predicted ${expected}` : ""}`);
   }
 }
 main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

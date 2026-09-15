@@ -340,3 +340,14 @@ describe("rollupShipments", () => {
     expect(rollupShipments(["RETURN", "RETURN"])).toBe("RETURN");
   });
 });
+
+describe("UC_DISPATCHED_TIMESTAMP — the dispatch the spine carries", () => {
+  it("maps to dispatchedTs/dispatchedDate as IST wall-clock, and NULL to nothing", () => {
+    const [hit] = mapDistributionRows([row({ ORDER_NAME: "JANAKP16765", UC_DISPATCHED_TIMESTAMP: "2026-09-13 06:03:15.000" })]);
+    expect(hit.patch.dispatchedTs).toBe(isoFromIstNtz("2026-09-13 06:03:15.000"));
+    expect(hit.patch.dispatchedDate).toBe("2026-09-13");
+    const [miss] = mapDistributionRows([row({ ORDER_NAME: "MOTINA16765", UC_DISPATCHED_TIMESTAMP: "NULL" })]);
+    expect(miss.patch.dispatchedTs).toBeUndefined();
+    expect(miss.patch.dispatchedDate).toBeUndefined();
+  });
+});

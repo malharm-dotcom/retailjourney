@@ -897,6 +897,24 @@ export function withInwardSeed(rollup: OverallStatus, seed?: OverallStatus): Ove
   return "INWARDED";
 }
 
+const PAST_WAREHOUSE: OverallStatus[] = ["IN_TRANSIT", "DELIVERED", "INWARDED"];
+
+/**
+ * The warehouse stage the spine proves an order reached. An AWB child OR a
+ * spine OVERALL_STATUS already past the warehouse means the stock left the
+ * building. Milk-run orders never get an AWB, so before the second test they
+ * sat at RTS_LOGIC for good while the spine read INWARDED (live 2026-09-15:
+ * 25 orders, e.g. CYBERH15597, 70+ days in the Warehouse tab).
+ */
+export function inferredWhStatus(
+  m: Pick<MappedOrder, "shipments" | "patch" | "overallStatusSeed">,
+): OrderStatus | undefined {
+  if (m.shipments.length || (m.overallStatusSeed && PAST_WAREHOUSE.includes(m.overallStatusSeed))) {
+    return "DISPATCHED_TO_STORE";
+  }
+  return m.patch.manifestedTs ? "RTS_LOGIC" : undefined;
+}
+
 /**
  * The overallStatus of a FROZEN order — one the sync has already seen deliver
  * (the order rolled up DELIVERED, or every one of its AWBs did).
@@ -929,11 +947,7 @@ export function frozenOverall(current: OverallStatus, seed?: OverallStatus): Ove
 
 async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<void> {
   const db = prisma();
-  const status: OrderStatus = m.shipments.length
-    ? "DISPATCHED_TO_STORE"
-    : m.patch.manifestedTs
-      ? "RTS_LOGIC"
-      : "NOT_STARTED";
+  const status: OrderStatus = inferredWhStatus(m) ?? "NOT_STARTED";
   const shipRollup = rollupShipments(m.shipments.map((s) => s.shipmentStatus));
   const primary = m.shipments.find((s) => s.isPollable) ?? m.shipments[0];
 
@@ -1018,12 +1032,7 @@ export async function syncSnowflakeOrder(
   const patch: Partial<Order> = { ...m.patch, ...phaseASla(m.patch, existing) };
   if (!isKnownFacility(patch.facility)) delete patch.facility;
 
-  const inferred: OrderStatus | undefined = m.shipments.length
-    ? "DISPATCHED_TO_STORE"
-    : m.patch.manifestedTs
-      ? "RTS_LOGIC"
-      : undefined;
-  patch.status = frozen ? undefined : guardedStatus(existing.status, inferred);
+  patch.status = frozen ? undefined : guardedStatus(existing.status, inferredWhStatus(m));
   if (patch.status) patch.statusSource = "SYNCED_SNOWFLAKE";
 
   const hasPollable = children.some((c) => c.isPollable);

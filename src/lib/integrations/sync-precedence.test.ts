@@ -17,6 +17,7 @@ import {
   transitPatchFromChild,
   withInwardSeed,
   frozenOverall,
+  inferredWhStatus,
 } from "./sync";
 import type { Order, OrderShipment } from "../types";
 
@@ -352,5 +353,27 @@ describe("resolveOverallStatus — a courier scan never reopens an inwarded orde
   it("orders that were never inwarded roll up exactly as before", () => {
     const moving = order({ overallStatus: "PICKUP_PENDING", shipmentStatus: undefined });
     expect(resolveOverallStatus(moving, { shipmentStatus: "IN_TRANSIT" }).next).toBe("IN_TRANSIT");
+  });
+});
+
+describe("inferredWhStatus — a milk run with no AWB still leaves the warehouse", () => {
+  type M = Parameters<typeof inferredWhStatus>[0];
+  const m = (over: Partial<M>): M => ({ shipments: [], patch: {}, ...over });
+  const manifested = { manifestedTs: "2026-07-03T09:39:44.000Z" };
+
+  it("a spine past the warehouse dispatches a childless order (CYBERH15597: RTS 70+ days, spine INWARDED)", () => {
+    for (const seed of ["INWARDED", "DELIVERED", "IN_TRANSIT"] as const) {
+      expect(inferredWhStatus(m({ patch: manifested, overallStatusSeed: seed }))).toBe("DISPATCHED_TO_STORE");
+    }
+  });
+
+  it("an AWB child still dispatches on its own", () => {
+    expect(inferredWhStatus(m({ shipments: [{}] as M["shipments"] }))).toBe("DISPATCHED_TO_STORE");
+  });
+
+  it("a spine still at the warehouse keeps the old ladder", () => {
+    expect(inferredWhStatus(m({ patch: manifested, overallStatusSeed: "PICKUP_PENDING" }))).toBe("RTS_LOGIC");
+    expect(inferredWhStatus(m({ patch: manifested }))).toBe("RTS_LOGIC");
+    expect(inferredWhStatus(m({ overallStatusSeed: "WH_PROCESSING" }))).toBeUndefined();
   });
 });

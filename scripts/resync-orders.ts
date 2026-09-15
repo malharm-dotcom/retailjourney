@@ -17,7 +17,7 @@ import { querySnowflake, spineWindowQuery, type DistributionRow } from "../src/l
 import { mapDistributionRows } from "../src/lib/distribution-map";
 import { orderToDomain, shipmentToDomain } from "../src/lib/prisma-map";
 import { rollupOverall, rollupShipments } from "../src/lib/journey";
-import { syncSnowflakeOrder, withInwardSeed, frozenOverall } from "../src/lib/integrations/sync";
+import { syncSnowflakeOrder, withInwardSeed, frozenOverall, guardedStatus, inferredWhStatus } from "../src/lib/integrations/sync";
 
 const WINDOW_DAYS = 120;
 
@@ -42,11 +42,13 @@ async function main() {
       ? frozenOverall(before, m.overallStatusSeed)
       : withInwardSeed(rollupOverall({ status: row.status, shipmentStatus: rollupShipments(m.shipments.map((s) => s.shipmentStatus)) }), m.overallStatusSeed);
 
-    if (!apply) { console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${predicted}   (spine seed ${m.overallStatusSeed ?? "∅"})`); continue; }
+    const locked = frozen || row.manualFields.includes("status");
+    const status = (locked ? undefined : guardedStatus(row.status, inferredWhStatus(m))) ?? row.status;
+    if (!apply) { console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${predicted}   status ${row.status} -> ${status}   (spine seed ${m.overallStatusSeed ?? "∅"})`); continue; }
 
     const res = await syncSnowflakeOrder(m, orderToDomain(row), kids);
-    const after = (await db.order.findUnique({ where: { soNumber: so }, select: { overallStatus: true } }))!.overallStatus;
-    console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${after.padEnd(10)} changed=${res.changed} conflicts=${res.conflicts}${after !== predicted ? `   !! predicted ${predicted}` : ""}`);
+    const { overallStatus: after, status: afterStatus } = (await db.order.findUnique({ where: { soNumber: so }, select: { overallStatus: true, status: true } }))!;
+    console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${after.padEnd(10)} status ${row.status} -> ${afterStatus}   changed=${res.changed} conflicts=${res.conflicts}${after !== predicted ? `   !! predicted ${predicted}` : ""}`);
   }
 }
 main().then(() => process.exit(0)).catch((e) => { console.error(e); process.exit(1); });

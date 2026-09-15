@@ -12,13 +12,16 @@
 import Link from "next/link";
 import { NsoBadge } from "@/components/nso-badge";
 import { PageHead } from "@/components/shell/page-head";
+import { Pager } from "@/components/ui/pager";
 import { searchOrders } from "@/lib/data";
 import { fmtDate } from "@/lib/ist";
 import { OVERALL_LABEL, STATUS_LABEL } from "@/lib/journey";
 import {
   DEFAULT_WINDOW_DAYS,
+  ORDERS_PAGE_SIZE,
   SEARCHABLE_STATUSES,
   isSearching,
+  pageFromParams,
   searchFromParams,
 } from "@/lib/order-search";
 import { repo } from "@/lib/repo";
@@ -40,11 +43,24 @@ export default async function OrdersPage({
 }) {
   const { user, scope } = await requireSession();
   const search = searchFromParams(searchParams);
-  const [orders, stores] = await Promise.all([
-    searchOrders(scope, user, search),
+  const page = pageFromParams(searchParams);
+  const [{ orders, total }, stores] = await Promise.all([
+    searchOrders(scope, user, search, page),
     repo.listStores(),
   ]);
   const searching = isSearching(search);
+
+  // The same search, another page — the URL stays the whole state.
+  const hrefFor = (p: number): string => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(searchParams)) {
+      const one = Array.isArray(v) ? v[0] : v;
+      if (k !== "page" && one) qs.set(k, one);
+    }
+    if (p > 1) qs.set("page", String(p));
+    const s = qs.toString();
+    return s ? `/orders?${s}` : "/orders";
+  };
 
   // Facets come from the store MASTER, not from the rows on screen: a picker
   // built from the current result set would only ever offer stores from the
@@ -66,8 +82,8 @@ export default async function OrdersPage({
         title="Orders"
         sub={
           searching
-            ? `Searching every order on record — ${orders.length} match${orders.length === 1 ? "" : "es"}.`
-            : `The last ${DEFAULT_WINDOW_DAYS} days — ${orders.length} order${orders.length === 1 ? "" : "s"}. Search to reach the full history.`
+            ? `Searching every order on record — ${total} match${total === 1 ? "" : "es"}.`
+            : `The last ${DEFAULT_WINDOW_DAYS} days — ${total} order${total === 1 ? "" : "s"}. Search to reach the full history.`
         }
       />
 
@@ -217,6 +233,7 @@ export default async function OrdersPage({
           </div>
         </div>
       </div>
+      <Pager page={page} pageSize={ORDERS_PAGE_SIZE} total={total} hrefFor={hrefFor} />
     </>
   );
 }

@@ -6,6 +6,8 @@ import { repo } from "./repo";
 import { computeOrderSla, isBreaching, ruleFor, type OrderSla } from "./sla";
 import { primaryAwb, transitAnchor, type BoardShipment, type TransitAnchor } from "./transit-anchor";
 import type { FacilityScope, Order, RulebookEntry, User } from "./types";
+import { dataGeneration } from "./db";
+import { ORDERS_PAGE_SIZE } from "./order-search";
 
 export interface OrderRow {
   order: Order;
@@ -45,6 +47,38 @@ export async function scopedOrders(
   search?: OrderSearch,
 ): Promise<OrderRow[]> {
   const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
+  if (search) return buildRows(scope, am, search);
+  // The same two predicates listOrders() applies, over the shared snapshot.
+  // filter() always copies, so a caller sorting its rows never reorders it.
+  return (await boardSnapshot()).filter(
+    (r) => (scope === "ALL" || r.order.facility === scope) && (!am || r.order.areaManager === am),
+  );
+}
+
+/**
+ * Every board reads the same thing — every order with its SLA — and building
+ * it costs ~2.5s (10k orders, the shipment join, the SLA engine per row). One
+ * snapshot serves every board and user for BOARD_TTL_MS, and is dropped the
+ * moment a repo write or a finished sync run bumps the data generation, so a
+ * manual edit shows on the very next render. Concurrent requests share one
+ * in-flight build.
+ */
+// ponytail: one in-process snapshot; move to a shared cache if the app ever runs as >1 instance.
+const BOARD_TTL_MS = 60_000;
+let snapshot: { gen: number; at: number; rows: Promise<OrderRow[]> } | undefined;
+
+function boardSnapshot(): Promise<OrderRow[]> {
+  const gen = dataGeneration();
+  if (snapshot && snapshot.gen === gen && Date.now() - snapshot.at < BOARD_TTL_MS) return snapshot.rows;
+  const entry = { gen, at: Date.now(), rows: buildRows("ALL") };
+  snapshot = entry;
+  entry.rows.catch(() => {
+    if (snapshot === entry) snapshot = undefined;
+  });
+  return entry.rows;
+}
+
+async function buildRows(scope: FacilityScope, am?: string, search?: OrderSearch): Promise<OrderRow[]> {
   const [rules, orders] = await Promise.all([repo.listRules(), repo.listOrders(scope, am, search)]);
   // One batched query for the whole page — never one per row.
   const anchorShipments = await repo.listAnchorShipments(orders.map((o) => o.soNumber));
@@ -82,9 +116,10 @@ export async function searchOrders(
   scope: FacilityScope,
   user: User,
   search: OrderSearch,
-): Promise<Order[]> {
+  page: number,
+): Promise<{ orders: Order[]; total: number }> {
   const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
-  return repo.listOrders(scope, am, search);
+  return repo.searchOrders(scope, am, search, (page - 1) * ORDERS_PAGE_SIZE, ORDERS_PAGE_SIZE);
 }
 
 /**

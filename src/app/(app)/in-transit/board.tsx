@@ -7,6 +7,8 @@ import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Input } from "@/components/ui/primitives";
+import { Pager } from "@/components/ui/pager";
+import { TABLE_PAGE_SIZE, usePaged } from "@/components/ui/use-paged";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type StatusVisual } from "@/lib/ui";
 import type { OverallStatus, ShipmentStatus, Source } from "@/lib/types";
@@ -263,6 +265,7 @@ export function TransitBoard({
           b.ageing - a.ageing,
       );
   }, [rows, filter, q]);
+  const { rows: paged, page, setPage } = usePaged(shown, `${filter}|${q}`);
 
   /** Export exactly what is on screen: the chip filter, the search box and the
    *  facility scope have all already been applied to `shown`, in the order the
@@ -354,11 +357,11 @@ export function TransitBoard({
             No shipments match — clear the filters or switch facility.
           </div>
         ) : (
-          shown.map((r, i) => {
+          paged.map((r, i) => {
             const v = visualOf(r);
             const late = lateness(r);
             const isFirst = i === 0;
-            const isLast = i === shown.length - 1;
+            const isLast = i === paged.length - 1;
             return (
               <div
                 key={r.so}
@@ -467,6 +470,8 @@ export function TransitBoard({
           })
         )}
       </div>
+
+      <Pager page={page} pageSize={TABLE_PAGE_SIZE} total={shown.length} onPage={setPage} />
 
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-1 px-1 pb-8 pt-4 text-dense text-mute">
         {/* Announced, because filtering is the one action here whose entire

@@ -3,7 +3,7 @@
 // PrismaRepo when DATABASE_URL is set, else to the in-memory seed store (local
 // UI work without a DB). Every mutation appends OrderEvents.
 
-import { databaseConfigured } from "./db";
+import { databaseConfigured, markDataChanged } from "./db";
 import { PrismaRepo } from "./repo-prisma";
 import { atIstCutoff, istDateOf, istToday, nowIso } from "./ist";
 import { matchesSearch, orderDateFloor, type OrderSearch } from "./order-search";
@@ -53,6 +53,14 @@ export interface OrderRepo {
    *  (even empty) to get the 30-day default window plus the search lift.
    *  OMIT it for the boards, which stay unwindowed exactly as they were. */
   listOrders(scope: FacilityScope, areaManager?: string, search?: OrderSearch): Promise<Order[]>;
+  /** One page of the /orders list, plus the total the page was cut from. */
+  searchOrders(
+    scope: FacilityScope,
+    areaManager: string | undefined,
+    search: OrderSearch,
+    skip: number,
+    take: number,
+  ): Promise<{ orders: Order[]; total: number }>;
   getOrder(soNumber: string): Promise<Order | undefined>;
   listEvents(orderId: string): Promise<OrderEvent[]>;
   listAllEvents(): Promise<OrderEvent[]>;
@@ -148,6 +156,11 @@ class InMemoryRepo implements OrderRepo {
       all = all.filter((o) => matchesSearch(o, search, floor));
     }
     return all.sort((a, b) => (a.orderTimestamp < b.orderTimestamp ? 1 : -1));
+  }
+
+  async searchOrders(scope: FacilityScope, areaManager: string | undefined, search: OrderSearch, skip: number, take: number) {
+    const all = await this.listOrders(scope, areaManager, search);
+    return { orders: all.slice(skip, skip + take), total: all.length };
   }
 
   async getOrder(soNumber: string): Promise<Order | undefined> {
@@ -397,20 +410,27 @@ function impl(): OrderRepo {
   return inMemory;
 }
 
+/** Every write through the repo marks the data changed, so cached board reads
+ *  (data.ts) rebuild on the next render. */
+const written = <T>(p: Promise<T>): Promise<T> => p.finally(markDataChanged);
+
 export const repo: OrderRepo = {
-  listOrders: (scope, areaManager) => impl().listOrders(scope, areaManager),
+  // `search` was dropped here from M2 until 2026-09-15, so every /orders
+  // search and the 30-day default returned all 10,221 orders.
+  listOrders: (scope, areaManager, search) => impl().listOrders(scope, areaManager, search),
+  searchOrders: (scope, areaManager, search, skip, take) => impl().searchOrders(scope, areaManager, search, skip, take),
   getOrder: (soNumber) => impl().getOrder(soNumber),
   listEvents: (orderId) => impl().listEvents(orderId),
   listAllEvents: () => impl().listAllEvents(),
   listStores: () => impl().listStores(),
   listRules: () => impl().listRules(),
   listUsers: () => impl().listUsers(),
-  transitionStatus: (soNumber, to, actor, captures, note) => impl().transitionStatus(soNumber, to, actor, captures, note),
-  transitionShipment: (soNumber, to, actor, source, note) => impl().transitionShipment(soNumber, to, actor, source, note),
-  manualShipmentUpdate: (soNumber, input, actor, note) => impl().manualShipmentUpdate(soNumber, input, actor, note),
-  recordNdrAttempt: (soNumber, actor, note) => impl().recordNdrAttempt(soNumber, actor, note),
-  updateFields: (soNumber, patch, actor, source, note) => impl().updateFields(soNumber, patch, actor, source, note),
+  transitionStatus: (soNumber, to, actor, captures, note) => written(impl().transitionStatus(soNumber, to, actor, captures, note)),
+  transitionShipment: (soNumber, to, actor, source, note) => written(impl().transitionShipment(soNumber, to, actor, source, note)),
+  manualShipmentUpdate: (soNumber, input, actor, note) => written(impl().manualShipmentUpdate(soNumber, input, actor, note)),
+  recordNdrAttempt: (soNumber, actor, note) => written(impl().recordNdrAttempt(soNumber, actor, note)),
+  updateFields: (soNumber, patch, actor, source, note) => written(impl().updateFields(soNumber, patch, actor, source, note)),
   listShipments: (soNumber) => impl().listShipments(soNumber),
   listAnchorShipments: (soNumbers) => impl().listAnchorShipments(soNumbers),
-  upsertShipment: (shipment) => impl().upsertShipment(shipment),
+  upsertShipment: (shipment) => written(impl().upsertShipment(shipment)),
 };

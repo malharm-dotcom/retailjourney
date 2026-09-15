@@ -31,6 +31,8 @@ import {
   DropdownTrigger,
 } from "@/components/ui/dropdown";
 import { Button, Field, Input, Select } from "@/components/ui/primitives";
+import { Pager } from "@/components/ui/pager";
+import { TABLE_PAGE_SIZE, usePaged } from "@/components/ui/use-paged";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import type { ImportTarget } from "@/lib/csv-import";
 import { fmtDate, fmtDateTime } from "@/lib/ist";
@@ -286,6 +288,8 @@ export function QueueTable({
     // the one that has been sitting longest is the one to deal with first.
     return [...rows].sort((a, b) => cmp(a, b) || b.ageDays - a.ageDays || a.so.localeCompare(b.so));
   }, [rows, sort, stageOf]);
+  // `offset` keeps shift-click ranges indexing into the full sorted list.
+  const { rows: paged, page, offset, setPage } = usePaged(sorted, `${JSON.stringify(filters)}|${sort.key}|${sort.dir}`);
 
   const rowBySo = useMemo(() => new Map(rows.map((r) => [r.so, r])), [rows]);
   const selectedStatuses = useMemo(
@@ -586,7 +590,8 @@ export function QueueTable({
             No orders match — clear the filters or switch facility.
           </div>
         ) : (
-          sorted.map((r, i) => {
+          paged.map((r, j) => {
+            const i = offset + j;
             // The EFFECTIVE stage: an optimistically advanced row must offer
             // its new stage's transitions, not the one it came from.
             const stage = stageOf(r);
@@ -607,7 +612,7 @@ export function QueueTable({
                   "row-skip",
                   density === "compact" ? "md:py-0" : "md:py-1",
                   i === 0 && "max-md:rounded-t-card",
-                  i === sorted.length - 1 && "rounded-b-card",
+                  j === paged.length - 1 && "rounded-b-card",
                   isSel && "bg-paper",
                   rejected[r.so] && "animate-breachArrive",
                 )}
@@ -856,6 +861,8 @@ export function QueueTable({
           })
         )}
       </div>
+
+      <Pager page={page} pageSize={TABLE_PAGE_SIZE} total={sorted.length} onPage={setPage} />
 
       <div className="pb-24 pt-3 text-dense text-mute">
         {terminalCount} cancelled / unfulfillable orders in this scope — see Reports for the full funnel.

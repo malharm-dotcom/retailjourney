@@ -102,6 +102,11 @@ function searchWhere(search: OrderSearch) {
   };
 }
 
+/** List reads never need `checkpoints`: the eShipz scan history is over half
+ *  of every row's bytes (622 of 1,131 avg) and only the sync reads it. */
+const LIST_OMIT = { checkpoints: true } as const;
+type DbOrderRow = Parameters<typeof orderToDomain>[0];
+
 export class PrismaRepo implements OrderRepo {
   async listOrders(scope: FacilityScope, areaManager?: string, search?: OrderSearch): Promise<Order[]> {
     const rows = await prisma().order.findMany({
@@ -114,8 +119,29 @@ export class PrismaRepo implements OrderRepo {
         ...(search ? searchWhere(search) : {}),
       },
       orderBy: { orderTimestamp: "desc" },
+      omit: LIST_OMIT,
     });
-    return rows.map(orderToDomain);
+    return rows.map((r) => orderToDomain(r as DbOrderRow));
+  }
+
+  async searchOrders(scope: FacilityScope, areaManager: string | undefined, search: OrderSearch, skip: number, take: number) {
+    const where = {
+      ...(scope !== "ALL" ? { facility: scope } : {}),
+      ...(areaManager ? { areaManager } : {}),
+      ...searchWhere(search),
+    };
+    const [rows, total] = await Promise.all([
+      prisma().order.findMany({
+        where,
+        // soNumber breaks orderTimestamp ties so a page boundary is stable.
+        orderBy: [{ orderTimestamp: "desc" }, { soNumber: "asc" }],
+        skip,
+        take,
+        omit: LIST_OMIT,
+      }),
+      prisma().order.count({ where }),
+    ]);
+    return { orders: rows.map((r) => orderToDomain(r as DbOrderRow)), total };
   }
 
   async getOrder(soNumber: string): Promise<Order | undefined> {

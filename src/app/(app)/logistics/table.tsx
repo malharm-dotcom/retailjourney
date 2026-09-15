@@ -20,6 +20,8 @@ import { JourneyLink } from "@/components/journey-link";
 import { ShipmentDialog } from "@/components/shipment-dialog";
 import { StatusPill } from "@/components/ui/pill";
 import { Button, Chip, Input, Select } from "@/components/ui/primitives";
+import { Pager } from "@/components/ui/pager";
+import { TABLE_PAGE_SIZE, usePaged } from "@/components/ui/use-paged";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import { addDays, fmtDate, istToday } from "@/lib/ist";
 import type { OrderType, ShipmentStatus, Source } from "@/lib/types";
@@ -297,6 +299,10 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
         return x.localeCompare(y) * dir || a.so.localeCompare(b.so);
       });
   }, [rows, filter, q, facility, type, courier, from, to, sort]);
+  const { rows: paged, page, setPage } = usePaged(
+    shown,
+    [filter, q, facility, type, courier, from, to, sort.key, sort.dir].join("|"),
+  );
 
   const toggleSort = (key: SortKey) =>
     setSort((s) =>
@@ -557,11 +563,11 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
             Nothing here — clear the filters, or dispatch something from the Warehouse queue.
           </div>
         ) : (
-          shown.map((r, i) => {
+          paged.map((r, i) => {
             const v = r.shipment ? SHIPMENT_VISUAL[r.shipment] : OVERALL_VISUAL.PICKUP_PENDING;
             const tat = r.tat ? TAT_VISUAL[r.tat] : null;
             const expanded = open.has(r.so);
-            const isLast = i === shown.length - 1;
+            const isLast = i === paged.length - 1;
             return (
               <div key={r.so}>
                 <div
@@ -829,6 +835,8 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
           })
         )}
       </div>
+
+      <Pager page={page} pageSize={TABLE_PAGE_SIZE} total={shown.length} onPage={setPage} />
 
       <p aria-live="polite" className="px-1 pb-8 pt-4 text-dense text-mute">
         Showing <b className="font-semibold text-ink-soft">{shown.length}</b> of{" "}

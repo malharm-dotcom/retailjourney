@@ -6,7 +6,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
-const g = globalThis as unknown as { __retailjourneyPrisma?: PrismaClient };
+const g = globalThis as unknown as { __retailjourneyPrisma?: PrismaClient; __retailjourneyDataGen?: number };
 
 const PROD_DB_HOST = "168.144.81.147";
 
@@ -28,6 +28,19 @@ export function assertProdDbAllowed(url: string): void {
       `The deployed app sets RETAILJOURNEY_DEPLOY_ENV=production in Coolify; local processes never carry it. ` +
       `For a deliberate operator script against prod, run with RETAILJOURNEY_ALLOW_PROD_DB=1 for that invocation only.`,
   );
+}
+
+/**
+ * Bumped after every write the app makes — a repo mutation or a finished sync
+ * run. Readers that cache (the board snapshot in data.ts) treat a changed
+ * number as stale, so a manual edit is never hidden behind a cache.
+ */
+export function dataGeneration(): number {
+  return g.__retailjourneyDataGen ?? 0;
+}
+
+export function markDataChanged(): void {
+  g.__retailjourneyDataGen = dataGeneration() + 1;
 }
 
 export function databaseConfigured(): boolean {

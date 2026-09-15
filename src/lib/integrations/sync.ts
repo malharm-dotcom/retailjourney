@@ -4,7 +4,7 @@
 // overwritten (the conflict is logged instead — manual wins, PRD §2).
 
 import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
-import { prisma, databaseConfigured } from "../db";
+import { prisma, databaseConfigured, markDataChanged } from "../db";
 import { isoFromEpochMs, isoFromIstNtz, istDateOf, nowIso, istToday } from "../ist";
 import { PAST_WAREHOUSE, TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, isDeadShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
@@ -265,6 +265,7 @@ async function finishRun(
       ...(watermark !== undefined ? { watermark } : {}),
     },
   });
+  markDataChanged();
 }
 
 /** SyncRun.source for scheduler lifecycle markers. Deliberately outside the

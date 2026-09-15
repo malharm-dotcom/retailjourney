@@ -13,6 +13,16 @@ import type { OrderStatus, OrderType } from "./types";
 /** How many days of orders the default (unsearched) list paints. */
 export const DEFAULT_WINDOW_DAYS = 30;
 
+/** Rows per page on the /orders list. */
+export const ORDERS_PAGE_SIZE = 100;
+
+/** 1-based page from `?page=`; anything else is page 1. */
+export function pageFromParams(params: Record<string, string | string[] | undefined>): number {
+  const v = params.page;
+  const n = Number(Array.isArray(v) ? v[0] : v);
+  return Number.isInteger(n) && n > 1 ? n : 1;
+}
+
 export interface OrderSearch {
   /** SO number or store name, substring, case-insensitive. */
   q: string;

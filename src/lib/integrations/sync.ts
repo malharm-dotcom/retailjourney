@@ -140,6 +140,16 @@ function eq(a: unknown, b: unknown): boolean {
  * with every scalar field already equal) returned `changed: false` and wrote
  * NOTHING. Live consequence — spine rows that had resolved to DELIVERED kept
  * rendering In Transit because the override never reached the database.
+ *
+ * INWARDED is held against every source that has no verdict of its own.
+ * rollupOverall only knows the courier ladder, so without this the eShipz
+ * poller re-rolled every inwarded order from its courier status and reopened
+ * it: live 2026-09-15, the hourly Snowflake run closed an order to INWARDED
+ * and the 15-minute poller put it back In Transit on its next pass
+ * (MALADI16048, COLABA16034, EXPRES16119 … 29 in-window orders), so the board
+ * showed them open three polls in every four. Only an explicit override —
+ * the Snowflake path, which reads the spine's own inward verdict — may move an
+ * order off INWARDED; a courier scan never can.
  * (Exported for the precedence tests only.)
  */
 export function resolveOverallStatus(
@@ -147,7 +157,7 @@ export function resolveOverallStatus(
   data: Partial<Order>,
   override?: OverallStatus,
 ): { next: OverallStatus; changed: boolean } {
-  const next = override ?? rollupOverall({ ...o, ...data });
+  const next = override ?? (o.overallStatus === "INWARDED" ? "INWARDED" : rollupOverall({ ...o, ...data }));
   return { next, changed: next !== o.overallStatus };
 }
 

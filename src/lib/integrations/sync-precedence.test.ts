@@ -327,3 +327,30 @@ describe("frozenOverall — a frozen order is delivered, whatever its manual shi
     expect(frozenOverall("INWARDED", "DELIVERED")).toBe("INWARDED");
   });
 });
+
+describe("resolveOverallStatus — a courier scan never reopens an inwarded order", () => {
+  // Live 2026-09-15: Snowflake closed MALADI16048 to INWARDED hourly and the
+  // eShipz poller reopened it to In Transit 15 minutes later, every hour.
+  const inwarded = order({ overallStatus: "INWARDED", shipmentStatus: "IN_TRANSIT" });
+
+  it("holds INWARDED against a poller patch that carries no verdict", () => {
+    const r = resolveOverallStatus(inwarded, { shipmentStatus: "IN_TRANSIT", trackingLatestMessage: "scan" });
+    expect(r.next).toBe("INWARDED");
+    expect(r.changed).toBe(false);
+  });
+
+  it("holds it against every courier state, delivered and dead labels included", () => {
+    for (const s of ["INFORECEIVED", "PICKED_UP", "OUT_FOR_DELIVERY", "DELIVERED", "DELIVERY_FAILED", "RETURN"] as const) {
+      expect(resolveOverallStatus(inwarded, { shipmentStatus: s }).next, s).toBe("INWARDED");
+    }
+  });
+
+  it("an explicit override (the spine's own verdict) can still move it", () => {
+    expect(resolveOverallStatus(inwarded, {}, "IN_TRANSIT").next).toBe("IN_TRANSIT");
+  });
+
+  it("orders that were never inwarded roll up exactly as before", () => {
+    const moving = order({ overallStatus: "PICKUP_PENDING", shipmentStatus: undefined });
+    expect(resolveOverallStatus(moving, { shipmentStatus: "IN_TRANSIT" }).next).toBe("IN_TRANSIT");
+  });
+});

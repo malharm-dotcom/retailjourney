@@ -47,8 +47,8 @@ async function main() {
       cause = "INWARDED_OUT_OF_SYNC_WINDOW"; owner = "app (one-off re-read)";
       action = "Store booked it in; the event predates the watermark and the 45d sweep, so no sync will ever re-read it.";
     } else if (inwarded) {
-      cause = "INWARDED_NOT_YET_SYNCED"; owner = "app (next sync)";
-      action = "Inside the window — should close on the next hourly Snowflake run. Re-check if it persists.";
+      cause = "INWARDED_REOPENED_BY_POLLER"; owner = "app (fixed, needs redeploy)";
+      action = "Store booked it in. The hourly Snowflake run closes it, but pre-fix the 15-min eShipz poller reopened it from courier status. Closes and stays closed after redeploy.";
     } else if (!o.shipments.length && dispAge !== undefined && dispAge > 3) {
       cause = S(r0?.SHIPMENT_BILL) ? "ORPHAN_BILL_BUT_NO_ESHIPZ" : "ORPHAN_NO_STO_BILL";
       owner = S(r0?.SHIPMENT_BILL) ? "logistics — eShipz booking" : "logistics — Logic STO";

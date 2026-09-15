@@ -990,7 +990,9 @@ async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<
   });
 }
 
-async function syncSnowflakeOrder(
+/** (Exported for scripts/resync-orders.ts — the operator re-read of named
+ *  orders the watermark and the dated sweep can no longer reach.) */
+export async function syncSnowflakeOrder(
   m: MappedOrder,
   existing: Order,
   existingChildren: OrderShipment[],

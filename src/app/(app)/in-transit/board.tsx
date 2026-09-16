@@ -6,7 +6,7 @@ import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
-import { Button, Chip, Input } from "@/components/ui/primitives";
+import { Button, Chip, Input, Select } from "@/components/ui/primitives";
 import { Pager } from "@/components/ui/pager";
 import { TABLE_PAGE_SIZE, usePaged } from "@/components/ui/use-paged";
 import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
@@ -66,6 +66,46 @@ function lateness(r: TransitRow): { value: string; note: string; className: stri
 }
 
 type FilterKey = "all" | "PICKUP_PENDING" | "IN_TRANSIT" | "DELIVERED" | "breach" | "late";
+
+type SortKey = "late" | "age" | "edd" | "so" | "store" | "courier" | "status";
+
+const SORTS: { key: SortKey; label: string }[] = [
+  { key: "late", label: "Lateness" },
+  { key: "age", label: "Days on road" },
+  { key: "edd", label: "EDD" },
+  { key: "so", label: "SO number" },
+  { key: "store", label: "Store" },
+  { key: "courier", label: "Courier" },
+  { key: "status", label: "Status" },
+];
+
+/** Ascending order for each key; the board flips it for "highest first". The
+ *  lateness default is the board's original comparator, so the screen a
+ *  supervisor knows is still the one that loads. */
+function compareBy(key: SortKey, a: TransitRow, b: TransitRow): number {
+  switch (key) {
+    case "age":
+      return a.ageing - b.ageing;
+    case "edd":
+      return (a.edd ?? "").localeCompare(b.edd ?? "");
+    case "so":
+      return a.so.localeCompare(b.so);
+    case "store":
+      return a.store.localeCompare(b.store);
+    case "courier":
+      return (a.courier ?? "").localeCompare(b.courier ?? "");
+    case "status":
+      return a.overall.localeCompare(b.overall);
+    default:
+      // No-EDD rows sort last either way: "we never promised a date" filed in
+      // among the on-time orders is exactly where nobody would look for it.
+      return (
+        Number(a.breaching) - Number(b.breaching) ||
+        (a.pastEdd ?? -Infinity) - (b.pastEdd ?? -Infinity) ||
+        a.ageing - b.ageing
+      );
+  }
+}
 
 function visualOf(r: TransitRow): StatusVisual {
   if (r.shipment) return SHIPMENT_VISUAL[r.shipment];
@@ -162,6 +202,8 @@ export function TransitBoard({
 }) {
   const router = useRouter();
   const [filter, setFilter] = useState<FilterKey>("all");
+  const [sort, setSort] = useState<SortKey>("late");
+  const [dir, setDir] = useState<"asc" | "desc">("desc");
   const [q, setQ] = useState("");
   const searchId = useId();
 
@@ -255,17 +297,9 @@ export function TransitBoard({
           return false;
         return true;
       })
-      // Latest-first on lateness, with no-EDD rows last. Sorting them as 0
-      // would file "we never promised a date" in among the on-time orders,
-      // which is exactly where nobody would look for them.
-      .sort(
-        (a, b) =>
-          Number(b.breaching) - Number(a.breaching) ||
-          (b.pastEdd ?? -Infinity) - (a.pastEdd ?? -Infinity) ||
-          b.ageing - a.ageing,
-      );
-  }, [rows, filter, q]);
-  const { rows: paged, page, setPage } = usePaged(shown, `${filter}|${q}`);
+      .sort((a, b) => compareBy(sort, a, b) * (dir === "asc" ? 1 : -1) || a.so.localeCompare(b.so));
+  }, [rows, filter, q, sort, dir]);
+  const { rows: paged, page, setPage } = usePaged(shown, `${filter}|${q}|${sort}|${dir}`);
 
   /** Export exactly what is on screen: the chip filter, the search box and the
    *  facility scope have all already been applied to `shown`, in the order the
@@ -295,7 +329,31 @@ export function TransitBoard({
         <Chip active={filter === "breach"} tone="failed" onClick={() => setFilter("breach")}>
           Breaching
         </Chip>
-        <div className="ml-auto flex min-w-[250px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:flex-none">
+        <label className="ml-auto flex items-center gap-2">
+          <span className="text-dense text-mute">Sort</span>
+          <Select
+            value={sort}
+            onChange={(e) => setSort(e.target.value as SortKey)}
+            className="w-[150px]"
+            aria-label="Sort shipments by"
+          >
+            {SORTS.map((s) => (
+              <option key={s.key} value={s.key}>
+                {s.label}
+              </option>
+            ))}
+          </Select>
+        </label>
+        <Button
+          variant="outline"
+          onClick={() => setDir((d) => (d === "asc" ? "desc" : "asc"))}
+          aria-label={dir === "desc" ? "Sorted highest first — switch to lowest first" : "Sorted lowest first — switch to highest first"}
+        >
+          <Icon name="alt-arrow-down-bold" size={15} className={dir === "asc" ? "rotate-180" : undefined} aria-hidden />
+          {dir === "desc" ? "Highest first" : "Lowest first"}
+        </Button>
+
+        <div className="flex min-w-[250px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:flex-none">
           <Icon name="magnifer-linear" size={15} />
           {/* The placeholder was doing the label's job, which leaves nothing to
               announce and nothing to read once you have typed. */}
@@ -482,7 +540,8 @@ export function TransitBoard({
           <b className="font-semibold text-ink-soft">{scopeLabel}</b>
         </p>
         <p>
-          Sorted by days past EDD · breaches first
+          Sorted by {SORTS.find((s) => s.key === sort)?.label.toLowerCase()} ·{" "}
+          {dir === "desc" ? "highest first" : "lowest first"}
           {refreshedAt ? (
             <span className="mono"> · refreshed {refreshedAt.toLocaleTimeString("en-IN", { hour12: false })} IST</span>
           ) : null}

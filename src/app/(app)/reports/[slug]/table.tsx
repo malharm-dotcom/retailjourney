@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
@@ -21,12 +22,29 @@ export function ReportTable({
   initial: { q: string; type: string; courier: string; from: string; to: string };
   showLookup: boolean;
 }) {
+  // Column sort, client-side: a report is one page of rows the server already
+  // built, so there is nothing here a re-query would add.
+  const [sort, setSort] = useState<{ col: number; dir: "asc" | "desc" } | null>(null);
+  const rows = useMemo(() => {
+    if (!sort) return data.rows;
+    const dir = sort.dir === "asc" ? 1 : -1;
+    return [...data.rows].sort((a, b) => {
+      const va = a[sort.col];
+      const vb = b[sort.col];
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va ?? "").localeCompare(String(vb ?? ""));
+      return cmp * dir;
+    });
+  }, [data.rows, sort]);
+
   const exportCsv = () => {
     const esc = (v: string | number) => {
       const s = String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const csv = [data.columns.map(esc).join(","), ...data.rows.map((r) => r.map(esc).join(","))].join("\n");
+    const csv = [data.columns.map(esc).join(","), ...rows.map((r) => r.map(esc).join(","))].join("\n");
     const blob = new Blob([`﻿${csv}`], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
@@ -97,22 +115,42 @@ export function ReportTable({
           <table className="w-full min-w-[760px] border-collapse text-left">
             <thead className="sticky top-0 z-10">
               <tr className="border-b border-line bg-paper text-cap font-semibold uppercase tracking-[0.04em] text-mute">
-                {data.columns.map((c) => (
-                  <th key={c} className="bg-paper px-4 py-3 font-semibold first:px-5">
-                    {c}
-                  </th>
-                ))}
+                {data.columns.map((c, j) => {
+                  const active = sort?.col === j;
+                  return (
+                    <th key={c} className="bg-paper px-4 py-3 font-semibold first:px-5">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSort((s) =>
+                            s?.col === j ? { col: j, dir: s.dir === "asc" ? "desc" : "asc" } : { col: j, dir: "asc" },
+                          )
+                        }
+                        className="flex items-center gap-1 font-semibold uppercase tracking-[0.04em] transition-colors duration-150 ease-ui hover:text-ink"
+                        aria-label={`Sort by ${c}`}
+                      >
+                        {c}
+                        <Icon
+                          name="alt-arrow-down-bold"
+                          size={12}
+                          className={active ? (sort!.dir === "asc" ? "rotate-180" : "") : "opacity-0"}
+                          aria-hidden
+                        />
+                      </button>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
-              {data.rows.length === 0 ? (
+              {rows.length === 0 ? (
                 <tr>
                   <td colSpan={data.columns.length} className="px-6 py-12 text-center text-sm text-mute">
                     No rows for these filters.
                   </td>
                 </tr>
               ) : (
-                data.rows.map((row, i) => (
+                rows.map((row, i) => (
                   <tr key={i} className="border-b border-line text-dense last:border-b-0 transition-colors duration-150 ease-ui hover:bg-paper">
                     {row.map((cell, j) => {
                       // Every SLA verdict on this surface used to render as grey

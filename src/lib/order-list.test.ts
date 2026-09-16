@@ -6,7 +6,7 @@
 
 import { beforeAll, describe, expect, it } from "vitest";
 import { scopedOrders } from "./data";
-import { pageFromParams, EMPTY_SEARCH } from "./order-search";
+import { pageFromParams, sortFromParams, EMPTY_SEARCH, DEFAULT_ORDER_SORT } from "./order-search";
 import { repo } from "./repo";
 import type { User } from "./types";
 
@@ -15,6 +15,9 @@ beforeAll(() => {
 });
 
 const admin = { id: "t", name: "T", role: "ADMIN", facilities: [] } as unknown as User;
+
+/** Everything the search matches, in the order the list itself pages through. */
+const ALL_TIME = { ...EMPTY_SEARCH, from: "2000-01-01" };
 
 describe("order search reaches the repo", () => {
   it("a search narrows the list instead of returning every order", async () => {
@@ -27,13 +30,13 @@ describe("order search reaches the repo", () => {
   });
 
   it("pages the same result set, and reports the total it was cut from", async () => {
-    const search = { ...EMPTY_SEARCH, from: "2000-01-01" };
-    const full = await repo.listOrders("ALL", undefined, search);
-    const first = await repo.searchOrders("ALL", undefined, search, 0, 2);
-    const second = await repo.searchOrders("ALL", undefined, search, 2, 2);
-    expect(first.total).toBe(full.length);
-    expect(first.orders.map((o) => o.soNumber)).toEqual(full.slice(0, 2).map((o) => o.soNumber));
-    expect(second.orders.map((o) => o.soNumber)).toEqual(full.slice(2, 4).map((o) => o.soNumber));
+    const full = await repo.searchOrders("ALL", undefined, ALL_TIME, 0, 10_000);
+    const first = await repo.searchOrders("ALL", undefined, ALL_TIME, 0, 2);
+    const second = await repo.searchOrders("ALL", undefined, ALL_TIME, 2, 2);
+    expect(first.total).toBe(full.total);
+    expect(full.orders.length).toBe(full.total);
+    expect(first.orders.map((o) => o.soNumber)).toEqual(full.orders.slice(0, 2).map((o) => o.soNumber));
+    expect(second.orders.map((o) => o.soNumber)).toEqual(full.orders.slice(2, 4).map((o) => o.soNumber));
   });
 
   it("?page= is 1-based and degrades to page 1", () => {
@@ -60,5 +63,29 @@ describe("board snapshot", () => {
     expect(a).not.toBe(b);
     a.reverse();
     expect(b[0].order.soNumber).not.toBe(a[0].order.soNumber);
+  });
+});
+
+describe("order list sorting", () => {
+  it("?sort=/dir= is read, and anything unknown degrades to newest-first", () => {
+    expect(sortFromParams({ sort: "store", dir: "asc" })).toEqual({ key: "store", dir: "asc" });
+    expect(sortFromParams({})).toEqual(DEFAULT_ORDER_SORT);
+    expect(sortFromParams({ sort: "nope", dir: "sideways" })).toEqual(DEFAULT_ORDER_SORT);
+  });
+
+  it("sorts the whole result set, not just the page (SO ascending)", async () => {
+    const all = await repo.listOrders("ALL", undefined, ALL_TIME);
+    const expected = all.map((o) => o.soNumber).sort((a, b) => a.localeCompare(b));
+    const first = await repo.searchOrders("ALL", undefined, ALL_TIME, 0, 3, { key: "so", dir: "asc" });
+    expect(first.orders.map((o) => o.soNumber)).toEqual(expected.slice(0, 3));
+    const last = await repo.searchOrders("ALL", undefined, ALL_TIME, expected.length - 1, 3, { key: "so", dir: "asc" });
+    expect(last.orders.map((o) => o.soNumber)).toEqual(expected.slice(-1));
+  });
+
+  it("descending is the mirror of ascending", async () => {
+    const asc = await repo.searchOrders("ALL", undefined, ALL_TIME, 0, 5, { key: "qty", dir: "asc" });
+    const desc = await repo.searchOrders("ALL", undefined, ALL_TIME, 0, 5, { key: "qty", dir: "desc" });
+    expect(asc.orders[0].qty).toBeLessThanOrEqual(desc.orders[0].qty);
+    expect(asc.total).toBe(desc.total);
   });
 });

@@ -13,6 +13,50 @@ import type { OrderStatus, OrderType } from "./types";
 /** How many days of orders the default (unsearched) list paints. */
 export const DEFAULT_WINDOW_DAYS = 30;
 
+/** Sortable columns on the /orders list → the Order field each one orders by.
+ *  Sorting is pushed to Postgres, not applied to the page: a page of 100 out
+ *  of 5,000 sorted client-side would only ever sort the 100. */
+export const ORDER_SORTS = {
+  date: "orderTimestamp",
+  so: "soNumber",
+  store: "storeNameFormat",
+  qty: "qty",
+  stage: "status",
+} as const;
+
+export type OrderSortKey = keyof typeof ORDER_SORTS;
+
+export const ORDER_SORT_LABEL: Record<OrderSortKey, string> = {
+  date: "Order date",
+  so: "SO number",
+  store: "Store",
+  qty: "Qty",
+  stage: "Stage",
+};
+
+export interface OrderSort {
+  key: OrderSortKey;
+  dir: "asc" | "desc";
+}
+
+/** Newest first — what the list has always shown. */
+export const DEFAULT_ORDER_SORT: OrderSort = { key: "date", dir: "desc" };
+
+/** An unknown sort degrades to the default rather than erroring: a
+ *  hand-edited URL should reorder the list, never break it. */
+export function sortFromParams(params: Record<string, string | string[] | undefined>): OrderSort {
+  const one = (k: string): string => {
+    const v = params[k];
+    return (Array.isArray(v) ? v[0] : v) ?? "";
+  };
+  const key = one("sort");
+  const dir = one("dir");
+  return {
+    key: key in ORDER_SORTS ? (key as OrderSortKey) : DEFAULT_ORDER_SORT.key,
+    dir: dir === "asc" || dir === "desc" ? dir : DEFAULT_ORDER_SORT.dir,
+  };
+}
+
 /** Rows per page on the /orders list. */
 export const ORDERS_PAGE_SIZE = 100;
 

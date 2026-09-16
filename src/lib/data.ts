@@ -7,7 +7,7 @@ import { computeOrderSla, isBreaching, ruleFor, type OrderSla } from "./sla";
 import { primaryAwb, transitAnchor, type BoardShipment, type TransitAnchor } from "./transit-anchor";
 import type { FacilityScope, Order, RulebookEntry, User } from "./types";
 import { dataGeneration } from "./db";
-import { ORDERS_PAGE_SIZE } from "./order-search";
+import { ORDERS_PAGE_SIZE, type OrderSort } from "./order-search";
 
 export interface OrderRow {
   order: Order;
@@ -117,9 +117,10 @@ export async function searchOrders(
   user: User,
   search: OrderSearch,
   page: number,
+  sort?: OrderSort,
 ): Promise<{ orders: Order[]; total: number }> {
   const am = user.role === "RETAIL_HEAD" ? user.areaManager : undefined;
-  return repo.searchOrders(scope, am, search, (page - 1) * ORDERS_PAGE_SIZE, ORDERS_PAGE_SIZE);
+  return repo.searchOrders(scope, am, search, (page - 1) * ORDERS_PAGE_SIZE, ORDERS_PAGE_SIZE, sort);
 }
 
 /**

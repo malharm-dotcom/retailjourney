@@ -6,7 +6,7 @@
 
 import { prisma } from "./db";
 import { atIstCutoff, istDateOf, istToday, nowIso } from "./ist";
-import { orderDateFloor, type OrderSearch } from "./order-search";
+import { orderDateFloor, ORDER_SORTS, DEFAULT_ORDER_SORT, type OrderSearch, type OrderSort } from "./order-search";
 import {
   REQUIRED_CAPTURES,
   STATUS_TIMESTAMPS,
@@ -124,7 +124,14 @@ export class PrismaRepo implements OrderRepo {
     return rows.map((r) => orderToDomain(r as DbOrderRow));
   }
 
-  async searchOrders(scope: FacilityScope, areaManager: string | undefined, search: OrderSearch, skip: number, take: number) {
+  async searchOrders(
+    scope: FacilityScope,
+    areaManager: string | undefined,
+    search: OrderSearch,
+    skip: number,
+    take: number,
+    sort: OrderSort = DEFAULT_ORDER_SORT,
+  ) {
     const where = {
       ...(scope !== "ALL" ? { facility: scope } : {}),
       ...(areaManager ? { areaManager } : {}),
@@ -133,8 +140,9 @@ export class PrismaRepo implements OrderRepo {
     const [rows, total] = await Promise.all([
       prisma().order.findMany({
         where,
-        // soNumber breaks orderTimestamp ties so a page boundary is stable.
-        orderBy: [{ orderTimestamp: "desc" }, { soNumber: "asc" }],
+        // soNumber breaks every tie so a page boundary is stable. The computed
+        // key is the one thing Prisma's generated orderBy type cannot express.
+        orderBy: [{ [ORDER_SORTS[sort.key]]: sort.dir }, { soNumber: "asc" }] as never,
         skip,
         take,
         omit: LIST_OMIT,

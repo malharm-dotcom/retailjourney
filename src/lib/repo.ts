@@ -6,7 +6,7 @@
 import { databaseConfigured, markDataChanged } from "./db";
 import { PrismaRepo } from "./repo-prisma";
 import { atIstCutoff, istDateOf, istToday, nowIso } from "./ist";
-import { matchesSearch, orderDateFloor, type OrderSearch } from "./order-search";
+import { matchesSearch, orderDateFloor, ORDER_SORTS, DEFAULT_ORDER_SORT, type OrderSearch, type OrderSort } from "./order-search";
 import {
   REQUIRED_CAPTURES,
   STATUS_TIMESTAMPS,
@@ -60,6 +60,7 @@ export interface OrderRepo {
     search: OrderSearch,
     skip: number,
     take: number,
+    sort?: OrderSort,
   ): Promise<{ orders: Order[]; total: number }>;
   getOrder(soNumber: string): Promise<Order | undefined>;
   listEvents(orderId: string): Promise<OrderEvent[]>;
@@ -158,9 +159,28 @@ class InMemoryRepo implements OrderRepo {
     return all.sort((a, b) => (a.orderTimestamp < b.orderTimestamp ? 1 : -1));
   }
 
-  async searchOrders(scope: FacilityScope, areaManager: string | undefined, search: OrderSearch, skip: number, take: number) {
+  async searchOrders(
+    scope: FacilityScope,
+    areaManager: string | undefined,
+    search: OrderSearch,
+    skip: number,
+    take: number,
+    sort: OrderSort = DEFAULT_ORDER_SORT,
+  ) {
     const all = await this.listOrders(scope, areaManager, search);
-    return { orders: all.slice(skip, skip + take), total: all.length };
+    const col = ORDER_SORTS[sort.key];
+    const dir = sort.dir === "asc" ? 1 : -1;
+    const sorted = [...all].sort((a, b) => {
+      const va = a[col];
+      const vb = b[col];
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va ?? "").localeCompare(String(vb ?? ""));
+      // soNumber breaks every tie, so a page boundary is stable.
+      return cmp * dir || a.soNumber.localeCompare(b.soNumber);
+    });
+    return { orders: sorted.slice(skip, skip + take), total: sorted.length };
   }
 
   async getOrder(soNumber: string): Promise<Order | undefined> {
@@ -418,7 +438,7 @@ export const repo: OrderRepo = {
   // `search` was dropped here from M2 until 2026-09-15, so every /orders
   // search and the 30-day default returned all 10,221 orders.
   listOrders: (scope, areaManager, search) => impl().listOrders(scope, areaManager, search),
-  searchOrders: (scope, areaManager, search, skip, take) => impl().searchOrders(scope, areaManager, search, skip, take),
+  searchOrders: (scope, areaManager, search, skip, take, sort) => impl().searchOrders(scope, areaManager, search, skip, take, sort),
   getOrder: (soNumber) => impl().getOrder(soNumber),
   listEvents: (orderId) => impl().listEvents(orderId),
   listAllEvents: () => impl().listAllEvents(),

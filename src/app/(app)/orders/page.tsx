@@ -19,10 +19,14 @@ import { OVERALL_LABEL, STATUS_LABEL } from "@/lib/journey";
 import {
   DEFAULT_WINDOW_DAYS,
   ORDERS_PAGE_SIZE,
+  ORDER_SORTS,
+  ORDER_SORT_LABEL,
   SEARCHABLE_STATUSES,
   isSearching,
   pageFromParams,
   searchFromParams,
+  sortFromParams,
+  type OrderSortKey,
 } from "@/lib/order-search";
 import { repo } from "@/lib/repo";
 import { ORDER_TYPES } from "@/lib/types";
@@ -44,8 +48,9 @@ export default async function OrdersPage({
   const { user, scope } = await requireSession();
   const search = searchFromParams(searchParams);
   const page = pageFromParams(searchParams);
+  const sort = sortFromParams(searchParams);
   const [{ orders, total }, stores] = await Promise.all([
-    searchOrders(scope, user, search, page),
+    searchOrders(scope, user, search, page, sort),
     repo.listStores(),
   ]);
   const searching = isSearching(search);
@@ -169,6 +174,33 @@ export default async function OrdersPage({
                 {s}
               </option>
             ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-cap font-semibold uppercase tracking-[0.04em] text-mute">Sort by</span>
+          <select
+            name="sort"
+            defaultValue={sort.key}
+            className="min-w-[9rem] rounded-control border border-line-control bg-paper px-3 py-2 text-ui"
+          >
+            {(Object.keys(ORDER_SORTS) as OrderSortKey[]).map((k) => (
+              <option key={k} value={k}>
+                {ORDER_SORT_LABEL[k]}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className="text-cap font-semibold uppercase tracking-[0.04em] text-mute">Order</span>
+          <select
+            name="dir"
+            defaultValue={sort.dir}
+            className="min-w-[8rem] rounded-control border border-line-control bg-paper px-3 py-2 text-ui"
+          >
+            <option value="desc">Descending</option>
+            <option value="asc">Ascending</option>
           </select>
         </label>
 

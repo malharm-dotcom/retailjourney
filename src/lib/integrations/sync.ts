@@ -157,7 +157,19 @@ export function resolveOverallStatus(
   data: Partial<Order>,
   override?: OverallStatus,
 ): { next: OverallStatus; changed: boolean } {
-  const next = override ?? (o.overallStatus === "INWARDED" ? "INWARDED" : rollupOverall({ ...o, ...data }));
+  const proposed = override ?? (o.overallStatus === "INWARDED" ? "INWARDED" : rollupOverall({ ...o, ...data }));
+  // A CLOSED order — a dead label: RTO, lost, or a failed delivery — is only
+  // reopened by evidence that the stock actually arrived. Nothing else may
+  // undo the closure, and a lagging spine seed least of all: an order with no
+  // AWB takes OVERALL_STATUS verbatim, and the spine still read "DISPATCHED"
+  // on the 37 RTO orders the logistics desk closed on 2026-09-17 — every one
+  // of them inside the dated sweep's window, so the next run would have
+  // reopened the lot.
+  //
+  // DELIVERED reopens; INWARDED deliberately does NOT. An inward stamp on an
+  // RTO'd order is the RETURNED stock being booked in at the warehouse — the
+  // same reason withInwardSeed refuses to lift a CLOSED rollup.
+  const next = o.overallStatus === "CLOSED" && proposed !== "DELIVERED" ? "CLOSED" : proposed;
   return { next, changed: next !== o.overallStatus };
 }
 

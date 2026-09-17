@@ -422,3 +422,30 @@ describe("a dispatch time is the warehouse done (JANAKP16765: dispatched 09-13, 
     expect(dispatchedOverall("INWARDED", "DISPATCHED_TO_STORE")).toBe("INWARDED");
   });
 });
+
+describe("resolveOverallStatus — a dead label stays closed", () => {
+  const closed = order({ overallStatus: "CLOSED", shipmentStatus: "RETURN" });
+
+  it("a lagging spine seed does not reopen an RTO'd order", () => {
+    // Live 2026-09-17: 37 RTO orders with no AWB, closed by the logistics desk.
+    // Their spine rows still read DISPATCHED, and a childless order takes the
+    // seed verbatim — so without this hold the next sweep reopened them.
+    expect(resolveOverallStatus(closed, {}, "PICKUP_PENDING")).toEqual({ next: "CLOSED", changed: false });
+    expect(resolveOverallStatus(closed, {}, "IN_TRANSIT")).toEqual({ next: "CLOSED", changed: false });
+    expect(resolveOverallStatus(closed, {}, "WH_PROCESSING")).toEqual({ next: "CLOSED", changed: false });
+  });
+
+  it("a delivered scan DOES reopen it — the stock arrived after all", () => {
+    expect(resolveOverallStatus(closed, {}, "DELIVERED")).toEqual({ next: "DELIVERED", changed: true });
+  });
+
+  it("an inward stamp does not: that is the RETURNED stock being booked in", () => {
+    expect(resolveOverallStatus(closed, {}, "INWARDED")).toEqual({ next: "CLOSED", changed: false });
+  });
+
+  it("leaves every other order exactly as it was", () => {
+    const open = order({ overallStatus: "IN_TRANSIT", shipmentStatus: "IN_TRANSIT" });
+    expect(resolveOverallStatus(open, {}, "DELIVERED")).toEqual({ next: "DELIVERED", changed: true });
+    expect(resolveOverallStatus(open, {}, "PICKUP_PENDING")).toEqual({ next: "PICKUP_PENDING", changed: true });
+  });
+});

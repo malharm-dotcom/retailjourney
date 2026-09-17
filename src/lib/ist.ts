@@ -17,19 +17,40 @@ export function isoFromEpochMs(ms?: number | null): string | undefined {
   return new Date(ms).toISOString();
 }
 
-/** eShipz dates are RFC-1123 GMT strings ("Tue, 28 Jun 2022 13:58:26 GMT") → ISO UTC. */
+/**
+ * eShipz dates -> ISO UTC. Three shapes arrive on this one field:
+ *   polling  RFC-1123 GMT  "Tue, 28 Jun 2022 13:58:26 GMT"
+ *   webhook  ISO           "2026-09-12T10:03:11Z"
+ *   self-delivery rows     "12-09-2026"  (DD-MM-YYYY, IST wall clock)
+ *
+ * The third is why this is not a bare Date.parse any more. V8 reads
+ * "12-09-2026" as MM-DD-YYYY and returns 9 December — so a shipment delivered
+ * on 12 September was stored with deliveredDate 2026-12-09, which is in the
+ * FUTURE, and a future delivery date never ages off the In-Transit board
+ * (daysBetween is negative, and the board keeps anything <= 2 days old). Live:
+ * 11 orders pinned to the board, and 18 courier EDDs landing before their own
+ * order date. Both callers below (delivery_date, expected_delivery_date) and
+ * every checkpoint date run through here, so the guard belongs here rather
+ * than at any one of them.
+ *
+ * A two-digit month > 12 cannot be DD-MM, so that falls through to Date.parse
+ * rather than being dropped. The explicit +05:30 replaces a dependence on the
+ * server's own timezone: these are IST wall-clock dates, and a container that
+ * boots in UTC must not read them a day early.
+ */
+const DMY = /^([0-9]{2})[-/]([0-9]{2})[-/]([0-9]{4})(?:[T ]([0-9]{2}:[0-9]{2}(?::[0-9]{2})?))?/;
+
 export function isoFromRfc1123(s?: string | null): string | undefined {
   if (!s) return undefined;
+  const m = s.trim().match(DMY);
+  if (m && Number(m[2]) <= 12) {
+    const t = Date.parse(`${m[3]}-${m[2]}-${m[1]}T${m[4] ?? "00:00:00"}+05:30`);
+    if (!Number.isNaN(t)) return new Date(t).toISOString();
+  }
   const t = Date.parse(s);
   return Number.isNaN(t) ? undefined : new Date(t).toISOString();
 }
 
-/**
- * Snowflake TIMESTAMP_NTZ values are IST wall-clock strings
- * ("2026-07-08 14:35:00.000" or "2026-07-08") — NOT UTC. Interpret the wall
- * clock as IST and return the true UTC instant (epoch −5.5h), never Date-parse
- * them directly (that would treat them as local/UTC and skew by the offset).
- */
 export function isoFromIstNtz(s?: string | null): string | undefined {
   if (!s) return undefined;
   const m = s

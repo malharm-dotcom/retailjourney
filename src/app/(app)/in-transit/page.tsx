@@ -67,6 +67,12 @@ export default async function InTransitPage() {
           r.order.overallStatus === "IN_TRANSIT" ||
           (r.order.overallStatus === "DELIVERED" &&
             r.order.deliveredDate &&
+            // Bounded at BOTH ends. `<= 2` alone let a future delivered date
+            // (negative age) satisfy the window forever, which is how 11
+            // mis-parsed rows sat on the board permanently. The parse bug is
+            // fixed at source in isoFromRfc1123; this keeps any other future
+            // date, from any source, off the board regardless.
+            daysBetween(r.order.deliveredDate, today) >= 0 &&
             daysBetween(r.order.deliveredDate, today) <= 2)),
     )
     .map((r) => {

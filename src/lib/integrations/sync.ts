@@ -421,7 +421,9 @@ async function persistPickedUp(soNumber: string, awb: string, pickedUpTs?: strin
   });
 }
 
-function buildShipmentPatch(o: Order, u: TrackingUpdate): { patch: Partial<Order>; events: PendingEvent[] } {
+/** Exported for the precedence tests only — the delivery-stamp rule below is
+ *  the one that silently invented delivery times for months. */
+export function buildShipmentPatch(o: Order, u: TrackingUpdate): { patch: Partial<Order>; events: PendingEvent[] } {
   const patch: Partial<Order> = {
     eshipStatus: u.tag,
     trackingStatus: u.tag,
@@ -456,9 +458,18 @@ function buildShipmentPatch(o: Order, u: TrackingUpdate): { patch: Partial<Order
       patch.latestOfdDate = ofdAt;
     }
     if (next === "DELIVERED") {
-      const deliveredTs = u.deliveredTs ?? u.checkpoints[0]?.date ?? now;
-      patch.deliveredTs = deliveredTs;
-      patch.deliveredDate = istDateOf(deliveredTs);
+      // Courier evidence only. The `?? now` that used to close this chain
+      // stamped the SYNC time as the delivery time whenever eShipz sent a
+      // Delivered tag with no timestamp and no checkpoint — so a shipment
+      // delivered days ago was recorded as delivered today, which restarted
+      // the board's delivered window and overstated every delivery SLA it
+      // touched. No evidence now means no delivered date: the order still
+      // moves to DELIVERED, it simply does not claim to know when.
+      const deliveredTs = u.deliveredTs ?? u.checkpoints[0]?.date;
+      if (deliveredTs) {
+        patch.deliveredTs = deliveredTs;
+        patch.deliveredDate = istDateOf(deliveredTs);
+      }
       patch.deliveryAttempts = o.deliveryAttempts + 1;
     }
     if (next === "DELIVERY_FAILED") {
@@ -651,9 +662,13 @@ export function transitPatchFromChild(o: Order, s: OrderShipment): Partial<Order
     patch.shipmentSource = "SYNCED_SNOWFLAKE";
     if (next === "IN_TRANSIT" && !o.shippedTs) patch.shippedTs = s.trackingPickTs ?? nowIso();
     if (next === "DELIVERED") {
-      const deliveredTs = s.deliveredTs ?? nowIso();
-      patch.deliveredTs = deliveredTs;
-      patch.deliveredDate = istDateOf(deliveredTs);
+      // Spine evidence only — see the eShipz path above for why the clock is
+      // not a delivery time.
+      const deliveredTs = s.deliveredTs;
+      if (deliveredTs) {
+        patch.deliveredTs = deliveredTs;
+        patch.deliveredDate = istDateOf(deliveredTs);
+      }
     }
   }
   return patch;

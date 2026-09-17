@@ -20,7 +20,9 @@ import {
   inferredWhStatus,
   evidenceStatus,
   dispatchedOverall,
+  buildShipmentPatch,
 } from "./sync";
+import type { TrackingUpdate } from "./types";
 import type { Order, OrderShipment } from "../types";
 
 function row(lastUpdated: string | null): DistributionRow {
@@ -447,5 +449,69 @@ describe("resolveOverallStatus — a dead label stays closed", () => {
     const open = order({ overallStatus: "IN_TRANSIT", shipmentStatus: "IN_TRANSIT" });
     expect(resolveOverallStatus(open, {}, "DELIVERED")).toEqual({ next: "DELIVERED", changed: true });
     expect(resolveOverallStatus(open, {}, "PICKUP_PENDING")).toEqual({ next: "PICKUP_PENDING", changed: true });
+  });
+});
+
+describe("delivery stamping — courier evidence, never the clock", () => {
+  // The defect: `?? now` / `?? nowIso()` closed both chains, so a Delivered tag
+  // arriving without a timestamp recorded the SYNC time as the delivery time.
+  // Live effect: BOULEW16702 read delivered=2026-09-17 while its own AWB was
+  // still OUT_FOR_DELIVERY, which restarted the In-Transit board's delivered
+  // window and overstated the delivery SLA.
+
+  it("spine child: stamps the delivery when the spine carries one", () => {
+    const patch = transitPatchFromChild(
+      order({ shipmentStatus: "IN_TRANSIT" }),
+      child({ shipmentStatus: "DELIVERED", deliveredTs: "2026-09-12T13:00:00.000Z" }),
+    );
+    expect(patch.shipmentStatus).toBe("DELIVERED");
+    expect(patch.deliveredDate).toBe("2026-09-12");
+  });
+
+  it("spine child: no timestamp means no delivered date, not today's date", () => {
+    const patch = transitPatchFromChild(
+      order({ shipmentStatus: "IN_TRANSIT" }),
+      child({ shipmentStatus: "DELIVERED", deliveredTs: undefined }),
+    );
+    // The order still moves — it simply does not claim to know when.
+    expect(patch.shipmentStatus).toBe("DELIVERED");
+    expect(patch.deliveredTs).toBeUndefined();
+    expect(patch.deliveredDate).toBeUndefined();
+  });
+
+  it("eShipz: prefers the courier's own delivery timestamp", () => {
+    const { patch } = buildShipmentPatch(order({ shipmentStatus: "IN_TRANSIT" }), {
+      trackingNumber: "SN2684",
+      status: "DELIVERED",
+      checkpoints: [],
+      deliveredTs: "2026-09-12T13:00:00.000Z",
+    } as unknown as TrackingUpdate);
+    expect(patch.deliveredTs).toBe("2026-09-12T13:00:00.000Z");
+    expect(patch.deliveredDate).toBe("2026-09-12");
+  });
+
+  it("eShipz: falls back to the newest checkpoint, not to the clock", () => {
+    const { patch } = buildShipmentPatch(order({ shipmentStatus: "IN_TRANSIT" }), {
+      trackingNumber: "SN2684",
+      status: "DELIVERED",
+      checkpoints: [{ date: "2026-09-11T09:00:00.000Z", remark: "Delivered" }],
+    } as unknown as TrackingUpdate);
+    expect(patch.deliveredTs).toBe("2026-09-11T09:00:00.000Z");
+    expect(patch.deliveredDate).toBe("2026-09-11");
+  });
+
+  it("eShipz: a Delivered tag with no evidence at all stamps nothing", () => {
+    const o = order({ shipmentStatus: "IN_TRANSIT", deliveryAttempts: 0 });
+    const { patch } = buildShipmentPatch(o, {
+      trackingNumber: "SN2684",
+      status: "DELIVERED",
+      checkpoints: [],
+    } as unknown as TrackingUpdate);
+    expect(patch.shipmentStatus).toBe("DELIVERED");
+    expect(patch.deliveredTs).toBeUndefined();
+    expect(patch.deliveredDate).toBeUndefined();
+    // The attempt still counts: that is a fact about the courier's behaviour,
+    // not a claim about when the box arrived.
+    expect(patch.deliveryAttempts).toBe(1);
   });
 });

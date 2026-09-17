@@ -67,13 +67,17 @@ export default async function InTransitPage() {
           r.order.overallStatus === "IN_TRANSIT" ||
           (r.order.overallStatus === "DELIVERED" &&
             r.order.deliveredDate &&
-            // Bounded at BOTH ends. `<= 2` alone let a future delivered date
-            // (negative age) satisfy the window forever, which is how 11
-            // mis-parsed rows sat on the board permanently. The parse bug is
-            // fixed at source in isoFromRfc1123; this keeps any other future
-            // date, from any source, off the board regardless.
-            daysBetween(r.order.deliveredDate, today) >= 0 &&
-            daysBetween(r.order.deliveredDate, today) <= 2)),
+            // TODAY only. The tail used to run two days, but `<= 2` is
+            // inclusive at both ends, so a delivery on the 15th stayed on
+            // screen through the 17th — three calendar days, and 553 of the
+            // board's 944 rows were completed work. A same-day window keeps
+            // the shift's own completions visible and drops them overnight.
+            //
+            // `=== 0` also closes the future-date hole for free: a delivered
+            // date that has not happened yet (negative age) fails it, which
+            // `<= 2` alone did not — that is how 11 mis-parsed rows sat here
+            // permanently until isoFromRfc1123 was fixed.
+            daysBetween(r.order.deliveredDate, today) === 0)),
     )
     .map((r) => {
       const o = r.order;

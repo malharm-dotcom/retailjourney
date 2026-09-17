@@ -201,3 +201,92 @@ export function pivotCsv(pivot: Pivot): string {
   };
   return toCsv(columns, [...pivot.rows, totals]);
 }
+
+// ── EDD-breached list ────────────────────────────────────────────────────────
+//
+// The pivot above answers "where are the chases piled up". This answers the
+// question the logistics team actually sends a courier: "here are the AWBs you
+// are late on". Same row set (inTransitDockets), same EDD source, no matrix —
+// the columns are the ones their shared sheet already carries, in that order,
+// so a paste lands in the courier's file without re-arranging anything.
+
+export interface BreachedRow {
+  /** EDD minus today, in days. Negative once breached — the sign convention of
+   *  the team's own sheet, kept so a pasted block reads identically. */
+  aging: number;
+  awb: string;
+  courier: string;
+  store: string;
+  /** ISO business date. Rendered dd/MM/yyyy on screen and in the file. */
+  edd: string;
+  boxes: number | "";
+  /** Not a sheet column — the link back for anyone reading this on screen. */
+  so: string;
+}
+
+/** dd/MM/yyyy, the format the courier sheet uses. */
+const eddCell = (iso: string) => iso.split("-").reverse().join("/");
+
+/**
+ * In-transit dockets already past their EDD, worst first.
+ *
+ * One row per order, carrying its primary AWB and its box total — the same
+ * grain the pivot counts on. A split order shows its furthest-forward live AWB
+ * rather than one row per child: board reads do not carry the children.
+ */
+export function breachedRows(
+  rows: OrderRow[],
+  f: { eddSource: EddSource; couriers: string[] },
+  today = istToday(),
+): BreachedRow[] {
+  const wanted = new Set(f.couriers);
+  const out: BreachedRow[] = [];
+  for (const r of inTransitDockets(rows)) {
+    const courier = courierOf(r.order);
+    if (wanted.size && !wanted.has(courier)) continue;
+    const edd = eddOf(r.order, f.eddSource);
+    if (!r.awb || !edd) continue;
+    const aging = daysBetween(today, edd); // negative once today is past the EDD
+    if (aging >= 0) continue;
+    out.push({
+      aging,
+      awb: r.awb,
+      courier,
+      store: r.order.storeNameFormat,
+      edd,
+      boxes: r.boxes ?? "",
+      so: r.order.soNumber,
+    });
+  }
+  return out.sort((a, b) => a.aging - b.aging || a.store.localeCompare(b.store));
+}
+
+/** The sheet's columns, in the sheet's order. `Remarks` ships empty: it is the
+ *  column the courier writes back in, and a file missing it gets re-shaped by
+ *  hand every time. */
+const BREACHED_COLUMNS: CsvColumn<BreachedRow>[] = [
+  { header: "EDD Breached Aging (Days)", value: (r) => r.aging },
+  { header: "AWB", value: (r) => r.awb },
+  { header: "Courier", value: (r) => r.courier },
+  { header: "Store Name", value: (r) => r.store },
+  { header: "EDD", value: (r) => eddCell(r.edd) },
+  { header: "Boxes", value: (r) => r.boxes },
+  { header: "Remarks", value: () => "" },
+];
+
+export const breachedCsv = (rows: BreachedRow[]) => toCsv(BREACHED_COLUMNS, rows);
+
+/**
+ * The same block as tab-separated text, for the clipboard.
+ *
+ * Tabs, not commas: pasted into Excel, Sheets or a Gmail compose window this
+ * lands as a real table, which is exactly what the team does with it today —
+ * filter, copy, paste into the mail to the courier. No quoting, because a tab
+ * cannot appear in any of these values and Excel's paste has no escape for one
+ * anyway; a stray tab would split a cell either way.
+ */
+export function breachedTsv(rows: BreachedRow[]): string {
+  const cells = (r: BreachedRow) =>
+    [r.aging, r.awb, r.courier, r.store, eddCell(r.edd), r.boxes, ""].join("\t");
+  return [BREACHED_COLUMNS.map((c) => c.header).join("\t"), ...rows.map(cells)].join("\n");
+}

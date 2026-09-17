@@ -66,9 +66,9 @@ export const REPORTS: ReportDef[] = [
     // shadows [slug] — it needs column-mode and EDD-source controls the generic
     // report shell has no place for, so `buildReport` has no case for it.
     slug: "logistics-followup",
-    title: "Logistics follow-up pivot",
+    title: "EDD breached follow-up",
     description:
-      "In-transit AWBs as Store × EDD or Store × days-past-EDD, with totals — the file couriers get chased with.",
+      "Every in-transit AWB past its EDD, ready to copy into the courier mail — plus the store × EDD pivot.",
     icon: "clipboard-list-bold-duotone",
   },
   {

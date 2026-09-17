@@ -4,6 +4,8 @@ import {
   AGEING_BUCKETS,
   NO_EDD,
   ageingBucketOf,
+  breachedRows,
+  breachedTsv,
   buildPivot,
   inTransitDockets,
 } from "./logistics-followup";
@@ -19,6 +21,8 @@ function row(o: {
   idealDeliveryDate?: string;
   courier?: string;
   awb?: string;
+  boxes?: number;
+  so?: string;
 }): OrderRow {
   return {
     order: {
@@ -28,8 +32,10 @@ function row(o: {
       expectedDate: o.expectedDate,
       idealDeliveryDate: o.idealDeliveryDate,
       courierPartner: o.courier ?? "BLUEDART",
+      soNumber: o.so ?? "SO1",
     },
     awb: "awb" in o ? o.awb : "A1",
+    boxes: o.boxes,
   } as unknown as OrderRow;
 }
 
@@ -168,5 +174,60 @@ describe("buildPivot", () => {
     expect(buildPivot(rows, { ...base, mode: "edd", eddSource: "store" }, TODAY).columns).toEqual([TODAY]);
     const filtered = buildPivot(rows, { ...base, mode: "edd", couriers: ["MOVEMATE"] }, TODAY);
     expect(filtered.grandTotal).toBe(1);
+  });
+});
+
+describe("breached list", () => {
+  const rows = [
+    // 3 days past its courier EDD, two boxes.
+    row({ store: "B store", expectedDate: "2026-08-26", awb: "A9", boxes: 2, so: "SO9" }),
+    // Due today — not breached.
+    row({ store: "C store", expectedDate: TODAY, awb: "A2" }),
+    // Tomorrow — not breached.
+    row({ store: "D store", expectedDate: "2026-08-30", awb: "A3" }),
+    // 1 day past, so it sorts after the 3-day one.
+    row({ store: "A store", expectedDate: "2026-08-28", awb: "A4", courier: "EKART" }),
+    // No AWB: nothing to chase a courier with.
+    row({ store: "E store", expectedDate: "2026-08-20", awb: undefined }),
+    // No courier EDD at all: cannot be breached on this source.
+    row({ store: "F store", idealDeliveryDate: "2026-08-20", awb: "A6" }),
+    // Delivered — not in transit.
+    row({ store: "G store", overall: "DELIVERED", expectedDate: "2026-08-20", awb: "A7" }),
+  ];
+
+  it("keeps only in-transit AWBs already past the EDD, worst first", () => {
+    const out = breachedRows(rows, { eddSource: "courier", couriers: [] }, TODAY);
+    expect(out.map((r) => [r.store, r.aging])).toEqual([
+      ["B store", -3],
+      ["A store", -1],
+    ]);
+  });
+
+  it("reads the store EDD when that source is picked", () => {
+    const out = breachedRows(rows, { eddSource: "store", couriers: [] }, TODAY);
+    expect(out.map((r) => r.store)).toEqual(["F store"]);
+  });
+
+  it("narrows to the picked couriers", () => {
+    const out = breachedRows(rows, { eddSource: "courier", couriers: ["EKART"] }, TODAY);
+    expect(out.map((r) => r.store)).toEqual(["A store"]);
+  });
+
+  it("writes the courier sheet's columns, tab-separated, dd/MM/yyyy", () => {
+    const tsv = breachedTsv(breachedRows(rows, { eddSource: "courier", couriers: [] }, TODAY));
+    const lines = tsv.split("\n");
+    expect(lines[0].split("\t")).toEqual([
+      "EDD Breached Aging (Days)",
+      "AWB",
+      "Courier",
+      "Store Name",
+      "EDD",
+      "Boxes",
+      "Remarks",
+    ]);
+    expect(lines[1].split("\t")).toEqual(["-3", "A9", "BLUEDART", "B store", "26/08/2026", "2", ""]);
+    // A docket whose children carry no package count must paste as an empty
+    // cell, never as a 0 the courier reads as "zero boxes".
+    expect(lines[2].split("\t")[5]).toBe("");
   });
 });

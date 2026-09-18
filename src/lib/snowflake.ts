@@ -484,6 +484,29 @@ export async function spineOrderDateFloor(): Promise<string | undefined> {
 }
 
 /**
+ * The spine's newest ORDER_DATE — the other end of the same safety limit.
+ *
+ * The floor exists because an order BELOW it is absent for having aged out.
+ * This exists because an order ABOVE it is absent for the opposite reason: the
+ * spine has not caught up yet. That is not a corner case — the UC path creates
+ * orders "ahead of the spine" by design, and the spine's own MAX(ORDER_DATE)
+ * routinely sits a full day behind the newest orders in the app.
+ *
+ * Measured 2026-09-18: MAX(ORDER_DATE) was 2026-09-17 while the app already
+ * held 193 orders dated 2026-09-18. Without this bound every one of them read
+ * as "left the spine" and was closed as CANCELLED.
+ *
+ * `undefined` (empty spine / unreadable) cancels nothing at all, exactly as an
+ * unreadable floor does.
+ */
+export async function spineOrderDateCeiling(): Promise<string | undefined> {
+  const rows = await querySnowflake<{ CEILING: string | null }>(
+    `SELECT MAX(ORDER_DATE) AS CEILING FROM ${SPINE_TABLE}`,
+  );
+  return ntzValue(rows[0]?.CEILING);
+}
+
+/**
  * Which of `names` the spine still carries, as UPPER(TRIM) keys.
  *
  * Matched case- and whitespace-insensitively on BOTH sides: the app's soNumber

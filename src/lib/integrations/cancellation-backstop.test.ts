@@ -13,6 +13,7 @@ import { isProbeableOrderName } from "../snowflake";
 import { type CancelCandidate, cancelledUpstream } from "./sync";
 
 const FLOOR = "2026-06-19"; // the live spine's MIN(ORDER_DATE)
+const CEILING = "2026-09-17"; // the live spine's MAX(ORDER_DATE)
 
 function candidate(over: Partial<CancelCandidate> = {}): CancelCandidate {
   return {
@@ -28,36 +29,36 @@ const none = new Set<string>();
 
 describe("cancelledUpstream — the order really did leave the spine", () => {
   it("condemns a WH order above the floor with no spine row (the live case)", () => {
-    expect(cancelledUpstream([candidate()], none, FLOOR).map((c) => c.soNumber)).toEqual(["RAJPUR15824"]);
+    expect(cancelledUpstream([candidate()], none, FLOOR, CEILING).map((c) => c.soNumber)).toEqual(["RAJPUR15824"]);
   });
 
   it("spares an order the spine still carries", () => {
-    expect(cancelledUpstream([candidate()], new Set(["RAJPUR15824"]), FLOOR)).toEqual([]);
+    expect(cancelledUpstream([candidate()], new Set(["RAJPUR15824"]), FLOOR, CEILING)).toEqual([]);
   });
 
   it("matches presence case- and whitespace-insensitively — a false miss cancels a live order", () => {
-    expect(cancelledUpstream([candidate({ soNumber: " rajpur15824 " })], new Set(["RAJPUR15824"]), FLOOR)).toEqual([]);
+    expect(cancelledUpstream([candidate({ soNumber: " rajpur15824 " })], new Set(["RAJPUR15824"]), FLOOR, CEILING)).toEqual([]);
   });
 });
 
 describe("cancelledUpstream — absence that does NOT mean cancellation", () => {
   it("spares an order older than the retention floor (aged out, not cancelled)", () => {
-    expect(cancelledUpstream([candidate({ orderDate: "2026-06-18" })], none, FLOOR)).toEqual([]);
+    expect(cancelledUpstream([candidate({ orderDate: "2026-06-18" })], none, FLOOR, CEILING)).toEqual([]);
   });
 
   it("keeps an order exactly ON the floor — that row is still in retention", () => {
-    expect(cancelledUpstream([candidate({ orderDate: FLOOR })], none, FLOOR)).toHaveLength(1);
+    expect(cancelledUpstream([candidate({ orderDate: FLOOR })], none, FLOOR, CEILING)).toHaveLength(1);
   });
 
   it("cancels NOTHING when the floor is unreadable — silence is not evidence", () => {
-    expect(cancelledUpstream([candidate()], none, undefined)).toEqual([]);
+    expect(cancelledUpstream([candidate()], none, undefined, CEILING)).toEqual([]);
   });
 
   it("condemns nothing when a rebuilt spine raises the floor above the population", () => {
     // The disaster case, and the reason no separate blast-radius cap is needed:
     // a truncated spine moves the floor up and the whole population falls below it.
     const pop = [candidate({ soNumber: "A15001" }), candidate({ soNumber: "B15002" })];
-    expect(cancelledUpstream(pop, none, "2026-08-18")).toEqual([]);
+    expect(cancelledUpstream(pop, none, "2026-08-18", CEILING)).toEqual([]);
   });
 });
 
@@ -68,18 +69,18 @@ describe("cancelledUpstream — bounded to the only stage UC can cancel at", () 
   it.each(["PICKUP_PENDING", "IN_TRANSIT", "DELIVERED", "INWARDED", "CLOSED"] as const)(
     "leaves a missing %s order alone",
     (overallStatus) => {
-      expect(cancelledUpstream([candidate({ overallStatus })], none, FLOOR)).toEqual([]);
+      expect(cancelledUpstream([candidate({ overallStatus })], none, FLOOR, CEILING)).toEqual([]);
     },
   );
 
   it.each(["CANCELLED", "UNFULFILLABLE"] as const)("skips an already-terminal %s order", (status) => {
-    expect(cancelledUpstream([candidate({ status })], none, FLOOR)).toEqual([]);
+    expect(cancelledUpstream([candidate({ status })], none, FLOOR, CEILING)).toEqual([]);
   });
 
   it("still condemns a manually-advanced PACKING order — UC outranks a manual status", () => {
     // 5 of the live 79 carried a manual status (4 PACKING). Malhar's call: an
     // operator marking an order PACKING does not make it exist to pick.
-    expect(cancelledUpstream([candidate({ status: "PACKING" })], none, FLOOR)).toHaveLength(1);
+    expect(cancelledUpstream([candidate({ status: "PACKING" })], none, FLOOR, CEILING)).toHaveLength(1);
   });
 });
 
@@ -98,6 +99,34 @@ describe("isProbeableOrderName — an unverifiable name is never condemned", () 
     // The trap this closes: a rejected name is dropped from the presence query,
     // so it can never appear in `presentInSpine` and would otherwise read as
     // absent — cancelling an order purely because its name was unaskable.
-    expect(cancelledUpstream([candidate({ soNumber: "O'BRIEN15001" })], none, FLOOR)).toEqual([]);
+    expect(cancelledUpstream([candidate({ soNumber: "O'BRIEN15001" })], none, FLOOR, CEILING)).toEqual([]);
+  });
+});
+
+describe("cancelledUpstream — too NEW to verify is not cancelled either", () => {
+  // The floor guard alone was half the picture. The spine lags: the UC path
+  // creates orders "ahead of the spine" on purpose, and MAX(ORDER_DATE) sat a
+  // full day behind the newest orders. Absence above the ceiling therefore
+  // means "the spine has not caught up", never "cancelled on Unicommerce".
+  //
+  // Measured 2026-09-18 on prod: 672 of 815 orders from the last 4 days had
+  // been closed as CANCELLED, 193 of them dated above the spine's own
+  // MAX(ORDER_DATE), and 209 of the previous 24h's victims were already back
+  // in the spine — proof they had never been cancelled at all.
+
+  it("spares an order created AHEAD of the spine (the live case: 193 orders)", () => {
+    expect(cancelledUpstream([candidate({ orderDate: "2026-09-18" })], none, FLOOR, CEILING)).toEqual([]);
+  });
+
+  it("spares an order ON the ceiling day — that day may still be mid-import", () => {
+    expect(cancelledUpstream([candidate({ orderDate: CEILING })], none, FLOOR, CEILING)).toEqual([]);
+  });
+
+  it("still condemns an order safely below the ceiling — the backstop keeps working", () => {
+    expect(cancelledUpstream([candidate()], none, FLOOR, CEILING)).toHaveLength(1);
+  });
+
+  it("condemns nothing when the ceiling is unknown — same fail-safe as the floor", () => {
+    expect(cancelledUpstream([candidate()], none, FLOOR, undefined)).toEqual([]);
   });
 });

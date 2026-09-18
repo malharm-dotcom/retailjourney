@@ -18,6 +18,7 @@ import {
   snowflakeConfigured,
   isProbeableOrderName,
   spineHasEventTs,
+  spineOrderDateCeiling,
   spineOrderDateFloor,
   spinePresentOrderNames,
   type DistributionRow,
@@ -1268,9 +1269,10 @@ export function cancelledUpstream(
   candidates: CancelCandidate[],
   presentInSpine: Set<string>,
   spineFloor: string | undefined,
+  spineCeiling: string | undefined,
 ): CancelCandidate[] {
-  // Guard 1 — no floor means the spine told us nothing this run.
-  if (!spineFloor) return [];
+  // Guard 1 — no floor OR no ceiling means the spine told us nothing this run.
+  if (!spineFloor || !spineCeiling) return [];
   return candidates.filter(
     (c) =>
       // 0 — a name the presence probe cannot safely put in a SQL literal is
@@ -1280,6 +1282,13 @@ export function cancelledUpstream(
       isProbeableOrderName(c.soNumber) &&
       !presentInSpine.has(c.soNumber.trim().toUpperCase()) &&
       c.orderDate >= spineFloor && // 2 — above the retention floor
+      // 2b — BELOW the newest day the spine covers. The floor catches an order
+      // that is absent for having aged out; this catches one that is absent
+      // because the spine has not caught up to it yet. The UC path creates
+      // orders ahead of the spine on purpose, so without this an order is
+      // cancelled for the crime of being new. Strictly `<`: the ceiling day
+      // itself may still be mid-import, and a half-loaded day is not evidence.
+      c.orderDate < spineCeiling &&
       c.overallStatus === "WH_PROCESSING" && // 3 — UC can only cancel here
       !TERMINAL_STATUSES.includes(c.status), // 4 — not already terminal
   );
@@ -1314,8 +1323,9 @@ export async function reconcileCancelledUpstream(): Promise<{
   // Both reads are independent of the hourly pull on purpose: a row missing
   // from a WATERMARKED result set is unchanged, not gone, so the incremental
   // rows can never answer "does this order still exist upstream?".
-  const [floor, present] = await Promise.all([
+  const [floor, ceiling, present] = await Promise.all([
     spineOrderDateFloor(),
+    spineOrderDateCeiling(),
     spinePresentOrderNames(rows.map((r) => r.soNumber)),
   ]);
 
@@ -1331,6 +1341,7 @@ export async function reconcileCancelledUpstream(): Promise<{
     })),
     present,
     floor,
+    ceiling,
   );
 
   let overrodeManual = 0;

@@ -916,6 +916,29 @@ export function fieldsFromStore(store: Store): Partial<Order> {
   };
 }
 
+/**
+ * The Store a UC order's 6-char SO prefix belongs to.
+ *
+ * `byPrefix` is the store master's own key — authoritative, but only usable on
+ * the ids still shaped "gs_<SO_CODE>" (13 of 163 on the live master).
+ * `priorStoreId` is the fallback: the storeId an earlier order carrying this
+ * same prefix already resolved, by the spine, which matches on store NAME and
+ * gets it right.
+ *
+ * It cannot invent a store. The fallback only ever dereferences an id the app
+ * itself wrote onto an order, and an id that no longer exists in the master
+ * resolves to undefined — leaving the order fail-open exactly as before rather
+ * than attaching it to the wrong store.
+ */
+export function ucStoreForPrefix(
+  prefix: string,
+  byPrefix: Map<string, Store>,
+  byId: Map<string, Store>,
+  priorStoreId?: string,
+): Store | undefined {
+  return byPrefix.get(prefix) ?? (priorStoreId ? byId.get(priorStoreId) : undefined);
+}
+
 export function storeFieldsFor(m: MappedOrder, store?: Store): Partial<Order> {
   if (store) return fieldsFromStore(store);
   // "SNITCH - COCO - PACIFIC JASOLA" — the same three-part shape seed/stores.ts
@@ -1768,15 +1791,49 @@ export async function runUcIntake(): Promise<SyncSummary> {
     const byPrefix = new Map(
       stores.map((s) => [s.id.replace(/^gs_/, "").trim().toUpperCase(), storeToDomain(s)]),
     );
+    // The prefix map above can only ever hit stores whose id still carries the
+    // legacy "gs_<SO_CODE>" shape: measured on the live master, 13 of 163 do,
+    // and only 43 yield a 6-char key at all. Every other id is a cuid, so a UC
+    // order for a perfectly well-mapped store resolved to nothing and landed as
+    // "(store unmapped)" — 177 of them on 2026-09-18 alone.
+    //
+    // The app already HOLDS the answer. The spine path matches the same store
+    // by NAME and gets it right, so an earlier order sharing this 6-char prefix
+    // already carries the resolved storeId. Learn the mapping from that instead
+    // of guessing at it.
+    //
+    // ponytail: interim. The real fix is a unique soCode on Store loaded from
+    // the ops sheet (needs a migration); this needs no schema change and
+    // self-corrects as the spine resolves each prefix once.
+    const byId = new Map(stores.map((s) => [s.id, storeToDomain(s)]));
+    /** storeId a prior order already proved this prefix belongs to. Cached per
+     *  run — misses included — so each distinct prefix costs at most one read. */
+    const learned = new Map<string, string | undefined>();
+    const priorStoreIdFor = async (prefix: string): Promise<string | undefined> => {
+      if (learned.has(prefix)) return learned.get(prefix);
+      const prior = await db.order.findFirst({
+        where: { soNumber: { startsWith: prefix }, storeId: { not: "" } },
+        select: { storeId: true },
+        orderBy: { orderTimestamp: "desc" },
+      });
+      learned.set(prefix, prior?.storeId);
+      return prior?.storeId;
+    };
 
     let created = 0;
     let filled = 0;
     let unmappedStore = 0;
+    let learnedStore = 0;
 
     for (const o of orders) {
       try {
-        const store = byPrefix.get(o.storePrefix);
+        // Only pay the lookup when the store master itself cannot answer.
+        const prior = byPrefix.has(o.storePrefix)
+          ? undefined
+          : await priorStoreIdFor(o.storePrefix);
+        const store = ucStoreForPrefix(o.storePrefix, byPrefix, byId, prior);
         if (!store) unmappedStore += 1;
+        else if (!byPrefix.has(o.storePrefix)) learnedStore += 1;
         const existing = await db.order.findUnique({ where: { soNumber: o.soNumber } });
 
         // Facility comes from UC itself and is independent of the store match,
@@ -1890,6 +1947,9 @@ export async function runUcIntake(): Promise<SyncSummary> {
     }
 
     notes.push(`${created} created ahead of the spine, ${filled} back-filled`);
+    if (learnedStore) {
+      notes.push(`${learnedStore} store matches learned from a prior order's SO prefix`);
+    }
     if (unmappedStore) {
       notes.push(`${unmappedStore} orders had no store match (ingested anyway — fail-open)`);
     }

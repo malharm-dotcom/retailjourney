@@ -10,7 +10,7 @@
 
 import { describe, expect, it } from "vitest";
 import type { MappedOrder } from "../distribution-map";
-import { storeFieldsFor } from "./sync";
+import { storeFieldsFor, ucStoreForPrefix } from "./sync";
 import type { Order, Store } from "../types";
 
 function mapped(over: Partial<MappedOrder> = {}): MappedOrder {
@@ -115,5 +115,42 @@ describe("storeFieldsFor — no local Store row (the fail-open path)", () => {
   it("does not invent an ownership code for an unrecognised one", () => {
     expect(storeFieldsFor(mapped({ storeKey: "SNITCH - XXXX - SOMEWHERE" }), undefined).ownership)
       .toBeUndefined();
+  });
+});
+
+describe("ucStoreForPrefix — the UC path learns what the spine already resolved", () => {
+  // UC resolves a store by LEFT(order_name,6) against Store.id with "gs_"
+  // stripped. On the live master only 13 of 163 ids still have that shape (43
+  // yield a 6-char key at all) — every other id is a cuid, so the lookup misses
+  // stores that are mapped perfectly well. 2026-09-18: 177 orders landed as
+  // "(store unmapped)". BRIGAD16925 read "(store unmapped)" while BRIGAD16905 —
+  // the same store, ingested via the spine, which matches on NAME — read
+  // "COFO - BRIGADE ROAD". The resolved storeId on that earlier order is the
+  // answer this fallback reads back out.
+  const brigade = store({
+    id: "cmroky5c7001h4ypbdtso4c89",
+    storeName: "COFO - BRIGADE ROAD",
+    finalStore: "SNITCH - COFO - BRIGADE ROAD",
+  });
+  const byId = new Map([[brigade.id, brigade]]);
+
+  it("prefers the store master's own key when the id still has the gs_ shape", () => {
+    const legacy = store({ id: "gs_PACIFI" });
+    // The prior-order id is deliberately a DIFFERENT store: the master wins.
+    expect(ucStoreForPrefix("PACIFI", new Map([["PACIFI", legacy]]), byId, brigade.id)).toBe(legacy);
+  });
+
+  it("falls back to the store a prior order with the same prefix resolved (the live case)", () => {
+    expect(ucStoreForPrefix("BRIGAD", new Map(), byId, brigade.id)).toBe(brigade);
+  });
+
+  it("stays unmapped when no prior order has resolved the prefix — fail-open, unchanged", () => {
+    expect(ucStoreForPrefix("BRIGAD", new Map(), byId, undefined)).toBeUndefined();
+  });
+
+  it("never attaches an order to a store the master no longer holds", () => {
+    // The fallback dereferences an id the app itself wrote. A stale one must
+    // read as "unmapped", never as some other store.
+    expect(ucStoreForPrefix("BRIGAD", new Map(), byId, "st_deleted")).toBeUndefined();
   });
 });

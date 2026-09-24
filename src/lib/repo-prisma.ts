@@ -165,6 +165,18 @@ export class PrismaRepo implements OrderRepo {
     return rows.map(eventToDomain);
   }
 
+  async lastTouches(orderIds: string[]): Promise<Map<string, { by: string; at: string }>> {
+    if (!orderIds.length) return new Map();
+    // DISTINCT ON (orderId) over the (orderId, createdAt) index: one row each.
+    const rows = await prisma().orderEvent.findMany({
+      where: { orderId: { in: orderIds }, source: "MANUAL", actorId: { not: null } },
+      orderBy: [{ orderId: "asc" }, { createdAt: "desc" }],
+      distinct: ["orderId"],
+      select: { orderId: true, actorName: true, createdAt: true },
+    });
+    return new Map(rows.map((r) => [r.orderId, { by: r.actorName ?? "someone", at: r.createdAt.toISOString() }]));
+  }
+
   async listAllEvents(): Promise<OrderEvent[]> {
     const rows = await prisma().orderEvent.findMany({ orderBy: { createdAt: "asc" } });
     return rows.map(eventToDomain);

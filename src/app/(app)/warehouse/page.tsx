@@ -16,6 +16,7 @@ import { scopedOrders } from "@/lib/data";
 import { istDateOf, istToday } from "@/lib/ist";
 import { PAST_WAREHOUSE } from "@/lib/journey";
 import { policyOf } from "@/lib/rbac";
+import { repo } from "@/lib/repo";
 import { requireSession } from "@/lib/session";
 import type { OrderStatus } from "@/lib/types";
 import { QueueTable, type QueueRow } from "./table";
@@ -36,13 +37,18 @@ export default async function WarehousePage({
   const canEdit = policy.canEditWarehouse || policy.isAdmin;
   const filters = filtersFromParams(searchParams);
 
-  const all: QueueRow[] = rows
+  const queued = rows
     .filter((r) => QUEUE_STAGES.includes(r.order.status))
     // Past the warehouse by its own overall status → not warehouse pendency,
     // whatever the WH status still reads. The Orders tab still lists it.
     .filter((r) => !PAST_WAREHOUSE.includes(r.order.overallStatus))
     // Dispatched only shows freshly-dispatched (still pickup-pending) so it reads as an outbox.
-    .filter((r) => r.order.status !== "DISPATCHED_TO_STORE" || r.order.overallStatus === "PICKUP_PENDING")
+    .filter((r) => r.order.status !== "DISPATCHED_TO_STORE" || r.order.overallStatus === "PICKUP_PENDING");
+  // Adoption marker: who last acted on each order IN THE APP. Sync writes carry
+  // no actor, so an absent entry means every change so far came from UC/spine.
+  const touches = await repo.lastTouches(queued.map((r) => r.order.id));
+
+  const all: QueueRow[] = queued
     .map((r) => {
       const due = r.sla.handoverDeadlineTs ? istDateOf(r.sla.handoverDeadlineTs) : undefined;
       return {
@@ -87,6 +93,7 @@ export default async function WarehousePage({
         // Only an explicit false flags the row. Orders synced before the
         // spine have this undefined and must render exactly as before.
         outOfRulebook: r.order.rulebookCovered === false,
+        touched: touches.get(r.order.id),
       };
     });
 

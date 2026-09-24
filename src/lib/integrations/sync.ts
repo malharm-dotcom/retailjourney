@@ -514,6 +514,31 @@ export function buildShipmentPatch(o: Order, u: TrackingUpdate): { patch: Partia
   return { patch, events };
 }
 
+/**
+ * The sibling AWB the poller should follow once the one it tracks goes dead.
+ *
+ * The poller reads ONE AWB per order (trackingNumber) and writes its verdict
+ * as the order's. On a split dispatch that made a single rejected box speak
+ * for the whole order: live 2026-09-24, DAHISA15562 read Delivery Failed /
+ * Closed for 86 days while its other AWB (90641429) carried a POD from 9 Jul —
+ * 12 orders like it. The spine path already drops dead children
+ * (rollupShipments); this applies the same rule on the poller side by moving
+ * the tracker to a live sibling, so the next poll reads that AWB's own scans
+ * and POD instead of inventing them. undefined = no live sibling, the dead
+ * verdict stands. (Exported for the precedence tests only.)
+ */
+export function liveSibling(
+  trackedAwb: string,
+  next: ShipmentStatus | undefined,
+  children: OrderShipment[],
+): OrderShipment | undefined {
+  if (!isDeadShipment(next)) return undefined;
+  const others = children.filter((c) => c.awb !== trackedAwb && isPollableAwb(c.awb, c.courier));
+  const verdict = rollupShipments([next, ...others.map((c) => c.shipmentStatus)]);
+  if (!verdict || isDeadShipment(verdict)) return undefined;
+  return others.find((c) => c.shipmentStatus === verdict);
+}
+
 export async function runEshipzSync(): Promise<SyncSummary> {
   if (!databaseConfigured()) throw new Error("eShipz sync requires DATABASE_URL");
   if (!eshipzConfigured()) throw new Error("eShipz sync requires ESHIPZ_API_TOKEN");
@@ -574,11 +599,49 @@ export async function runEshipzSync(): Promise<SyncSummary> {
         }
       }
 
+      // Siblings only for the orders whose tracked AWB came back dead.
+      const deadSos = updates
+        .filter((u) => isDeadShipment(u.status))
+        .map((u) => byAwb.get(u.trackingNumber)?.soNumber)
+        .filter((so): so is string => Boolean(so));
+      const siblingsBySo = new Map<string, OrderShipment[]>();
+      if (deadSos.length) {
+        const kids = (await db.orderShipment.findMany({ where: { soNumber: { in: deadSos } } })).map(shipmentToDomain);
+        // A child's stored status is the spine's and can be stale (DAHISA15562's
+        // dead AWB still read IN_TRANSIT there), so a sibling is judged on a
+        // live read — else two dead boxes would hand the tracker back and forth.
+        const polled = new Set(awbs);
+        const toRead = [...new Set(kids.map((k) => k.awb).filter((a) => !polled.has(a)))];
+        const live = new Map(
+          (toRead.length ? await source.fetchTracking(toRead, (m) => summary.errors.push(m)) : []).map((t) => [t.trackingNumber, t.status]),
+        );
+        for (const k of kids) {
+          const list = siblingsBySo.get(k.soNumber) ?? [];
+          list.push({ ...k, shipmentStatus: live.get(k.awb) ?? k.shipmentStatus });
+          siblingsBySo.set(k.soNumber, list);
+        }
+      }
+
       for (const u of updates) {
         const o = byAwb.get(u.trackingNumber);
         if (!o) continue;
         u.trackingLink = meta.get(u.trackingNumber)?.trackingLink;
         try {
+          const sib = liveSibling(u.trackingNumber, u.status, siblingsBySo.get(o.soNumber) ?? []);
+          if (sib) {
+            const res = await applySyncPatch(o, { trackingNumber: sib.awb }, [
+              {
+                field: "trackingNumber",
+                fromValue: u.trackingNumber,
+                toValue: sib.awb,
+                source: "SYNCED",
+                actorId: null,
+                note: `AWB ${u.trackingNumber} is ${u.status} — following sibling ${sib.awb} (${sib.shipmentStatus})`,
+              },
+            ]);
+            if (res.changed) summary.upserted += 1;
+            continue;
+          }
           const { patch, events } = buildShipmentPatch(o, u);
           // Conflict events for manual shipmentStatus are built above; count them.
           const conflictEvents = events.filter((e) => e.note === "sync conflict — manual value kept").length;

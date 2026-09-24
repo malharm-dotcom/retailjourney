@@ -84,6 +84,9 @@ export interface OrderRepo {
    *  order and the board needs its live AWB, and neither may fan out into one
    *  listShipments call per board row. */
   listAnchorShipments(soNumbers: string[]): Promise<Map<string, BoardShipment[]>>;
+  /** The latest HUMAN action (a MANUAL event with an actor) per order id — the
+   *  Warehouse queue's adoption marker. Orders nobody has touched are absent. */
+  lastTouches(orderIds: string[]): Promise<Map<string, { by: string; at: string }>>;
   /** Upsert one shipment by its natural key (soNumber, awb). */
   upsertShipment(shipment: ShipmentUpsert): Promise<OrderShipment>;
 }
@@ -368,6 +371,17 @@ class InMemoryRepo implements OrderRepo {
       .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
   }
 
+  async lastTouches(orderIds: string[]): Promise<Map<string, { by: string; at: string }>> {
+    const want = new Set(orderIds);
+    const out = new Map<string, { by: string; at: string }>();
+    for (const e of db().events) {
+      if (!want.has(e.orderId) || e.source !== "MANUAL" || !e.actorId) continue;
+      const prev = out.get(e.orderId);
+      if (!prev || e.createdAt > prev.at) out.set(e.orderId, { by: e.actorName ?? "someone", at: e.createdAt });
+    }
+    return out;
+  }
+
   async listAnchorShipments(soNumbers: string[]): Promise<Map<string, BoardShipment[]>> {
     const want = new Set(soNumbers);
     const out = new Map<string, BoardShipment[]>();
@@ -452,5 +466,6 @@ export const repo: OrderRepo = {
   updateFields: (soNumber, patch, actor, source, note) => written(impl().updateFields(soNumber, patch, actor, source, note)),
   listShipments: (soNumber) => impl().listShipments(soNumber),
   listAnchorShipments: (soNumbers) => impl().listAnchorShipments(soNumbers),
+  lastTouches: (orderIds) => impl().lastTouches(orderIds),
   upsertShipment: (shipment) => written(impl().upsertShipment(shipment)),
 };

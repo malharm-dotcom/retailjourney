@@ -75,6 +75,9 @@ export interface QueueRow {
   /** Spine RULEBOOK_COVERED = false: no real rulebook target, so the order runs
    *  on a fallback (eShipz EDD). It is VISIBLE — the old source hid these. */
   outOfRulebook?: boolean;
+  /** Latest action a PERSON took on this order in the app (actor + ISO time).
+   *  Absent = every change so far came from UC/spine sync. Adoption signal. */
+  touched?: { by: string; at: string };
   /** The store has no row in the local Store table, so the rulebook / area
    *  manager / QC enrichment behind it is missing. The store NAME is still the
    *  spine's resolved one. Advisory badge only — the order is on this queue and
@@ -193,6 +196,8 @@ const CSV_COLUMNS: CsvColumn<QueueRow>[] = [
   { header: "WH Processing TAT", value: (r) => r.whTatTs },
   { header: "Handover Date", value: (r) => r.handoverDate },
   { header: "Out of rulebook", value: (r) => (r.outOfRulebook ? "yes" : "") },
+  { header: "Last updated in app by", value: (r) => r.touched?.by },
+  { header: "Last updated in app at", value: (r) => r.touched?.at },
 ];
 
 export function QueueTable({
@@ -471,6 +476,10 @@ export function QueueTable({
           <b className="font-semibold text-ink-soft">{rows.length}</b>{" "}
           {rows.length === 1 ? "order" : "orders"}
           {selected.size ? ` · ${selected.size} selected` : ""}
+          {" · "}
+          <span title="Orders a person has updated in this app at least once. The rest have only ever moved by UC/spine sync.">
+            <b className="font-semibold text-ink-soft">{rows.filter((r) => r.touched).length}</b> updated in app
+          </span>
         </p>
 
         {/* Exports the FILTERED view, not the whole queue — the button sits
@@ -638,6 +647,17 @@ export function QueueTable({
                 <div className={CELL}>
                   <MobileLabel>Order</MobileLabel>
                   <JourneyLink so={r.so} variant="text" className="mono block truncate font-display text-ui font-bold" />
+                  {/* Adoption marker: someone acted on this in the app. No
+                      marker = untouched here, every move so far was synced. */}
+                  {r.touched ? (
+                    <span
+                      className="mt-1 flex items-center gap-1 truncate text-meta text-mute"
+                      title={`Last updated in the app by ${r.touched.by}, ${fmtDateTime(r.touched.at)}`}
+                    >
+                      <Icon name="pen-2-linear" size={12} />
+                      {r.touched.by.split(" ")[0]} · {fmtDate(r.touched.at)}
+                    </span>
+                  ) : null}
                 </div>
 
                 <div className={CELL}>

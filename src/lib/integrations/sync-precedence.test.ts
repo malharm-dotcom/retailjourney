@@ -21,6 +21,7 @@ import {
   evidenceStatus,
   dispatchedOverall,
   buildShipmentPatch,
+  liveSibling,
 } from "./sync";
 import type { TrackingUpdate } from "./types";
 import type { Order, OrderShipment } from "../types";
@@ -513,5 +514,30 @@ describe("delivery stamping — courier evidence, never the clock", () => {
     // The attempt still counts: that is a fact about the courier's behaviour,
     // not a claim about when the box arrived.
     expect(patch.deliveryAttempts).toBe(1);
+  });
+});
+
+describe("liveSibling — a dead tracked AWB does not speak for a split order", () => {
+  const kid = (awb: string, s?: OrderShipment["shipmentStatus"]) => child({ awb, isPollable: true, shipmentStatus: s });
+
+  it("follows the delivered sibling (DAHISA15562: 90641411 rejected, 90641429 POD)", () => {
+    const kids = [kid("90641411", "IN_TRANSIT"), kid("90641429", "DELIVERED")];
+    expect(liveSibling("90641411", "DELIVERY_FAILED", kids)?.awb).toBe("90641429");
+    expect(liveSibling("90641411", "RETURN", kids)?.awb).toBe("90641429");
+  });
+
+  it("follows a sibling still in the air rather than closing the order", () => {
+    expect(liveSibling("A", "DELIVERY_FAILED", [kid("A"), kid("B", "IN_TRANSIT")])?.awb).toBe("B");
+  });
+
+  it("lets the dead verdict stand when every sibling is dead, unscanned, or absent", () => {
+    expect(liveSibling("A", "DELIVERY_FAILED", [kid("A"), kid("B", "RETURN")])).toBeUndefined();
+    expect(liveSibling("A", "DELIVERY_FAILED", [kid("A"), kid("B", undefined)])).toBeUndefined();
+    expect(liveSibling("A", "DELIVERY_FAILED", [kid("A", "DELIVERED")])).toBeUndefined();
+  });
+
+  it("never fires on a live verdict", () => {
+    expect(liveSibling("A", "IN_TRANSIT", [kid("A"), kid("B", "DELIVERED")])).toBeUndefined();
+    expect(liveSibling("A", undefined, [kid("A"), kid("B", "DELIVERED")])).toBeUndefined();
   });
 });

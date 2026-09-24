@@ -419,6 +419,18 @@ describe("a dispatch time is the warehouse done (JANAKP16765: dispatched 09-13, 
     expect(evidenceStatus("NOT_STARTED", "WH_PROCESSING", false)).toBeUndefined();
   });
 
+  it("a UC pack stamp moves a manual status forward to Ready to Dispatch (TOWLIC16407)", () => {
+    expect(evidenceStatus("PICKING", "WH_PROCESSING", false, true)).toBe("READY_TO_DISPATCH");
+    expect(evidenceStatus("NOT_STARTED", "WH_PROCESSING", false, true)).toBe("READY_TO_DISPATCH");
+    expect(inferredWhStatus(m({ patch: { packedTs: "2026-09-01T18:30:00.000Z" } }))).toBe("READY_TO_DISPATCH");
+  });
+
+  it("a pack stamp never pulls back a manual status that is already ahead of it", () => {
+    expect(evidenceStatus("RTS_LOGIC", "WH_PROCESSING", false, true)).toBeUndefined();
+    expect(evidenceStatus("ON_HOLD", "WH_PROCESSING", false, true)).toBeUndefined();
+    expect(evidenceStatus("PACKING", "WH_PROCESSING", true, true)).toBe("DISPATCHED_TO_STORE");
+  });
+
   it("a dispatched order is never left reading WH Processing off a lagging seed", () => {
     expect(dispatchedOverall("WH_PROCESSING", "DISPATCHED_TO_STORE")).toBe("PICKUP_PENDING");
     expect(dispatchedOverall("WH_PROCESSING", "RTS_LOGIC")).toBe("WH_PROCESSING");

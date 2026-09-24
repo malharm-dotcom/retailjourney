@@ -6,7 +6,7 @@ import { repo } from "./repo";
 import { computeOrderSla, isBreaching, ruleFor, type OrderSla } from "./sla";
 import { primaryAwb, transitAnchor, type BoardShipment, type TransitAnchor } from "./transit-anchor";
 import type { FacilityScope, Order, RulebookEntry, User } from "./types";
-import { dataGeneration } from "./db";
+import { dataGeneration, syncGeneration } from "./db";
 import { ORDERS_PAGE_SIZE, type OrderSort } from "./order-search";
 
 export interface OrderRow {
@@ -63,19 +63,49 @@ export async function scopedOrders(
  * manual edit shows on the very next render. Concurrent requests share one
  * in-flight build.
  */
+//
+// Two kinds of staleness, two answers. A person's own write (data generation)
+// is served fresh — the next render waits for the rebuild. Age and a finished
+// background sync (sync generation) are stale-while-revalidate: the current
+// board keeps serving while one rebuild runs behind it. Each rebuild pulls
+// ~23 MB (11.7k orders, 2026-09-24), so the TTL is minutes, not seconds; the
+// only thing it bounds is how long a time-based verdict ("due today") can lag.
 // ponytail: one in-process snapshot; move to a shared cache if the app ever runs as >1 instance.
-const BOARD_TTL_MS = 60_000;
-let snapshot: { gen: number; at: number; rows: Promise<OrderRow[]> } | undefined;
+const BOARD_TTL_MS = 5 * 60_000;
+type Snapshot = { gen: number; syncGen: number; at: number; rows: Promise<OrderRow[]> };
+let snapshot: Snapshot | undefined;
+let refreshing = false;
 
-function boardSnapshot(): Promise<OrderRow[]> {
-  const gen = dataGeneration();
-  if (snapshot && snapshot.gen === gen && Date.now() - snapshot.at < BOARD_TTL_MS) return snapshot.rows;
-  const entry = { gen, at: Date.now(), rows: buildRows("ALL") };
-  snapshot = entry;
+function build(gen: number, syncGen: number): Snapshot {
+  const entry = { gen, syncGen, at: Date.now(), rows: buildRows("ALL") };
   entry.rows.catch(() => {
     if (snapshot === entry) snapshot = undefined;
   });
-  return entry.rows;
+  return entry;
+}
+
+function boardSnapshot(): Promise<OrderRow[]> {
+  const gen = dataGeneration();
+  const syncGen = syncGeneration();
+  if (snapshot && snapshot.gen === gen) {
+    const stale = snapshot.syncGen !== syncGen || Date.now() - snapshot.at >= BOARD_TTL_MS;
+    if (stale && !refreshing) {
+      refreshing = true;
+      const next = build(gen, syncGen);
+      next.rows
+        .then(() => {
+          // A write landed mid-rebuild: that path already built its own.
+          if (dataGeneration() === gen) snapshot = next;
+        })
+        .catch(() => {})
+        .finally(() => {
+          refreshing = false;
+        });
+    }
+    return snapshot.rows;
+  }
+  snapshot = build(gen, syncGen);
+  return snapshot.rows;
 }
 
 async function buildRows(scope: FacilityScope, am?: string, search?: OrderSearch): Promise<OrderRow[]> {
@@ -93,7 +123,7 @@ async function buildRows(scope: FacilityScope, am?: string, search?: OrderSearch
       order,
       rule,
       sla,
-      breaching: isBreaching(sla),
+      breaching: isBreaching(sla, order),
       anchor: transitAnchor(order, children),
       awb,
       awbCount: count,
@@ -153,7 +183,7 @@ export async function orderBySo(
     order,
     rule,
     sla,
-    breaching: isBreaching(sla),
+    breaching: isBreaching(sla, order),
     anchor: transitAnchor(order, shipments),
     awb,
     awbCount: count,

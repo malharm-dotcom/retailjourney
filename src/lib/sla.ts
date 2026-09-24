@@ -250,7 +250,21 @@ export function ageingBucket(days: number): "0-2" | "3-5" | "6-9" | "10+" {
   return "10+";
 }
 
-/** True when any leg is BREACHED or BREACHED_PENDING right now. */
-export function isBreaching(sla: OrderSla): boolean {
-  return sla.legs.some((l) => l.state === "BREACHED" || l.state === "BREACHED_PENDING");
+/** Stages where the order is still someone's job. */
+const OPEN_STAGES: Order["overallStatus"][] = ["WH_PROCESSING", "PICKUP_PENDING", "IN_TRANSIT"];
+
+/**
+ * Breaching NOW: an open order with a leg past its target and not yet done.
+ *
+ * It used to be "any leg BREACHED or BREACHED_PENDING" on any order, so a leg
+ * that FINISHED late weeks ago kept the order breaching forever, and inwarded
+ * or closed orders counted too. Live 2026-09-24 the Control Tower read 411;
+ * many were delivered or inwarded, which is the ops team's closure, not a
+ * breach. A late leg that finished is history (reports keep it via the leg
+ * states); only a pending one is actionable.
+ */
+export function isBreaching(sla: OrderSla, order: Pick<Order, "overallStatus" | "status">): boolean {
+  if (!OPEN_STAGES.includes(order.overallStatus)) return false;
+  if (order.status === "CANCELLED" || order.status === "UNFULFILLABLE") return false;
+  return sla.legs.some((l) => l.state === "BREACHED_PENDING");
 }

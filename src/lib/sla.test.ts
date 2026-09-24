@@ -11,7 +11,7 @@
 // it just stops a late van from breaching a consignment that was ready on time.
 
 import { describe, expect, it } from "vitest";
-import { computeOrderSla } from "./sla";
+import { computeOrderSla, isBreaching, type OrderSla } from "./sla";
 import type { AnchorShipment } from "./transit-anchor";
 import { earliestPickup } from "./transit-anchor";
 import type { Order, RulebookEntry } from "./types";
@@ -179,5 +179,25 @@ describe("the two legs stay independent", () => {
     );
     expect(sla.legs.find((l) => l.leg === "HANDOVER")!.actualTs).toBe("2026-07-21T04:00:00.000Z");
     expect(sla.legs.find((l) => l.leg === "PICKUP")!.actualTs).toBe("2026-07-22T05:00:00.000Z");
+  });
+});
+
+describe("isBreaching — open and late right now", () => {
+  const sla = (...states: ("BREACHED" | "BREACHED_PENDING" | "WITHIN_SLA")[]) =>
+    ({ legs: states.map((state) => ({ leg: "DELIVERY", state })) }) as unknown as OrderSla;
+  const o = (overallStatus: Order["overallStatus"], status: Order["status"] = "DISPATCHED_TO_STORE") => ({ overallStatus, status });
+
+  it("counts an open order with a leg late and still pending", () => {
+    expect(isBreaching(sla("BREACHED_PENDING"), o("IN_TRANSIT"))).toBe(true);
+    expect(isBreaching(sla("BREACHED_PENDING"), o("WH_PROCESSING", "PICKING"))).toBe(true);
+  });
+
+  it("a leg that finished late is history, not a live breach", () => {
+    expect(isBreaching(sla("BREACHED", "WITHIN_SLA"), o("IN_TRANSIT"))).toBe(false);
+  });
+
+  it("delivered, inwarded, closed and cancelled orders are never breaching now", () => {
+    for (const s of ["DELIVERED", "INWARDED", "CLOSED"] as const) expect(isBreaching(sla("BREACHED_PENDING"), o(s))).toBe(false);
+    expect(isBreaching(sla("BREACHED_PENDING"), o("WH_PROCESSING", "CANCELLED"))).toBe(false);
   });
 });

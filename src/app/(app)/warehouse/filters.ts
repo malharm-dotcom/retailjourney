@@ -28,7 +28,18 @@ export const AGE_BUCKETS = [
 
 export type AgeBucketKey = (typeof AGE_BUCKETS)[number]["key"];
 
+/**
+ * Which slice of the queue the board opens on.
+ *
+ * "action" — the default — is the supervisor's to-do list: orders still in the
+ * building whose handover is due today or already overdue. Everything else is
+ * one tap away on "all". Landing on the full queue made a supervisor dig for
+ * the handful of orders that decide whether today's handover lands.
+ */
+export type QueueView = "action" | "all";
+
 export interface QueueFilters {
+  view: QueueView;
   /** SO · store · campaign. */
   q: string;
   store: string;
@@ -43,6 +54,7 @@ export interface QueueFilters {
 }
 
 export const EMPTY_FILTERS: QueueFilters = {
+  view: "action",
   q: "",
   store: "",
   type: "",
@@ -76,6 +88,7 @@ export function filtersFromParams(params: Record<string, string | string[] | und
   const age = one("age");
   const stage = one("stage");
   return {
+    view: one("view") === "all" ? "all" : "action",
     q: one("q"),
     store: one("store"),
     type: (one("type") as OrderType) || "",
@@ -92,6 +105,7 @@ export function filtersFromParams(params: Record<string, string | string[] | und
  *  clean URL. */
 export function paramsFromFilters(f: QueueFilters): string {
   const p = new URLSearchParams();
+  if (f.view === "all") p.set("view", "all");
   if (f.q) p.set("q", f.q);
   if (f.store) p.set("store", f.store);
   if (f.type) p.set("type", f.type);
@@ -107,7 +121,13 @@ export function isFiltered(f: QueueFilters): boolean {
   return Boolean(f.q || f.store || f.type || f.age || f.overdue || f.channel || f.stage);
 }
 
+/** Still in the building with its handover due today or already missed. */
+export function needsAction(c: Pick<Filterable, "due" | "status">): boolean {
+  return Boolean(c.due) && c.status !== "DISPATCHED_TO_STORE";
+}
+
 export function matchesFilters(c: Filterable, f: QueueFilters): boolean {
+  if (f.view === "action" && !needsAction(c)) return false;
   if (f.q) {
     const needle = f.q.toLowerCase();
     const hay = [c.so, c.store, c.campaign].filter(Boolean) as string[];

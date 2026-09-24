@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { perRulebook, tatStatusOf } from "./tat";
+import { actionReason, perRulebook, tatStatusOf } from "./tat";
 
 describe("tatStatusOf", () => {
   const today = "2026-08-24";
@@ -32,5 +32,36 @@ describe("perRulebook", () => {
   it("is undefined — not N — when either side is missing", () => {
     expect(perRulebook(undefined, "2026-08-23")).toBeUndefined();
     expect(perRulebook("Sunday", undefined)).toBeUndefined();
+  });
+});
+
+describe("actionReason — the coordinator's to-do list", () => {
+  const today = "2026-09-24";
+  const tomorrow = "2026-09-25";
+  const base = { attempts: 0, breaching: false };
+
+  it("a courier-reported failure is the first thing to act on, until a person decides", () => {
+    expect(actionReason({ ...base, shipment: "DELIVERY_FAILED", breaching: true }, today, tomorrow)).toBe("failed");
+    expect(actionReason({ ...base, shipment: "DELIVERY_FAILED", source: "MANUAL" }, today, tomorrow)).toBeUndefined();
+  });
+
+  it("an attempt that failed and is being retried is an NDR", () => {
+    expect(actionReason({ ...base, shipment: "IN_TRANSIT", attempts: 1 }, today, tomorrow)).toBe("ndr");
+  });
+
+  it("breached now, then at risk — due today or tomorrow and not out for delivery", () => {
+    expect(actionReason({ ...base, shipment: "IN_TRANSIT", breaching: true }, today, tomorrow)).toBe("breached");
+    expect(actionReason({ ...base, shipment: "INFORECEIVED", edd: tomorrow }, today, tomorrow)).toBe("at-risk");
+    expect(actionReason({ ...base, edd: tomorrow }, today, tomorrow)).toBe("at-risk");
+    expect(actionReason({ ...base, shipment: "IN_TRANSIT", edd: tomorrow }, today, tomorrow)).toBeUndefined();
+    expect(actionReason({ ...base, shipment: "IN_TRANSIT", courierEdd: today }, today, tomorrow)).toBe("at-risk");
+    expect(actionReason({ ...base, shipment: "OUT_FOR_DELIVERY", edd: today }, today, tomorrow)).toBeUndefined();
+    expect(actionReason({ ...base, shipment: "IN_TRANSIT", edd: "2026-09-28" }, today, tomorrow)).toBeUndefined();
+  });
+
+  it("delivered, inwarded and returned shipments need nothing", () => {
+    expect(actionReason({ ...base, overall: "INWARDED", shipment: "IN_TRANSIT", attempts: 1 }, today, tomorrow)).toBeUndefined();
+    expect(actionReason({ ...base, delivered: today, attempts: 2 }, today, tomorrow)).toBeUndefined();
+    expect(actionReason({ ...base, shipment: "RETURN", breaching: true }, today, tomorrow)).toBeUndefined();
   });
 });

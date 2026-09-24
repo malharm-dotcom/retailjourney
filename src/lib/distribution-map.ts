@@ -219,6 +219,9 @@ function mapOrderPatch(r: DistributionRow): Partial<Order> {
     facility: normFacility(r.WAREHOUSE_NAME),
     qty: int(r.QUANTITY),
     saleInvoiceNumber: str(r.INVOICE_NUMBER),
+    // Packing done. Proves the stage even over a hand-set status — the floor
+    // left TOWLIC16407 on a manual Picking for three weeks after UC packed it.
+    packedTs: isoFromIstNtz(r.PACKED_TIMESTAMP),
     manifestedTs: isoFromIstNtz(r.MANIFESTED_TIMESTAMP),
     // UC's dispatch. MANIFESTED_TIMESTAMP is NULL on every spine row, so the
     // sync also uses this as the manifest time (fill-only, never a swap).

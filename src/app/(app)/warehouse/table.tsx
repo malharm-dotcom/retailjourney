@@ -41,7 +41,7 @@ import { ageingBucket } from "@/lib/sla";
 import { LOGISTICS_PARTNERS, type Order, type OrderStatus, type OrderType } from "@/lib/types";
 import { AGE_EMPHASIS, TONE, WH_STATUS_VISUAL, cn, railOf } from "@/lib/ui";
 import { BulkBar } from "./bulk-bar";
-import { FilterBar } from "./filter-bar";
+import { FilterBar, type HandoverProgress, type ViewCounts } from "./filter-bar";
 import { ImportDialog } from "./import-dialog";
 import type { QueueFilters } from "./filters";
 
@@ -88,7 +88,6 @@ export interface QueueRow {
 /** Moves that end the order. Separated in the menu and confirmed in red. */
 const TERMINAL_MOVES: OrderStatus[] = ["CANCELLED", "UNFULFILLABLE"];
 
-type Density = "comfortable" | "compact";
 
 type SortKey = "urgency" | "so" | "store" | "stage" | "qty" | "age";
 
@@ -208,6 +207,8 @@ export function QueueTable({
   stores,
   types,
   stageCounts,
+  viewCounts,
+  handover,
   matchedTotal,
   scopeTotal,
 }: {
@@ -219,6 +220,8 @@ export function QueueTable({
   types: OrderType[];
   /** Per-stage totals with every filter EXCEPT stage applied — see page.tsx. */
   stageCounts: Record<OrderStatus, number>;
+  viewCounts: ViewCounts;
+  handover: HandoverProgress;
   matchedTotal: number;
   scopeTotal: number;
 }) {
@@ -228,10 +231,6 @@ export function QueueTable({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [note, setNote] = useState("");
   const [pending, startTransition] = useTransition();
-  // Row density. Comfortable keeps the second meta line (campaign, facility,
-  // flags); compact drops it to a single line, so roughly twice as many orders
-  // fit the viewport. Same table, same actions — just less air.
-  const [density, setDensity] = useState<Density>("comfortable");
   const [sort, setSort] = useState<Sort>({ key: "urgency", dir: "desc" });
   // What just happened, for screen readers.
   const [announcement, setAnnouncement] = useState("");
@@ -467,6 +466,8 @@ export function QueueTable({
         stores={stores}
         types={types}
         stageCounts={stageCounts}
+        viewCounts={viewCounts}
+        handover={handover}
         matchedTotal={matchedTotal}
         scopeTotal={scopeTotal}
       />
@@ -502,29 +503,6 @@ export function QueueTable({
           </Button>
         ) : null}
 
-        {/* Density. A floor lead working one stage wants the whole row; a
-            supervisor sweeping the queue for what is late wants twice as many
-            rows on screen. Same table, two reading distances. */}
-        <div
-          className="flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]"
-          role="group"
-          aria-label="Row density"
-        >
-          {(["comfortable", "compact"] as Density[]).map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={density === d}
-              onClick={() => setDensity(d)}
-              className={cn(
-                "rounded-md px-3 py-[6px] text-dense font-semibold capitalize transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97]",
-                density === d ? "bg-card text-ink shadow-[0_1px_3px_rgba(39,34,27,.12)]" : "text-ink-soft hover:text-ink",
-              )}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
       </div>
 
       {/* Status changes are announced here: a corner toast plus an in-place
@@ -596,7 +574,18 @@ export function QueueTable({
 
         {sorted.length === 0 ? (
           <div className="rounded-b-card px-6 py-14 text-center text-sm text-mute max-md:rounded-t-card">
-            No orders match — clear the filters or switch facility.
+            {filters.view === "action" && viewCounts.all > 0 ? (
+              <>
+                <span className="block font-semibold text-ink">Nothing due is still in the building.</span>
+                Every order with a handover today or earlier has left. The rest of the queue is under{" "}
+                <Link href="/warehouse?view=all" className="font-semibold text-ink underline underline-offset-2">
+                  All in queue
+                </Link>
+                .
+              </>
+            ) : (
+              "No orders match — clear the filters or switch facility."
+            )}
           </div>
         ) : (
           paged.map((r, j) => {
@@ -619,7 +608,7 @@ export function QueueTable({
                   "rail grid grid-cols-1 border-b border-line px-3 transition-colors duration-150 ease-ui last:border-b-0 hover:bg-paper md:items-center",
                   GRID,
                   "row-skip",
-                  density === "compact" ? "md:py-0" : "md:py-1",
+                  "md:py-1",
                   i === 0 && "max-md:rounded-t-card",
                   j === paged.length - 1 && "rounded-b-card",
                   isSel && "bg-paper",
@@ -629,7 +618,7 @@ export function QueueTable({
                   "--rail": r.due === "overdue" ? TONE.failed.hex : railOf(v),
                   // Estimate only; contain-intrinsic-size:auto replaces it with
                   // the real height once a row has rendered once.
-                  "--row-h": density === "compact" ? "46px" : "64px",
+                  "--row-h": "64px",
                 } as React.CSSProperties}
               >
                 <div className={cn(CELL, "flex items-center max-md:pt-4")}>
@@ -677,12 +666,10 @@ export function QueueTable({
                       store unmapped
                     </span>
                   ) : null}
-                  {density === "comfortable" ? (
-                    <span className="block truncate text-cap text-mute" title={r.campaign}>
-                      {r.facility}
-                      {r.campaign ? ` · ${r.campaign}` : ""}
-                    </span>
-                  ) : null}
+                  <span className="block truncate text-cap text-mute" title={r.campaign}>
+                    {r.facility}
+                    {r.campaign ? ` · ${r.campaign}` : ""}
+                  </span>
                 </div>
 
                 {/* overflow-hidden because a pill is whitespace-nowrap and
@@ -707,12 +694,10 @@ export function QueueTable({
                   ) : (
                     <span className="text-ui text-ink-soft">{r.type}</span>
                   )}
-                  {density === "comfortable" ? (
-                    <span className="block truncate text-cap text-mute">
-                      {(r.channel ?? "—").replace("_", " ").toLowerCase()}
-                      {r.priority ? " · high" : ""}
-                    </span>
-                  ) : null}
+                  <span className="block truncate text-cap text-mute">
+                    {(r.channel ?? "—").replace("_", " ").toLowerCase()}
+                    {r.priority ? " · high" : ""}
+                  </span>
                   {/* A FLAG, not a breach: this order simply has no rulebook
                       target, so it runs on a fallback EDD. */}
                   {r.outOfRulebook ? (
@@ -796,14 +781,12 @@ export function QueueTable({
                   </span>
                   {/* Drops with every other second line in compact, exactly as
                       Store and Type do — same toggle, same behaviour. */}
-                  {density === "comfortable" ? (
-                    <span
-                      className="mono block truncate text-cap text-mute"
-                      title={r.handoverDate ? `Courier collects ${fmtDate(r.handoverDate)}` : undefined}
-                    >
-                      Handover {fmtDate(r.handoverDate)}
-                    </span>
-                  ) : null}
+                  <span
+                    className="mono block truncate text-cap text-mute"
+                    title={r.handoverDate ? `Courier collects ${fmtDate(r.handoverDate)}` : undefined}
+                  >
+                    Handover {fmtDate(r.handoverDate)}
+                  </span>
                 </div>
 
                 <div className={cn(CELL, "flex items-center gap-1.5 max-md:pb-4")}>

@@ -1,4 +1,6 @@
+import { Suspense } from "react";
 import { AppShell } from "@/components/shell/app-shell";
+import { NavProgress } from "@/components/shell/nav-progress";
 import { SyncStatus } from "@/components/shell/sync-status";
 import { TopBarControls } from "@/components/shell/top-bar";
 import { policyOf } from "@/lib/rbac";
@@ -12,6 +14,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       syncStrip={<SyncStatus />}
       isAdmin={policyOf(user.role).isAdmin}
     >
+      <Suspense fallback={null}>
+        <NavProgress />
+      </Suspense>
       {children}
     </AppShell>
   );

@@ -50,7 +50,11 @@ export default async function WarehousePage({
 
   const all: QueueRow[] = queued
     .map((r) => {
-      const due = r.sla.handoverDeadlineTs ? istDateOf(r.sla.handoverDeadlineTs) : undefined;
+      // A dispatched order has handed over — the warehouse deadline is met or
+      // missed, never "overdue" any more. Only work still in the building is.
+      const handedOver = r.order.status === "DISPATCHED_TO_STORE";
+      const deadline = r.sla.handoverDeadlineTs ? istDateOf(r.sla.handoverDeadlineTs) : undefined;
+      const due = handedOver ? undefined : deadline;
       return {
         so: r.order.soNumber,
         store: r.order.storeNameFormat,
@@ -79,7 +83,7 @@ export default async function WarehousePage({
         // rather than a second definition of "handover day".
         handoverDate: r.sla.pickupTargetTs
           ? istDateOf(r.sla.pickupTargetTs)
-          : due,
+          : deadline,
         ageDays: r.sla.ageing,
         boxCount: r.order.boxCount,
         weightKg: r.order.weightKg,
@@ -115,6 +119,28 @@ export default async function WarehousePage({
 
   const terminal = rows.filter((r) => ["CANCELLED", "UNFULFILLABLE"].includes(r.order.status)).length;
 
+  // The two views' sizes under every other facet, so the switch says how much
+  // sits on each side before anyone taps it.
+  const viewCounts = {
+    action: all.filter((c) => matchesFilters(c, { ...filters, view: "action", stage: "" })).length,
+    all: all.filter((c) => matchesFilters(c, { ...filters, view: "all", stage: "" })).length,
+  };
+
+  // Did today's handovers happen? Read from every order in scope, not the
+  // queue — a handed-over order has left the queue, and it is exactly the one
+  // that counts as done.
+  const dueToday = rows.filter(
+    (r) =>
+      !["CANCELLED", "UNFULFILLABLE"].includes(r.order.status) &&
+      r.sla.handoverDeadlineTs &&
+      istDateOf(r.sla.handoverDeadlineTs) === today,
+  );
+  const handover = {
+    due: dueToday.length,
+    done: dueToday.filter((r) => r.order.status === "DISPATCHED_TO_STORE" || r.order.overallStatus !== "WH_PROCESSING").length,
+    overdue: all.filter((c) => c.due === "overdue").length,
+  };
+
   return (
     <>
       <PageHead
@@ -129,6 +155,8 @@ export default async function WarehousePage({
         stores={stores}
         types={types}
         stageCounts={stageCounts as Record<OrderStatus, number>}
+        viewCounts={viewCounts}
+        handover={handover}
         matchedTotal={shown.length}
         scopeTotal={all.length}
       />

@@ -375,7 +375,7 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
               list.length,
               list.reduce((a, r) => a + r.order.qty, 0),
               list.filter((r) => r.order.deliveredDate).length,
-              list.filter((r) => r.breaching && r.order.overallStatus !== "DELIVERED").length,
+              list.filter((r) => r.breaching).length,
               list.filter(
                 (r) => ((r.order.shortageQty ?? 0) > 0 || (r.order.excessQty ?? 0) > 0) && r.order.entryStatus !== "CLOSED",
               ).length,

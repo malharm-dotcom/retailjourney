@@ -44,7 +44,7 @@ async function main() {
 
     const locked = frozen || row.manualFields.includes("status");
     const synced = (locked ? undefined : guardedStatus(row.status, inferredWhStatus(m, m.patch.dispatchedTs ?? row.dispatchedTs?.toISOString()))) ?? row.status;
-    const status = evidenceStatus(synced, predicted, Boolean(m.patch.dispatchedTs ?? row.dispatchedTs)) ?? synced;
+    const status = evidenceStatus(synced, predicted, Boolean(m.patch.dispatchedTs ?? row.dispatchedTs), Boolean(m.patch.packedTs ?? row.packedTs)) ?? synced;
     // A childless order takes the spine seed verbatim (then never WH Processing once dispatched).
     const expected = dispatchedOverall(m.shipments.length || frozen ? predicted : (m.overallStatusSeed ?? predicted), status);
     if (!apply) { console.log(`   ${so.padEnd(14)} ${before.padEnd(15)} -> ${expected}   status ${row.status} -> ${status}   (spine seed ${m.overallStatusSeed ?? "∅"})`); continue; }

@@ -5,6 +5,7 @@
 // The shimmer is a background animation only: no transform, so reduced-motion
 // users get a plain resting block (see globals.css).
 
+import { Spinner } from "@/components/ui/spinner";
 import { cn } from "@/lib/ui";
 
 export function Skeleton({ className }: { className?: string }) {
@@ -23,7 +24,13 @@ export function Skeleton({ className }: { className?: string }) {
 export function PageHeadSkeleton() {
   return (
     <div className="mb-6">
-      <Skeleton className="h-9 w-[280px]" />
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-9 w-[280px]" />
+        <span role="status" className="flex items-center gap-2 text-cap font-semibold text-mute">
+          <Spinner size={13} />
+          Loading
+        </span>
+      </div>
       <Skeleton className="mt-3 h-4 w-[420px] max-w-full" />
     </div>
   );

@@ -9,14 +9,14 @@
 
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
-import { istDateOf, istToday, daysBetween, weekdayOf } from "@/lib/ist";
+import { addDays, istDateOf, istToday, daysBetween, weekdayOf } from "@/lib/ist";
 import { courierOf, isSelfDelivery } from "@/lib/journey";
 import type { AnchorSource } from "@/lib/transit-anchor";
 import { policyOf } from "@/lib/rbac";
 import { requireSession } from "@/lib/session";
 import { SLA_LABEL } from "@/lib/sla";
 import { LogisticsTable, type LogisticsRow } from "./table";
-import { perRulebook, tatStatusOf } from "./tat";
+import { actionReason, perRulebook, tatStatusOf } from "./tat";
 
 export const metadata = { title: "Logistics" };
 export const dynamic = "force-dynamic";
@@ -42,6 +42,7 @@ export default async function LogisticsPage() {
   const today = istToday();
   const policy = policyOf(user.role);
   const canEdit = policy.canEditLogistics || policy.isAdmin;
+  const tomorrow = addDays(today, 1);
 
   const table: LogisticsRow[] = rows
     .filter((r) => r.order.status === "DISPATCHED_TO_STORE")
@@ -63,7 +64,22 @@ export default async function LogisticsPage() {
       const courier = courierOf(o);
       const delivery = r.sla.legs.find((l) => l.leg === "DELIVERY")?.state;
       const logisticsDelivery = r.sla.legs.find((l) => l.leg === "LOGISTICS_DELIVERY")?.state;
+      const action = actionReason(
+        {
+          shipment: o.shipmentStatus,
+          overall: o.overallStatus,
+          source: o.shipmentSource ?? o.statusSource,
+          delivered: o.deliveredDate,
+          attempts: o.deliveryAttempts,
+          breaching: r.breaching,
+          edd,
+          courierEdd: o.expectedDate,
+        },
+        today,
+        tomorrow,
+      );
       return {
+        action,
         so: o.soNumber,
         dispatch: r.anchor.date,
         invoice: o.saleInvoiceNumber,

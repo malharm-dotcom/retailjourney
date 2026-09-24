@@ -9,6 +9,7 @@ import { normStoreKey } from "@/lib/qc-tat";
 import { facilityWhGroup, type RulebookOrderType, type RulebookViewRow } from "@/lib/rulebook-map";
 import { WEEKDAYS, type Store, type Weekday } from "@/lib/types";
 import { cn } from "@/lib/ui";
+import { signalNavigation } from "@/components/shell/nav-progress";
 
 /**
  * The four rulebook legs.
@@ -468,7 +469,10 @@ function VersionSelector({ snapshots, version }: { snapshots: string[]; version:
       <span className="text-mute">Version</span>
       <select
         value={version ?? snapshots[0]}
-        onChange={(e) => router.push(`${pathname}?v=${e.target.value}`)}
+        onChange={(e) => {
+          signalNavigation();
+          router.push(`${pathname}?v=${e.target.value}`);
+        }}
         className="rounded-control border border-line-control bg-paper px-3 py-2 text-dense font-semibold text-ink transition-colors duration-150 ease-ui hover:border-sage focus:border-sage focus:outline-none"
       >
         {snapshots.map((s) => (

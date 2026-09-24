@@ -27,7 +27,7 @@ function card(over: Partial<Filterable> = {}): Filterable {
   };
 }
 
-const f = (over: Partial<QueueFilters> = {}): QueueFilters => ({ ...EMPTY_FILTERS, ...over });
+const f = (over: Partial<QueueFilters> = {}): QueueFilters => ({ ...EMPTY_FILTERS, view: "all", ...over });
 
 describe("reading filters from the URL", () => {
   it("defaults to a neutral, unfiltered board", () => {
@@ -47,6 +47,7 @@ describe("reading filters from the URL", () => {
         stage: "PACKING",
       }),
     ).toEqual({
+      view: "action",
       q: "SO-1",
       store: "BOPAL",
       type: "RPL",
@@ -84,7 +85,7 @@ describe("reading filters from the URL", () => {
 
 describe("matching", () => {
   it("passes everything when nothing is set", () => {
-    expect(matchesFilters(card(), EMPTY_FILTERS)).toBe(true);
+    expect(matchesFilters(card(), f())).toBe(true);
   });
 
   it("searches SO, store and campaign case-insensitively", () => {
@@ -132,5 +133,21 @@ describe("matching", () => {
     expect(matchesFilters(c, f({ type: "FRESH" as OrderType, overdue: true, age: "4-7" }))).toBe(true);
     // One mismatched facet is enough to drop the card.
     expect(matchesFilters(c, f({ type: "FRESH" as OrderType, overdue: true, age: "0-1" }))).toBe(false);
+  });
+});
+
+describe("the action view — what the floor has to do today", () => {
+  it("is where the board opens, and view=all is the only way out of it", () => {
+    expect(filtersFromParams({}).view).toBe("action");
+    expect(filtersFromParams({ view: "all" }).view).toBe("all");
+    expect(paramsFromFilters({ ...EMPTY_FILTERS, view: "all" })).toBe("?view=all");
+  });
+
+  it("holds work still in the building that is due today or overdue", () => {
+    const action = { ...EMPTY_FILTERS };
+    expect(matchesFilters(card({ due: "today", status: "PICKING" }), action)).toBe(true);
+    expect(matchesFilters(card({ due: "overdue", status: "ON_HOLD" }), action)).toBe(true);
+    expect(matchesFilters(card({ due: undefined, status: "PICKING" }), action)).toBe(false);
+    expect(matchesFilters(card({ due: "overdue", status: "DISPATCHED_TO_STORE" }), action)).toBe(false);
   });
 });

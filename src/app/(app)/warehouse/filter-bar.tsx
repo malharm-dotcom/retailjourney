@@ -10,11 +10,30 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
+import { signalNavigation } from "@/components/shell/nav-progress";
 import { Button, Chip, Input, Select } from "@/components/ui/primitives";
 import { STATUS_LABEL } from "@/lib/journey";
-import { WH_STATUS_VISUAL, cn } from "@/lib/ui";
+import { TONE, WH_STATUS_VISUAL, cn } from "@/lib/ui";
 import type { OrderStatus, OrderType } from "@/lib/types";
-import { AGE_BUCKETS, QUEUE_STAGES, isFiltered, paramsFromFilters, type QueueFilters } from "./filters";
+import { AGE_BUCKETS, EMPTY_FILTERS, QUEUE_STAGES, isFiltered, paramsFromFilters, type QueueFilters, type QueueView } from "./filters";
+
+export interface ViewCounts {
+  action: number;
+  all: number;
+}
+
+/** Today's handover, across every order in scope — handed-over ones included. */
+export interface HandoverProgress {
+  due: number;
+  done: number;
+  /** Still in the building with an earlier handover day already missed. */
+  overdue: number;
+}
+
+const VIEWS: { key: QueueView; label: string }[] = [
+  { key: "action", label: "To action" },
+  { key: "all", label: "All in queue" },
+];
 
 const CHANNELS: { value: string; label: string }[] = [
   { value: "OWN_STORE", label: "Own store" },
@@ -26,6 +45,8 @@ export function FilterBar({
   stores,
   types,
   stageCounts,
+  viewCounts,
+  handover,
   matchedTotal,
   scopeTotal,
 }: {
@@ -35,6 +56,8 @@ export function FilterBar({
   /** Per-stage totals with every OTHER facet applied, so narrowing to one
    *  stage still shows how many orders wait in the ones you left. */
   stageCounts: Record<OrderStatus, number>;
+  viewCounts: ViewCounts;
+  handover: HandoverProgress;
   matchedTotal: number;
   scopeTotal: number;
 }) {
@@ -49,6 +72,7 @@ export function FilterBar({
   useEffect(() => setQ(filters.q), [filters.q]);
 
   const apply = (next: Partial<QueueFilters>) => {
+    signalNavigation();
     router.push(`${pathname}${paramsFromFilters({ ...filters, ...next })}`, { scroll: false });
   };
 
@@ -65,8 +89,73 @@ export function FilterBar({
   // the pills always add up to the number next to them.
   const acrossStages = QUEUE_STAGES.reduce((n, s) => n + (stageCounts[s] ?? 0), 0);
 
+  const pct = handover.due ? Math.round((handover.done / handover.due) * 100) : 0;
+
   return (
     <>
+      {/* What the floor has to do, first. The board opens on "To action" —
+          work still in the building with its handover due today or missed —
+          and the whole queue is one tap away. The line beside it answers the
+          supervisor's only question about today: did the handovers happen? */}
+      <div className="mb-4 flex flex-wrap items-center gap-x-5 gap-y-3">
+        <div className="flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]" role="group" aria-label="Queue view">
+          {VIEWS.map(({ key, label }) => {
+            const on = filters.view === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={on}
+                onClick={() => apply({ view: key, stage: "" })}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-3.5 py-[7px] text-ui font-semibold",
+                  "transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97] motion-reduce:transition-none",
+                  on ? "bg-card text-ink shadow-[0_1px_3px_rgba(39,34,27,.12)]" : "text-ink-soft hover:text-ink",
+                )}
+              >
+                {label}
+                <span
+                  className={cn(
+                    "mono rounded-full px-1.5 text-cap",
+                    key === "action" && viewCounts.action > 0 ? "bg-breach-bg text-breach" : "text-inherit opacity-70",
+                  )}
+                >
+                  {viewCounts[key]}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
+        {handover.due || handover.overdue ? (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-dense text-ink-soft" aria-live="polite">
+            {handover.due ? (
+              <span className="flex items-center gap-2.5">
+                <span>
+                  Today&apos;s handovers <b className="font-semibold text-ink">{handover.done}</b> of {handover.due} done
+                </span>
+                <span
+                  className="h-1.5 w-24 overflow-hidden rounded-full bg-line"
+                  role="progressbar"
+                  aria-label="Today's handovers done"
+                  aria-valuemin={0}
+                  aria-valuemax={handover.due}
+                  aria-valuenow={handover.done}
+                >
+                  <span
+                    className="block h-full rounded-full transition-[width] duration-300 ease-ui motion-reduce:transition-none"
+                    style={{ width: `${pct}%`, background: TONE.done.hex }}
+                  />
+                </span>
+              </span>
+            ) : null}
+            {handover.overdue ? (
+              <span className="font-semibold text-breach">{handover.overdue} overdue from earlier days</span>
+            ) : null}
+          </div>
+        ) : null}
+      </div>
+
       {/* The stage quick-filter. This is what the kanban's columns became: the
           same stage separation, minus the horizontal scroll that kept three of
           the seven stages permanently off-screen. Each pill carries its count,
@@ -181,7 +270,7 @@ export function FilterBar({
           <p aria-live="polite" className="text-dense text-mute">
             <b className="font-semibold text-ink-soft">{matchedTotal}</b> of {scopeTotal} orders
           </p>
-          <Button variant="ghost" onClick={() => router.push(pathname, { scroll: false })}>
+          <Button variant="ghost" onClick={() => apply({ ...EMPTY_FILTERS, view: filters.view })}>
             Clear
           </Button>
         </>

@@ -4,7 +4,7 @@
 // overwritten (the conflict is logged instead — manual wins, PRD §2).
 
 import { mapDistributionRows, isPollableAwb, type MappedOrder } from "../distribution-map";
-import { prisma, databaseConfigured, markDataChanged } from "../db";
+import { prisma, databaseConfigured, markSyncChanged } from "../db";
 import { isoFromEpochMs, isoFromIstNtz, istDateOf, nowIso, istToday } from "../ist";
 import { PAST_WAREHOUSE, TERMINAL_STATUSES, WH_FLOW, canTransitionShipment, isDeadShipment, rollupOverall, rollupShipments } from "../journey";
 import { orderToDb, orderToDomain, shipmentToDb, shipmentToDomain, storeToDomain } from "../prisma-map";
@@ -226,6 +226,7 @@ async function applySyncPatch(
     (data.status as OrderStatus | undefined) ?? o.status,
     overall.next,
     Boolean(data.dispatchedTs ?? o.dispatchedTs),
+    Boolean(data.packedTs ?? o.packedTs),
   );
   if (evidenced) {
     const i = events.findIndex((e) => e.field === "status" && e.note === "sync conflict — manual value kept");
@@ -241,7 +242,7 @@ async function applySyncPatch(
       toValue: evidenced,
       source,
       actorId: null,
-      note: "delivered/inwarded/dispatched — evidence outranks the warehouse status",
+      note: "packed/dispatched/delivered in UC — evidence outranks the warehouse status",
     });
   }
   const nextOverall = dispatchedOverall(overall.next, (data.status as OrderStatus | undefined) ?? o.status);
@@ -283,7 +284,7 @@ async function finishRun(
       ...(watermark !== undefined ? { watermark } : {}),
     },
   });
-  markDataChanged();
+  markSyncChanged();
 }
 
 /** SyncRun.source for scheduler lifecycle markers. Deliberately outside the
@@ -344,14 +345,21 @@ export function guardedStatus(current: Order["status"], next?: Order["status"]):
   return next;
 }
 
-/** The warehouse status that delivered/inwarded evidence — or a dispatch
- *  time — proves, whatever a manual status says. Forward-only via
- *  guardedStatus, so ON_HOLD and terminal orders are left alone. (Exported for
- *  the precedence tests and the resync.) */
-export function evidenceStatus(current: OrderStatus, overall: OverallStatus, dispatched = false): OrderStatus | undefined {
-  return dispatched || overall === "DELIVERED" || overall === "INWARDED"
-    ? guardedStatus(current, "DISPATCHED_TO_STORE")
-    : undefined;
+/** The warehouse status that delivered/inwarded evidence — or a dispatch or
+ *  pack time — proves, whatever a manual status says. A person's click records
+ *  where the floor WAS; a later UC stamp is where the order IS, so the stamp
+ *  wins (live 2026-09-24: TOWLIC16407 on a manual Picking, UC-packed 09-02).
+ *  Forward-only via guardedStatus, so it never regresses a manual status that
+ *  is AHEAD of the evidence, and leaves ON_HOLD and terminal orders alone.
+ *  (Exported for the precedence tests and the resync.) */
+export function evidenceStatus(
+  current: OrderStatus,
+  overall: OverallStatus,
+  dispatched = false,
+  packed = false,
+): OrderStatus | undefined {
+  if (dispatched || overall === "DELIVERED" || overall === "INWARDED") return guardedStatus(current, "DISPATCHED_TO_STORE");
+  return packed ? guardedStatus(current, "READY_TO_DISPATCH") : undefined;
 }
 
 /** A dispatched order has left the warehouse whatever a lagging spine seed
@@ -1072,7 +1080,8 @@ export function inferredWhStatus(
   if (m.shipments.length || dispatchedTs || (m.overallStatusSeed && PAST_WAREHOUSE.includes(m.overallStatusSeed))) {
     return "DISPATCHED_TO_STORE";
   }
-  return m.patch.manifestedTs ? "RTS_LOGIC" : undefined;
+  if (m.patch.manifestedTs) return "RTS_LOGIC";
+  return m.patch.packedTs ? "READY_TO_DISPATCH" : undefined;
 }
 
 /**
@@ -1979,6 +1988,7 @@ export async function runUcIntake(): Promise<SyncSummary> {
           existing.status as OrderStatus,
           existing.overallStatus as OverallStatus,
           Boolean(dispatched),
+          Boolean(patch.packedTs ?? existing.packedTs),
         );
         if (advanced) {
           patch.status = advanced;
@@ -1997,7 +2007,10 @@ export async function runUcIntake(): Promise<SyncSummary> {
                 toValue: advanced,
                 source: "SYNCED_UC",
                 actorId: null,
-                note: "Dispatched in Unicommerce — the warehouse stage is complete.",
+                note:
+                  advanced === "DISPATCHED_TO_STORE"
+                    ? "Dispatched in Unicommerce — the warehouse stage is complete."
+                    : "Packed in Unicommerce — packing is complete.",
               },
             });
           }

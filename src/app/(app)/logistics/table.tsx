@@ -26,7 +26,17 @@ import { csvFilename, downloadCsv, toCsv, type CsvColumn } from "@/lib/csv";
 import { addDays, fmtDate, istToday } from "@/lib/ist";
 import type { OrderType, ShipmentStatus, Source } from "@/lib/types";
 import { OVERALL_VISUAL, ROW_ACTION, SHIPMENT_VISUAL, TONE, cn, railOf, type Tone } from "@/lib/ui";
-import type { TatStatus } from "./tat";
+import { ACTION_LABEL, type ActionReason, type TatStatus } from "./tat";
+
+const ACTION_ORDER: ActionReason[] = ["failed", "ndr", "breached", "at-risk"];
+const ACTION_RANK = Object.fromEntries(ACTION_ORDER.map((a, i) => [a, i])) as Record<ActionReason, number>;
+/** Red for what already went wrong; amber for what is about to. */
+const ACTION_TONE: Record<ActionReason, string> = {
+  failed: TONE.failed.pill,
+  ndr: TONE.failed.pill,
+  breached: TONE.failed.pill,
+  "at-risk": TONE.handling.pill,
+};
 
 export interface LogisticsRow {
   so: string;
@@ -83,10 +93,11 @@ export interface LogisticsRow {
   trackingLink?: string;
   msg?: string;
   breaching: boolean;
+  /** Why this needs a person now — see actionReason. Undefined = moving on its own. */
+  action?: ActionReason;
 }
 
-type Filter = "open" | "pending" | "transit" | "failed" | "self" | "delivered";
-type Density = "comfortable" | "compact";
+type Filter = "action" | "open" | "pending" | "transit" | "failed" | "self" | "delivered";
 type SortKey = "dispatch" | "invoice" | "store" | "courier" | "pickup" | "edd";
 
 const TAT_VISUAL: Record<TatStatus, { label: string; tone: Tone }> = {
@@ -216,7 +227,9 @@ const CSV_COLUMNS: CsvColumn<LogisticsRow>[] = [
 ];
 
 export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdit: boolean }) {
-  const [filter, setFilter] = useState<Filter>("open");
+  // Opens on the to-do list, not the whole book: the coordinator's first
+  // question is "what needs me", and every other slice is one chip away.
+  const [filter, setFilter] = useState<Filter>("action");
   const [q, setQ] = useState("");
   const [facility, setFacility] = useState("");
   const [type, setType] = useState("");
@@ -226,7 +239,6 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
   // to" filter rather than requiring both.
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
-  const [density, setDensity] = useState<Density>("comfortable");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "dispatch", dir: "desc" });
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
@@ -259,6 +271,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                 : r.edd ?? "";
     return rows
       .filter((r) => {
+        if (filter === "action" && !r.action) return false;
         if (filter === "open" && r.delivered) return false;
         // Awaiting pickup is either "no scan at all" (null) or the explicit
         // INFORECEIVED rung — an acknowledged-but-uncollected shipment must not
@@ -294,6 +307,9 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
       // Blanks sort last in both directions — an undated dispatch is a data
       // gap, not the newest row on the board.
       .sort((a, b) => {
+        // On the to-do list the most urgent reason leads; the chosen column
+        // orders rows within a reason.
+        if (filter === "action" && a.action !== b.action) return ACTION_RANK[a.action!] - ACTION_RANK[b.action!];
         const [x, y] = [of(a), of(b)];
         if (!x !== !y) return x ? -1 : 1;
         return x.localeCompare(y) * dir || a.so.localeCompare(b.so);
@@ -330,9 +346,21 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
 
   const filtered = Boolean(facility || type || courier || from || to || q.trim());
 
+  // Per-reason totals across the whole book (not the current slice), so the
+  // chip and the breakdown line never disagree with each other.
+  const actionCounts = useMemo(() => {
+    const by = Object.fromEntries(ACTION_ORDER.map((a) => [a, 0])) as Record<ActionReason, number>;
+    for (const r of rows) if (r.action) by[r.action] += 1;
+    return { total: ACTION_ORDER.reduce((n, a) => n + by[a], 0), by };
+  }, [rows]);
+
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by stage">
+        <Chip active={filter === "action"} tone="failed" onClick={() => setFilter("action")}>
+          To action
+          <span className="mono text-cap text-inherit opacity-70">{actionCounts.total}</span>
+        </Chip>
         <Chip active={filter === "open"} onClick={() => setFilter("open")}>
           All open
         </Chip>
@@ -352,6 +380,17 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
           Delivered 7d
         </Chip>
       </div>
+
+      {filter === "action" && actionCounts.total ? (
+        <p className="-mt-1 mb-3 text-dense text-ink-soft">
+          {ACTION_ORDER.filter((a) => actionCounts.by[a]).map((a, k) => (
+            <span key={a}>
+              {k ? " · " : ""}
+              <b className="font-semibold text-ink">{actionCounts.by[a]}</b> {ACTION_LABEL[a].toLowerCase()}
+            </span>
+          ))}
+        </p>
+      ) : null}
 
       <div className="mb-3 flex flex-wrap items-center gap-2.5">
         <div className="flex min-w-[230px] flex-1 items-center gap-2 rounded-control border border-line-control bg-paper px-3 text-mute sm:max-w-[320px] sm:flex-none">
@@ -478,28 +517,6 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
           Export CSV
         </Button>
 
-        {/* Density. A dispatcher chasing one consignment wants the whole row;
-            a lead sweeping the day's dispatches wants twice as many on screen. */}
-        <div
-          className="flex items-center gap-[3px] rounded-control bg-line/80 p-[3px]"
-          role="group"
-          aria-label="Row density"
-        >
-          {(["comfortable", "compact"] as Density[]).map((d) => (
-            <button
-              key={d}
-              type="button"
-              aria-pressed={density === d}
-              onClick={() => setDensity(d)}
-              className={cn(
-                "rounded-md px-3 py-[6px] text-dense font-semibold capitalize transition-[transform,background-color,color] duration-150 ease-ui active:scale-[0.97]",
-                density === d ? "bg-card text-ink shadow-[0_1px_3px_rgba(39,34,27,.12)]" : "text-ink-soft hover:text-ink",
-              )}
-            >
-              {d}
-            </button>
-          ))}
-        </div>
       </div>
 
       <p aria-live="polite" className="sr-only">
@@ -560,7 +577,14 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
 
         {shown.length === 0 ? (
           <div className="rounded-b-card px-6 py-14 text-center text-sm text-mute max-md:rounded-t-card">
-            Nothing here — clear the filters, or dispatch something from the Warehouse queue.
+            {filter === "action" ? (
+              <>
+                <span className="block font-semibold text-ink">Nothing needs you right now.</span>
+                No failed deliveries, NDRs, breaches, or shipments due in the next day that are not out for delivery.
+              </>
+            ) : (
+              "Nothing here — clear the filters, or dispatch something from the Warehouse queue."
+            )}
           </div>
         ) : (
           paged.map((r, i) => {
@@ -577,12 +601,12 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     // ever does, it clips instead of widening the page.
                     "rail row-skip grid grid-cols-1 overflow-hidden border-b border-line px-3 transition-colors duration-150 ease-ui hover:bg-paper md:items-center",
                     GRID,
-                    density === "compact" ? "md:py-0" : "md:py-1",
+                    "md:py-1",
                     i === 0 && "max-md:rounded-t-card",
                     isLast && !expanded && "rounded-b-card border-b-0",
                     expanded && "bg-paper",
                   )}
-                  style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v), "--row-h": density === "compact" ? "56px" : "76px" } as React.CSSProperties}
+                  style={{ "--rail": r.breaching ? TONE.failed.hex : railOf(v), "--row-h": "76px" } as React.CSSProperties}
                 >
                   <div className={cn(CELL, "flex items-center max-md:pt-3")}>
                     <button
@@ -611,9 +635,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     <span className={cn(ONE_LINE, "font-display text-ui font-semibold")} title={r.invoice}>
                       {r.invoice ?? "—"}
                     </span>
-                    {density === "comfortable" ? (
-                      <span className={cn(ONE_LINE, "text-cap text-mute")}>{r.so}</span>
-                    ) : null}
+                    <span className={cn(ONE_LINE, "text-cap text-mute")}>{r.so}</span>
                   </div>
 
                   {/* Store carries its type. Compact drops the facility, never
@@ -629,7 +651,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                       {r.store}
                     </Link>
                     <span className={cn(ONE_LINE, "text-cap text-mute")}>
-                      {density === "comfortable" ? `${r.facility} · ` : ""}
+                      {`${r.facility} · `}
                       {r.zone} · {r.type}
                     </span>
                   </div>
@@ -669,7 +691,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                     {r.pickup ? (
                       <>
                         <span className={ONE_LINE}>{fmtDate(r.pickup)}</span>
-                        {r.sincePickup !== undefined && density === "comfortable" && !r.delivered ? (
+                        {r.sincePickup !== undefined && !r.delivered ? (
                           <span
                             className={cn(
                               ONE_LINE,
@@ -704,7 +726,7 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                   <div className={cn(CELL, "mono text-dense text-ink-soft")}>
                     <MobileLabel>EDD</MobileLabel>
                     <span className={ONE_LINE}>{fmtDate(r.edd)}</span>
-                    {r.delivered && density === "comfortable" ? (
+                    {r.delivered ? (
                       <span className={cn(ONE_LINE, "text-cap text-mute")}>del. {fmtDate(r.delivered)}</span>
                     ) : null}
                     {tat ? (
@@ -732,6 +754,11 @@ export function LogisticsTable({ rows, canEdit }: { rows: LogisticsRow[]; canEdi
                       size="sm"
                       className="max-w-full"
                     />
+                    {r.action ? (
+                      <span className={cn("mt-1 inline-block rounded-md px-1.5 py-0.5 text-meta font-bold", ACTION_TONE[r.action])}>
+                        {ACTION_LABEL[r.action]}
+                      </span>
+                    ) : null}
                   </div>
 
                   <div className={cn(CELL, "flex items-center gap-1 max-md:pb-3 md:justify-end")}>

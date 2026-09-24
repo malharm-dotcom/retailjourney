@@ -107,7 +107,7 @@ export default async function ControlTower() {
   // the Retail Head's landing page, which is the one number here that decides
   // whether anyone escalates. Slice for display only, at the render site.
   const breachingAll = active
-    .filter((r) => r.breaching && r.order.overallStatus !== "DELIVERED")
+    .filter((r) => r.breaching)
     .sort((a, b) => b.sla.ageing - a.sla.ageing);
 
   const dueTodayAll = active.filter(

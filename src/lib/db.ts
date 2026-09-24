@@ -6,7 +6,7 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
-const g = globalThis as unknown as { __retailjourneyPrisma?: PrismaClient; __retailjourneyDataGen?: number };
+const g = globalThis as unknown as { __retailjourneyPrisma?: PrismaClient; __retailjourneyDataGen?: number; __retailjourneySyncGen?: number };
 
 const PROD_DB_HOST = "168.144.81.147";
 
@@ -41,6 +41,20 @@ export function dataGeneration(): number {
 
 export function markDataChanged(): void {
   g.__retailjourneyDataGen = dataGeneration() + 1;
+}
+
+/**
+ * Bumped when a background sync run finishes. Kept apart from the write
+ * generation on purpose: a person's own edit must show on their very next
+ * render, but a sync nobody is watching can be picked up by a background
+ * rebuild while the previous board keeps serving — nobody waits ~3s for it.
+ */
+export function syncGeneration(): number {
+  return g.__retailjourneySyncGen ?? 0;
+}
+
+export function markSyncChanged(): void {
+  g.__retailjourneySyncGen = syncGeneration() + 1;
 }
 
 export function databaseConfigured(): boolean {

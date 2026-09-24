@@ -9,7 +9,7 @@ import { cookies } from "next/headers";
 import { hash } from "bcryptjs";
 import type { Prisma } from "@/generated/prisma/client";
 import { advanceOne } from "@/lib/advance";
-import { databaseConfigured, prisma } from "@/lib/db";
+import { databaseConfigured, markDataChanged, prisma } from "@/lib/db";
 import { runAllSyncs, runEshipzSync, runSnowflakeSync, runUcIntake, type SyncSource, type SyncSummary } from "@/lib/integrations/sync";
 import { assertCan, assertFacility, policyOf, resolveScope } from "@/lib/rbac";
 import { repo } from "@/lib/repo";
@@ -183,6 +183,8 @@ export async function runSyncNow(source?: SyncSource): Promise<ActionResult & { 
     else if (source === "SNOWFLAKE") summaries = [await runSnowflakeSync()];
     else if (source === "UC") summaries = [await runUcIntake()];
     else summaries = await runAllSyncs();
+    // Asked for by a person who is about to look: serve the result fresh.
+    markDataChanged();
     revalidatePath("/", "layout");
     return { ok: true, summaries };
   } catch (e) {

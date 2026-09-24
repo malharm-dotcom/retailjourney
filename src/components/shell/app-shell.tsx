@@ -12,18 +12,20 @@ export function AppShell({
   controls,
   syncStrip,
   isAdmin = false,
+  canTracker = false,
   children,
 }: {
   controls: React.ReactNode;
   syncStrip: React.ReactNode;
   isAdmin?: boolean;
+  canTracker?: boolean;
   children: React.ReactNode;
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="min-h-dvh lg:flex">
-      <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} isAdmin={isAdmin} />
+      <Sidebar open={drawerOpen} onClose={() => setDrawerOpen(false)} isAdmin={isAdmin} canTracker={canTracker} />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="sticky top-0 z-30 border-b border-line bg-ground/80 backdrop-blur-md backdrop-saturate-150">

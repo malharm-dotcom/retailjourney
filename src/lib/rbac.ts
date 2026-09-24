@@ -19,6 +19,12 @@ export interface RolePolicy {
   readOnly: boolean;
 }
 
+/** The Logistics Tracker is the logistics team's own working log: they and
+ *  admins read and write it; no other role can see it at all. */
+export function canUseTracker(role: Role): boolean {
+  return role === "ADMIN" || role === "LOGISTICS";
+}
+
 export const ROLE_POLICY: Record<Role, RolePolicy> = {
   ADMIN: {
     label: "Admin",

@@ -444,3 +444,38 @@ model UnmatchedChannel {
   orderCount      Int      @default(0)
   sampleSoNumbers String[] @default([])
 }
+
+/// Logistics Tracker — the B2B logistics team's own dispatch log, replacing the
+/// "B2B Forward Outstation" sheet. It records every dispatch, including the ones
+/// never placed on UC (non-trading, accessories, photoshoot) and so never on the
+/// spine or eShipz. Hand-entered only; nothing syncs into it. Logistics + admin.
+model LogisticsEntry {
+  id              String    @id @default(cuid())
+  dispatchDate    DateTime  @db.Date // Date
+  dcNumber        String? // DC No.
+  lrNumber        String? // LR no — the AWB
+  quantity        Int?
+  boxes           Int? // Num of boxes
+  storeName       String
+  storeCity       String?
+  storeState      String?
+  expectedDate    DateTime? @db.Date
+  orderType       String? // B2B Forward | NSO
+  dispatchType    String? // PTL | FTL
+  shipmentStatus  String? // as the team entered it — the app's own status is read live
+  deliveredDate   DateTime? @db.Date
+  orderPlacedDate DateTime? @db.Date
+  soNumber        String? // UC SO, or a free label for non-UC dispatches ("CARRY BAG")
+  facility        String?
+  allocationType  String? // FRESH ALLOCATION | RPL | Q-Comm | ACC | NON TRADING | ...
+  courierPartner  String?
+  remarks         String?
+  createdByName   String
+  updatedByName   String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([dispatchDate])
+  @@index([soNumber])
+  @@index([lrNumber])
+}

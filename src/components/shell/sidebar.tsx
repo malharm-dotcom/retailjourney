@@ -15,7 +15,10 @@ export const NAV_STORAGE_KEY = "retailjourney-nav";
  *  before the eye has to choose, and gives /admin a home — it was reachable only
  *  through the user dropdown and the sync strip, so nothing in the primary
  *  navigation ever mentioned it. */
-const GROUPS: { heading: string; items: { href: string; label: string; icon: string; adminOnly?: boolean }[] }[] = [
+const GROUPS: {
+  heading: string;
+  items: { href: string; label: string; icon: string; adminOnly?: boolean; trackerOnly?: boolean }[];
+}[] = [
   {
     heading: "The floor",
     items: [
@@ -28,6 +31,9 @@ const GROUPS: { heading: string; items: { href: string; label: string; icon: str
       // rulebook (per-store targets), a different thing with a colliding name.
       { href: "/daily-plan", label: "Daily Plan", icon: "clipboard-check-bold-duotone" },
       { href: "/logistics", label: "Logistics", icon: "tram-bold-duotone" },
+      // The logistics team's own dispatch log. Hidden, not just locked, for
+      // everyone else — the page 404s for them too.
+      { href: "/tracker", label: "Logistics Tracker", icon: "clipboard-list-bold-duotone", trackerOnly: true },
     ],
   },
   {
@@ -40,12 +46,12 @@ const GROUPS: { heading: string; items: { href: string; label: string; icon: str
   },
 ];
 
-function NavList({ onNavigate, isAdmin }: { onNavigate?: () => void; isAdmin: boolean }) {
+function NavList({ onNavigate, isAdmin, canTracker }: { onNavigate?: () => void; isAdmin: boolean; canTracker: boolean }) {
   const pathname = usePathname();
   return (
     <nav className="flex flex-col gap-4 px-3">
       {GROUPS.map((group) => {
-        const items = group.items.filter((it) => !it.adminOnly || isAdmin);
+        const items = group.items.filter((it) => (!it.adminOnly || isAdmin) && (!it.trackerOnly || canTracker));
         if (items.length === 0) return null;
         return (
           <div key={group.heading} className="flex flex-col gap-0.5">
@@ -151,7 +157,17 @@ function RailToggle() {
  * onto DialogPrimitive fixes all five at once and deletes the hand-rolled
  * Escape listener, because Radix already does that too.
  */
-export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onClose: () => void; isAdmin?: boolean }) {
+export function Sidebar({
+  open,
+  onClose,
+  isAdmin = false,
+  canTracker = false,
+}: {
+  open: boolean;
+  onClose: () => void;
+  isAdmin?: boolean;
+  canTracker?: boolean;
+}) {
   return (
     <>
       {/* Desktop rail */}
@@ -171,7 +187,7 @@ export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onC
           <RailToggle />
         </div>
         <div className="pt-2">
-          <NavList isAdmin={isAdmin} />
+          <NavList isAdmin={isAdmin} canTracker={canTracker} />
         </div>
       </aside>
 
@@ -203,7 +219,7 @@ export function Sidebar({ open, onClose, isAdmin = false }: { open: boolean; onC
               </DialogPrimitive.Close>
             </div>
             <div className="pt-2">
-              <NavList onNavigate={onClose} isAdmin={isAdmin} />
+              <NavList onNavigate={onClose} isAdmin={isAdmin} canTracker={canTracker} />
             </div>
           </DialogPrimitive.Content>
         </DialogPrimitive.Portal>

@@ -217,12 +217,20 @@ export const SPINE_SWEEP_DAYS = 45;
  *  app is missing on the orders this exists to rescue. */
 const SWEEP_CLAUSE = `ORDER_DATE >= DATEADD(day, -${SPINE_SWEEP_DAYS}, CURRENT_DATE)`;
 
+/** Test facilities whose orders never enter the app, compared with every
+ *  non-letter stripped ("Surat-VRMall" → SURATVRMALL). Their orders carry no
+ *  STORE and no real warehouse, so they resolve to no facility and fail the
+ *  NOT NULL insert — which failed every hourly run (live 2026-09-28:
+ *  finaltest124, testingsomethingimp). COALESCE keeps a NULL-warehouse row in. */
+export const EXCLUDED_WAREHOUSES = ["SURATVRMALL"] as const;
+export const NOT_TEST_FACILITY = `REGEXP_REPLACE(UPPER(COALESCE(WAREHOUSE_NAME, '')), '[^A-Z]', '') NOT IN (${EXCLUDED_WAREHOUSES.map((w) => `'${w}'`).join(", ")})`;
+
 /** Full window — the only mode before a watermark exists, and the explicit
  *  manual-reseed fallback thereafter. Deliberately the SAME window as the
  *  sweep: a reseed is the recover-everything button, so it must never read
  *  less than routine operation already does. */
 export const SPINE_QUERY = `${SPINE_SELECT}${EVENT_TS_SELECT}${FROM_SPINE}
-WHERE ${SWEEP_CLAUSE}
+WHERE ${SWEEP_CLAUSE} AND ${NOT_TEST_FACILITY}
 ${SPINE_ORDER_BY}`;
 
 /**
@@ -239,7 +247,7 @@ ${SPINE_ORDER_BY}`;
 export function spineWindowQuery(days: number): string {
   const n = Math.max(1, Math.round(days));
   return `${SPINE_SELECT}${FROM_SPINE}
-WHERE ORDER_DATE >= DATEADD(day, -${n}, CURRENT_DATE)
+WHERE ORDER_DATE >= DATEADD(day, -${n}, CURRENT_DATE) AND ${NOT_TEST_FACILITY}
 ${SPINE_ORDER_BY}`;
 }
 
@@ -280,7 +288,7 @@ const NTZ_TS_RE = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(\.\d+)?$/;
  */
 export function spineQueryFor(watermark?: string, hasEventTs = true): string {
   if (!watermark) return hasEventTs ? SPINE_QUERY : `${SPINE_SELECT}${FROM_SPINE}
-WHERE ${SWEEP_CLAUSE}
+WHERE ${SWEEP_CLAUSE} AND ${NOT_TEST_FACILITY}
 ${SPINE_ORDER_BY}`;
   if (!NTZ_TS_RE.test(watermark)) {
     throw new Error(`invalid Snowflake watermark format: ${JSON.stringify(watermark)}`);
@@ -291,6 +299,7 @@ ${SPINE_ORDER_BY}`;
     : `LAST_UPDATED >= TO_TIMESTAMP_NTZ('${watermark}')`;
   return `${select}
 WHERE (${incremental} OR LAST_UPDATED IS NULL OR ${SWEEP_CLAUSE})
+  AND ${NOT_TEST_FACILITY}
 ${SPINE_ORDER_BY}`;
 }
 
@@ -480,7 +489,7 @@ const chunked = <T>(xs: T[], n: number): T[][] =>
  */
 export async function spineOrderDateFloor(): Promise<string | undefined> {
   const rows = await querySnowflake<{ FLOOR: string | null }>(
-    `SELECT MIN(ORDER_DATE) AS FLOOR FROM ${SPINE_TABLE}`,
+    `SELECT MIN(ORDER_DATE) AS FLOOR FROM ${SPINE_TABLE} WHERE ${NOT_TEST_FACILITY}`,
   );
   return ntzValue(rows[0]?.FLOOR);
 }
@@ -503,7 +512,7 @@ export async function spineOrderDateFloor(): Promise<string | undefined> {
  */
 export async function spineOrderDateCeiling(): Promise<string | undefined> {
   const rows = await querySnowflake<{ CEILING: string | null }>(
-    `SELECT MAX(ORDER_DATE) AS CEILING FROM ${SPINE_TABLE}`,
+    `SELECT MAX(ORDER_DATE) AS CEILING FROM ${SPINE_TABLE} WHERE ${NOT_TEST_FACILITY}`,
   );
   return ntzValue(rows[0]?.CEILING);
 }

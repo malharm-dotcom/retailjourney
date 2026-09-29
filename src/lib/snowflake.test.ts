@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { SPINE_SWEEP_DAYS, ntzValue, spineQueryFor } from "./snowflake";
+import { NOT_TEST_FACILITY, SPINE_SWEEP_DAYS, ntzValue, spineQueryFor, spineWindowQuery } from "./snowflake";
 
 const WM = "2026-07-30 03:04:07.000";
 
@@ -67,6 +67,15 @@ describe("spineQueryFor — incremental watermark clause", () => {
   it("rejects a malformed watermark rather than interpolating it unchecked into SQL", () => {
     expect(() => spineQueryFor("'; DROP TABLE x; --")).toThrow(/invalid Snowflake watermark/);
     expect(() => spineQueryFor("not-a-timestamp")).toThrow(/invalid Snowflake watermark/);
+  });
+
+  it("excludes the Surat-VRMall test facility on every read path", () => {
+    // Its orders have no STORE and no real warehouse → no facility → the
+    // NOT NULL insert threw and failed every hourly run (2026-09-28).
+    for (const q of [spineQueryFor(), spineQueryFor(WM), spineQueryFor(undefined, false), spineQueryFor(WM, false), spineWindowQuery(30)]) {
+      expect(q).toContain(NOT_TEST_FACILITY);
+    }
+    expect(NOT_TEST_FACILITY).toContain("'SURATVRMALL'");
   });
 
   it("accepts the exact IST NTZ shapes Snowflake renders (with and without fractional seconds)", () => {

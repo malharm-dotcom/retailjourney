@@ -1184,6 +1184,20 @@ async function createOrderFromSnowflake(m: MappedOrder, store?: Store): Promise<
   });
 }
 
+/**
+ * The mapper turns a BLANK spine ORDER_TYPE into "OTHER" and a blank ZONE into
+ * "UNMAPPED" — the right fallback when creating an order, and a destructive
+ * one on an existing order: it overwrote the real value UC intake or an
+ * earlier spine read had set. Live 2026-09-29: 650 orders read OTHER that UC
+ * had as FRESH/RPL (EVAMAL17196 among them) and 820 read UNMAPPED zone, so
+ * they fell out of every type filter. A fallback never replaces a real value.
+ * (Exported for the precedence tests.)
+ */
+export function dropBlankFallbacks(patch: Partial<Order>, existing: Pick<Order, "type" | "zone">): void {
+  if (patch.type === "OTHER" && existing.type && existing.type !== "OTHER") delete patch.type;
+  if (patch.zone === "UNMAPPED" && existing.zone && existing.zone !== "UNMAPPED") delete patch.zone;
+}
+
 /** (Exported for scripts/resync-orders.ts — the operator re-read of named
  *  orders the watermark and the dated sweep can no longer reach.) */
 export async function syncSnowflakeOrder(
@@ -1201,6 +1215,7 @@ export async function syncSnowflakeOrder(
 
   const patch: Partial<Order> = { ...m.patch, ...phaseASla(m.patch, existing) };
   if (!isKnownFacility(patch.facility)) delete patch.facility;
+  dropBlankFallbacks(patch, existing);
   // MANIFESTED_TIMESTAMP is NULL on every spine row: the dispatch stands in
   // for it, filling a blank only — a real manifest time is never swapped out.
   if (!patch.manifestedTs && !existing.manifestedTs) patch.manifestedTs = patch.dispatchedTs ?? existing.dispatchedTs;

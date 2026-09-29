@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { isPollableAwb } from "../distribution-map";
 import type { DistributionRow } from "../snowflake";
 import {
+  dropBlankFallbacks,
   ORDER_TRANSIT_FIELDS,
   guardedStatus,
   maxSpineEventTs,
@@ -551,5 +552,22 @@ describe("liveSibling — a dead tracked AWB does not speak for a split order", 
   it("never fires on a live verdict", () => {
     expect(liveSibling("A", "IN_TRANSIT", [kid("A"), kid("B", "DELIVERED")])).toBeUndefined();
     expect(liveSibling("A", undefined, [kid("A"), kid("B", "DELIVERED")])).toBeUndefined();
+  });
+});
+
+describe("dropBlankFallbacks — a blank spine value never replaces a real one", () => {
+  it("keeps UC's FRESH / a real zone when the spine sends blanks", () => {
+    const patch: Partial<Order> = { type: "OTHER", zone: "UNMAPPED", qty: 277 };
+    dropBlankFallbacks(patch, { type: "FRESH", zone: "WEST" });
+    expect(patch).toEqual({ qty: 277 });
+  });
+
+  it("still lets a real spine value through, and the fallback land on a blank order", () => {
+    const real: Partial<Order> = { type: "RPL", zone: "SOUTH" };
+    dropBlankFallbacks(real, { type: "FRESH", zone: "WEST" });
+    expect(real).toEqual({ type: "RPL", zone: "SOUTH" });
+    const fallback: Partial<Order> = { type: "OTHER", zone: "UNMAPPED" };
+    dropBlankFallbacks(fallback, { type: "OTHER", zone: "UNMAPPED" });
+    expect(fallback).toEqual({ type: "OTHER", zone: "UNMAPPED" });
   });
 });

@@ -12,10 +12,11 @@ import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { PageHead } from "@/components/shell/page-head";
 import { KpiCard } from "@/components/ui/kpi";
-import { Input, Select } from "@/components/ui/primitives";
+import { MultiSelect } from "@/components/ui/multi-select";
+import { Input } from "@/components/ui/primitives";
 import { LinkTabs } from "@/components/ui/tabs";
 import { addDays, fmtDate, istToday } from "@/lib/ist";
-import { REPORTS } from "@/lib/reports";
+import { REPORT_GROUPS, REPORTS } from "@/lib/reports";
 import { kpiTone, loadDashboard, type DashboardData } from "@/lib/reports-dashboard";
 import {
   DEFAULT_WINDOW_DAYS,
@@ -37,6 +38,12 @@ export const dynamic = "force-dynamic";
 const pct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const days = (v: number | null) => (v == null ? "—" : v.toFixed(1));
 
+const JUMPS = [
+  { href: "#scorecard", label: "Network scorecard", hint: "are we on track?", icon: "chart-2-bold-duotone" },
+  { href: "#reports", label: "Reports by team", hint: "what needs action", icon: "clipboard-list-bold-duotone" },
+  { href: "#downloads", label: "Downloads", hint: "data as CSV", icon: "download-minimalistic-bold" },
+];
+
 const SECTION = "font-display text-sec font-bold text-ink";
 const SECTION_SUB = "mt-1.5 max-w-[68ch] text-dense leading-relaxed text-mute";
 
@@ -49,10 +56,36 @@ interface Col<T> {
 }
 
 const PANELS = [
-  { value: "sla", label: "Journey SLAs" },
-  { value: "courier", label: "Couriers" },
-  { value: "lane", label: "Lanes" },
+  { value: "sla", label: "Delivery date" },
+  { value: "courier", label: "Courier" },
+  { value: "lane", label: "Lane" },
 ] as const;
+
+/** Section heading with an anchor target and a one-line promise of what the
+ *  section holds — the jump bar at the top links to these. */
+function SectionHead({
+  id,
+  title,
+  sub,
+  badge,
+}: {
+  id: string;
+  title: string;
+  sub: string;
+  badge?: string;
+}) {
+  return (
+    <div id={id} className="mb-3.5 mt-10 scroll-mt-6 first:mt-2">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <h2 className={SECTION}>{title}</h2>
+        {badge ? (
+          <span className="rounded-full bg-sage-soft px-2.5 py-0.5 text-meta font-semibold text-sage">{badge}</span>
+        ) : null}
+      </div>
+      <p className={SECTION_SUB}>{sub}</p>
+    </div>
+  );
+}
 
 type PanelKey = (typeof PANELS)[number]["value"];
 
@@ -163,8 +196,8 @@ function Dashboard({ data, panel }: { data: DashboardData; panel: PanelKey }) {
       {/* One panel at a time. All three are the same window over the same
           source; stacking them only ever meant scrolling past two tables to
           reach the one being asked about. */}
-      <div className="mb-3.5 mt-7 flex flex-wrap items-center justify-between gap-3">
-        <h2 className={SECTION}>At a glance</h2>
+      <div className="mb-3.5 mt-6 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-dense text-mute">Break the scorecard down by</p>
         <LinkTabs items={PANELS} active={panel} name="panel" />
       </div>
 
@@ -260,7 +293,10 @@ function DownloadCard({
   defaultFrom: string;
   defaultTo: string;
 }) {
-  const options = def.filter === "courier" ? couriers : def.filter === "lane" ? lanes : [];
+  const options = (def.filter === "courier" ? couriers : def.filter === "lane" ? lanes : []).map((o) => ({
+    value: o,
+    label: o === "—" ? "Not set" : o.replace(/_/g, " "),
+  }));
   return (
     <form
       method="get"
@@ -289,29 +325,19 @@ function DownloadCard({
           <span className={FIELD_LABEL}>To</span>
           <Input type="date" name="to" defaultValue={defaultTo} />
         </label>
-        <label>
+        <div>
           <span className={FIELD_LABEL}>Facility</span>
-          <Select name="facility" defaultValue={facilities.length === 1 ? facilities[0] : "ALL"}>
-            {facilities.length > 1 ? <option value="ALL">All my facilities</option> : null}
-            {facilities.map((f) => (
-              <option key={f} value={f}>
-                {f}
-              </option>
-            ))}
-          </Select>
-        </label>
+          {facilities.length > 1 ? (
+            <MultiSelect name="facility" options={facilities} allLabel="All my facilities" />
+          ) : (
+            <p className="py-2 text-ui text-ink-soft">{facilities[0]}</p>
+          )}
+        </div>
         {def.filter ? (
-          <label>
+          <div>
             <span className={FIELD_LABEL}>{def.filter === "courier" ? "Courier" : "Lane"}</span>
-            <Select name={def.filter} defaultValue="">
-              <option value="">All</option>
-              {options.map((o) => (
-                <option key={o} value={o}>
-                  {o}
-                </option>
-              ))}
-            </Select>
-          </label>
+            <MultiSelect name={def.filter} options={options} />
+          </div>
         ) : null}
       </div>
 
@@ -376,17 +402,85 @@ export default async function ReportsPage({
   return (
     <>
       <PageHead
-        title="Reports desk"
-        sub="Distribution 2.0 at a glance, then filterable slices of the whole journey — scoped to your facility view."
+        title="Reports"
+        sub="Three places to look: the network scorecard for how we are doing overall, the reports for your team to act on, and downloads when you need the data in a sheet. Everything is limited to your facility view."
+      />
+
+      {/* The page is long; this is the table of contents. Each chip says what
+          you will find, so nobody has to scroll to discover the sections. */}
+      <nav aria-label="Report sections" className="flex flex-wrap gap-2">
+        {JUMPS.map((j) => (
+          <a
+            key={j.href}
+            href={j.href}
+            className="flex items-center gap-2 rounded-control border border-line-control bg-card px-3 py-2 text-dense transition-colors duration-150 ease-ui hover:border-sage"
+          >
+            <Icon name={j.icon} size={16} className="shrink-0 text-sage" />
+            <span className="font-semibold text-ink">{j.label}</span>
+            <span className="hidden text-mute sm:inline">· {j.hint}</span>
+          </a>
+        ))}
+      </nav>
+
+      <SectionHead
+        id="scorecard"
+        title="Network scorecard"
+        badge={`Matches Metabase · last ${panels?.windowDays ?? 31} days`}
+        sub="The five Distribution 2.0 SLAs for the whole network. Use it to see whether we are on track — then open a report below to find which orders, couriers or stores are behind it."
       />
       {panels ? <Dashboard data={panels} panel={panel} /> : <Unavailable reason={failure!} />}
 
-      <h2 className={cn(SECTION, "mt-9")}>Files</h2>
-      <p className={SECTION_SUB}>
-        Filter, then download — these produce a file, not a table on screen. Leave the dates alone and you get
-        the last {DEFAULT_WINDOW_DAYS} days.
-      </p>
-      <div className="mt-3.5 grid gap-3.5 lg:grid-cols-2">
+      <SectionHead
+        id="reports"
+        title="Reports by team"
+        sub="Live from RetailJourney's own order data, so they include orders the Metabase scorecard leaves out (no rulebook row) and will not always match its totals. Each opens as a filterable table you can export."
+      />
+      <div className="space-y-6">
+        {REPORT_GROUPS.map((g) => (
+          <section key={g.key} aria-labelledby={`grp-${g.key}`}>
+            <div className="mb-2.5 flex items-baseline gap-2">
+              <Icon name={g.icon} size={16} className="shrink-0 self-center text-sage" />
+              <h3 id={`grp-${g.key}`} className="font-display text-title font-bold tracking-tight">
+                {g.title}
+              </h3>
+              <span className="text-dense text-mute">— {g.blurb}</span>
+            </div>
+            <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-3">
+              {REPORTS.filter((r) => r.group === g.key).map((r) => (
+                <Link
+                  key={r.slug}
+                  href={`/reports/${r.slug}`}
+                  className="group flex flex-col rounded-card bg-card p-4 shadow-card transition-[transform,box-shadow] duration-200 hover:-translate-y-[3px] hover:shadow-lift motion-reduce:hover:translate-y-0"
+                >
+                  <span className="flex items-start gap-3">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-control bg-sage-soft text-sage transition-colors duration-150 ease-ui group-hover:bg-sage group-hover:text-white">
+                      <Icon name={r.icon} size={19} />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block font-display text-title font-bold leading-snug tracking-tight">
+                        {r.title}
+                      </span>
+                      <span className="mt-0.5 block text-dense font-semibold text-ink-soft">{r.question}</span>
+                    </span>
+                  </span>
+                  <span className="mt-2 block text-dense leading-relaxed text-mute">{r.description}</span>
+                  <span className="mt-auto pt-3 text-meta font-semibold uppercase tracking-[0.06em] text-mute">
+                    {r.grain}
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+
+      <SectionHead
+        id="downloads"
+        title="Downloads"
+        badge="CSV"
+        sub={`Pick your filters and download a file — nothing renders on screen. Tick as many facilities, couriers or lanes as you need; leave a filter empty for all. Dates left alone give the last ${DEFAULT_WINDOW_DAYS} days.`}
+      />
+      <div className="grid gap-3.5 pb-10 lg:grid-cols-2">
         {DOWNLOADS.map((d) => (
           <DownloadCard
             key={d.slug}
@@ -403,38 +497,6 @@ export default async function ReportsPage({
         ))}
       </div>
 
-      <h2 className={cn(SECTION, "mt-9")}>Drill-down reports</h2>
-      {/* Not a footnote. The panels above read the same table Metabase reads, so
-          they match the dashboard — and that table drops orders the rulebook
-          does not cover, which the reports below deliberately keep. Anyone who
-          notices the two counts differ is seeing something real. */}
-      <p className={SECTION_SUB}>
-        These run on RetailJourney&rsquo;s own order spine and include out-of-rulebook orders, so they will not
-        always agree with the panels above on totals.
-      </p>
-      {/* No staggered entrance. Eight static tiles animating in on a 45ms cascade
-          is choreography the reader has to wait out on every visit, and it told
-          them nothing — the stagger implied an order that does not exist. The
-          hover lift stays: these ARE links. */}
-      <div className="mt-3.5 grid gap-2.5 pb-10 sm:grid-cols-2 xl:grid-cols-3">
-        {REPORTS.map((r) => (
-          <Link
-            key={r.slug}
-            href={`/reports/${r.slug}`}
-            className="group flex items-start gap-3 rounded-card bg-card p-4 shadow-card transition-[transform,box-shadow] duration-200 hover:-translate-y-[3px] hover:shadow-lift motion-reduce:hover:translate-y-0"
-          >
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-control bg-sage-soft text-sage transition-colors duration-150 ease-ui group-hover:bg-sage group-hover:text-white">
-              <Icon name={r.icon} size={19} />
-            </span>
-            <span className="min-w-0">
-              <span className="block font-display text-title font-bold leading-snug tracking-tight">
-                {r.title}
-              </span>
-              <span className="mt-1 block text-dense leading-relaxed text-mute">{r.description}</span>
-            </span>
-          </Link>
-        ))}
-      </div>
     </>
   );
 }

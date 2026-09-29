@@ -4,20 +4,18 @@ import { Icon } from "@/components/icon";
 import { PageHead } from "@/components/shell/page-head";
 import { scopedOrders } from "@/lib/data";
 import { courierOf } from "@/lib/journey";
-import { buildReport, reportBySlug } from "@/lib/reports";
+import { buildReport, filterReportRows, reportBySlug } from "@/lib/reports";
+import { pickFacilities } from "@/lib/reports-download";
 import { requireSession } from "@/lib/session";
-import type { OrderType } from "@/lib/types";
+import { ORDER_TYPES } from "@/lib/types";
 import { ReportTable } from "./table";
 
 export const dynamic = "force-dynamic";
 
-interface Search {
-  q?: string;
-  type?: string;
-  courier?: string;
-  from?: string;
-  to?: string;
-}
+type Search = Record<string, string | string[] | undefined>;
+
+const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) || undefined;
+const many = (v: string | string[] | undefined) => (v == null ? [] : Array.isArray(v) ? v : [v]).filter(Boolean);
 
 export default async function ReportPage({
   params,
@@ -30,15 +28,38 @@ export default async function ReportPage({
   if (!def) notFound();
   const { user, scope } = await requireSession();
 
-  let rows = await scopedOrders(scope, user);
-  if (searchParams.type) rows = rows.filter((r) => r.order.type === (searchParams.type as OrderType));
-  // Same resolved carrier the scorecard groups on -- filtering on
-  // `logisticsPartner` alone matched nothing, since it is NULL everywhere.
-  if (searchParams.courier) rows = rows.filter((r) => courierOf(r.order) === searchParams.courier);
-  if (searchParams.from) rows = rows.filter((r) => r.order.orderDate >= searchParams.from!);
-  if (searchParams.to) rows = rows.filter((r) => r.order.orderDate <= searchParams.to!);
+  const all = await scopedOrders(scope, user);
+  // The session's facility view is the ceiling; ticking facilities can only
+  // narrow inside it.
+  const { facilities: pickedFacilities } = pickFacilities(user, scope, many(searchParams.facility));
+  const selectable = pickFacilities(user, scope, []).facilities;
+  const narrowed = pickedFacilities.length < selectable.length;
 
-  const data = buildReport(def.slug, rows, searchParams.q);
+  const initial = {
+    q: one(searchParams.q) ?? "",
+    from: one(searchParams.from) ?? "",
+    to: one(searchParams.to) ?? "",
+    type: many(searchParams.type),
+    courier: many(searchParams.courier),
+    facility: narrowed ? pickedFacilities : [],
+  };
+
+  const rows = filterReportRows(def, all, {
+    from: initial.from || undefined,
+    to: initial.to || undefined,
+    types: initial.type,
+    couriers: initial.courier,
+    facilities: narrowed ? pickedFacilities : [],
+  });
+  const data = buildReport(def.slug, rows, initial.q, Boolean(initial.from || initial.to));
+
+  // Courier options come off the data, never a constant: the spine spells them
+  // MUDITA_CARGO / SELF_DELIVERY / EKART_B2B_CARGO, and the old fixed list
+  // (MUDITACARGO, SELF, EKART B2B) matched nothing — picking one emptied the
+  // report.
+  const couriers = [...new Set(all.map((r) => courierOf(r.order)))].sort((a, b) =>
+    a === "—" ? 1 : b === "—" ? -1 : a.localeCompare(b),
+  );
 
   return (
     <>
@@ -57,13 +78,13 @@ export default async function ReportPage({
       />
       <ReportTable
         slug={def.slug}
+        def={{ question: def.question, grain: def.grain, dateBasis: def.dateBasis, filters: def.filters }}
         data={data}
-        initial={{
-          q: searchParams.q ?? "",
-          type: searchParams.type ?? "",
-          courier: searchParams.courier ?? "",
-          from: searchParams.from ?? "",
-          to: searchParams.to ?? "",
+        initial={initial}
+        options={{
+          type: ORDER_TYPES.map((t) => ({ value: t, label: t.replace(/_/g, " ") })),
+          courier: couriers.map((c) => ({ value: c, label: c === "—" ? "No courier yet" : c.replace(/_/g, " ") })),
+          facility: selectable.length > 1 ? selectable : [],
         }}
         showLookup={def.slug === "order-lookup"}
       />

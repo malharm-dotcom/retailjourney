@@ -11,7 +11,7 @@
 
 import type { NextRequest } from "next/server";
 import { currentScope, currentUserOrNull } from "@/lib/session";
-import { FilterError, buildDownload, downloadBySlug, downloadScope } from "@/lib/reports-download";
+import { FilterError, buildDownload, downloadBySlug, pickFacilities } from "@/lib/reports-download";
 
 export const dynamic = "force-dynamic";
 
@@ -26,17 +26,21 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
 
   const q = req.nextUrl.searchParams;
   // The session's own scope is the ceiling; the facility parameter may only
-  // narrow inside it. downloadScope enforces that — this handler never reads a
+  // narrow inside it. pickFacilities enforces that — this handler never reads a
   // facility straight off the query string.
-  const scope = downloadScope(user, await currentScope(user), q.get("facility") ?? undefined);
+  const sessionScope = await currentScope(user);
+  const { scope } = pickFacilities(user, sessionScope, q.getAll("facility"));
+  // Multi-pick filters arrive as repeated params (?courier=A&courier=B).
+  const many = (k: string) => q.getAll(k).filter(Boolean);
 
   try {
-    const { filename, csv, rowCount } = await buildDownload(def.slug, scope, user, {
-      from: q.get("from") ?? undefined,
-      to: q.get("to") ?? undefined,
-      courier: q.get("courier") ?? undefined,
-      lane: q.get("lane") ?? undefined,
-    });
+    const { filename, csv, rowCount } = await buildDownload(
+      def.slug,
+      sessionScope,
+      user,
+      { from: q.get("from") || undefined, to: q.get("to") || undefined, courier: many("courier"), lane: many("lane") },
+      scope,
+    );
 
     // The BOM is not optional: without it Excel on Windows decodes the file as
     // the system codepage and every non-ASCII store name arrives mangled.

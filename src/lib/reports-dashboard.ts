@@ -28,7 +28,7 @@
 
 import { unstable_cache } from "next/cache";
 import { querySnowflake } from "./snowflake";
-import type { FacilityScope } from "./types";
+import { FACILITIES, type Facility, type FacilityScope } from "./types";
 
 /** The Metabase source. Fully qualified for the same reason SPINE_TABLE is —
  *  a mis-set SNOWFLAKE_SCHEMA must not silently repoint this at something else. */
@@ -193,9 +193,15 @@ const TREND_DAYS = 14;
  * There is deliberately no way to widen this from the client: the caller passes
  * the resolved scope, not a request parameter.
  */
-export function scopeClause(scope: FacilityScope, areaManager?: string): string {
+export function scopeClause(scope: FacilityScope | Facility[], areaManager?: string): string {
   const parts: string[] = [];
-  if (scope !== "ALL") parts.push(`WAREHOUSE_NAME = '${scope}'`);
+  if (Array.isArray(scope)) {
+    // A multi-pick from a download form, already intersected with the
+    // session's entitlement by pickFacilities. Re-checked against the literal
+    // facility list anyway, since each value becomes SQL text.
+    const safe = scope.filter((f) => (FACILITIES as readonly string[]).includes(f));
+    parts.push(safe.length ? `WAREHOUSE_NAME IN (${safe.map((f) => `'${f}'`).join(", ")})` : "1 = 0");
+  } else if (scope !== "ALL") parts.push(`WAREHOUSE_NAME = '${scope}'`);
   if (areaManager) parts.push(`AREA_MANAGER = '${areaManager.replace(/'/g, "''")}'`);
   return parts.length ? parts.join(" AND ") : "1 = 1";
 }

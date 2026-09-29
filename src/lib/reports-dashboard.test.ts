@@ -71,3 +71,10 @@ describe("kpiTone", () => {
     expect(kpiTone(null)).toBe("pending");
   });
 });
+
+describe("scopeClause — a ticked facility list", () => {
+  it("becomes an IN list, and drops anything that is not a facility", () => {
+    expect(scopeClause(["SAPL-WH1", "SAPL-WH2"])).toBe("WAREHOUSE_NAME IN ('SAPL-WH1', 'SAPL-WH2')");
+    expect(scopeClause(["bogus" as never])).toBe("1 = 0");
+  });
+});

@@ -4,7 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { OrderRow } from "./data";
-import { buildReport } from "./reports";
+import { REPORTS, buildReport, filterReportRows } from "./reports";
 import { istToday } from "./ist";
 import type { OrderSla } from "./sla";
 import type { TransitAnchor } from "./transit-anchor";
@@ -140,13 +140,23 @@ describe("WH throughput", () => {
   });
 });
 
-describe("rulebook adherence (verdict-dependent — untouched)", () => {
-  it("still keys the handover check off dispatchedDate, so spine orders yield no check", () => {
-    const rule = { targetHandoverDay: "Mon", targetDeliveryDay: "Wed" } as OrderRow["rule"];
+describe("rulebook adherence", () => {
+  const rule = { targetHandoverDay: "Mon", targetDeliveryDay: "Wed" } as OrderRow["rule"];
+  it("checks WH handover off the manifest when a spine order has no dispatch date", () => {
+    // dispatchedDate is blank on every spine order; keying off it alone left
+    // this report delivery-only. 2026-09-28 is a Monday (IST).
     const t = buildReport("rulebook-adherence", [
-      { ...row({ soNumber: "SPINE-1" }, { date: daysAgo(3), source: "MANIFESTED" }), rule },
+      { ...row({ soNumber: "SPINE-1", manifestedTs: "2026-09-28T06:00:00.000Z" }, { date: "2026-09-28", source: "MANIFESTED" }), rule },
     ]);
-    expect(t.rows).toHaveLength(0);
+    expect(t.rows).toEqual([["SPINE-1", "SNITCH - COCO - TEST", "WH handover", "Mon", "Mon", "YES"]]);
+  });
+
+  it("prefers a real dispatch date over the manifest", () => {
+    const t = buildReport("rulebook-adherence", [
+      { ...row({ soNumber: "D-1", dispatchedDate: "2026-09-29", manifestedTs: "2026-09-28T06:00:00.000Z" }, {}), rule },
+    ]);
+    expect(t.rows[0][4]).toBe("Tue");
+    expect(t.rows[0][5]).toBe("off-day");
   });
 });
 
@@ -177,5 +187,55 @@ describe("nso-openings", () => {
     const older = row({ soNumber: "OLD-1", type: "NSO", orderDate: daysAgo(30) }, {});
     const out = buildReport("nso-openings", [older, nso]);
     expect(out.rows.map((r) => r[0])).toEqual(["HESARA10003", "OLD-1"]);
+  });
+});
+
+describe("WH throughput boxes", () => {
+  it("counts boxes off the AWB children when the order-level count is blank", () => {
+    const r = { ...row({ soNumber: "S1", qty: 10 }, { date: daysAgo(1), source: "MANIFESTED" }), boxes: 4 };
+    expect(buildReport("wh-throughput", [r]).rows[0][3]).toBe(4);
+  });
+
+  it("honours an explicit date range past the 14-day default window", () => {
+    const old = row({ soNumber: "OLD" }, { date: daysAgo(30), source: "MANIFESTED" });
+    expect(buildReport("wh-throughput", [old], undefined, true).rows).toHaveLength(1);
+  });
+});
+
+describe("store slice", () => {
+  it("counts an inwarded order with no delivered date as delivered", () => {
+    const t = buildReport("store-slice", [row({ soNumber: "I-1", overallStatus: "INWARDED" }, {})]);
+    expect(t.rows[0][col(t, "Delivered")]).toBe(1);
+  });
+});
+
+describe("filterReportRows", () => {
+  const def = (slug: string) => REPORTS.find((r) => r.slug === slug)!;
+  const rows = [
+    row({ soNumber: "A", type: "FRESH", courierPartner: "BLUEDART", facility: "SAPL-WH1", orderDate: "2026-09-10", status: "NOT_STARTED" }, {}),
+    row({ soNumber: "B", type: "RPL", courierPartner: "MOVEMATE", facility: "SAPL-WH2", orderDate: "2026-09-20", status: "NOT_STARTED" }, {}),
+    row({ soNumber: "C", type: "NSO", courierPartner: "MUDITA_CARGO", facility: "SAPL-NORTH-TAURU", orderDate: "2026-09-25", status: "NOT_STARTED" }, {}),
+    row({ soNumber: "X", type: "FRESH", courierPartner: "BLUEDART", facility: "SAPL-WH1", orderDate: "2026-09-12", status: "CANCELLED" }, {}),
+  ];
+  const sos = (rs: OrderRow[]) => rs.map((r) => r.order.soNumber);
+
+  it("keeps any of several ticked values — 2 of 3 couriers, 2 of 3 facilities", () => {
+    expect(sos(filterReportRows(def("store-slice"), rows, { couriers: ["BLUEDART", "MOVEMATE"] }))).toEqual(["A", "B"]);
+    expect(sos(filterReportRows(def("store-slice"), rows, { facilities: ["SAPL-WH2", "SAPL-NORTH-TAURU"] }))).toEqual(["B", "C"]);
+    expect(sos(filterReportRows(def("store-slice"), rows, { types: ["FRESH", "NSO"] }))).toEqual(["A", "C"]);
+  });
+
+  it("drops cancelled orders from every report except the lookup", () => {
+    expect(sos(filterReportRows(def("store-slice"), rows, {}))).not.toContain("X");
+    expect(sos(filterReportRows(def("order-lookup"), rows, {}))).toContain("X");
+  });
+
+  it("ignores a filter the report does not show", () => {
+    // In-transit ageing has no date filter: a stale ?from= must not hide old shipments.
+    expect(filterReportRows(def("ageing"), rows, { from: "2026-09-24" })).toHaveLength(3);
+  });
+
+  it("filters dates inclusively", () => {
+    expect(sos(filterReportRows(def("store-slice"), rows, { from: "2026-09-20", to: "2026-09-25" }))).toEqual(["B", "C"]);
   });
 });

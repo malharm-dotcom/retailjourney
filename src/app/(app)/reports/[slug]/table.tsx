@@ -4,24 +4,30 @@ import { useMemo, useState } from "react";
 import { Icon } from "@/components/icon";
 import { JourneyLink } from "@/components/journey-link";
 import { StatusPill } from "@/components/ui/pill";
-import { Input, Select } from "@/components/ui/primitives";
-import { LOGISTICS_PARTNERS } from "@/lib/types";
+import { MultiSelect, type MultiOption } from "@/components/ui/multi-select";
+import { Input } from "@/components/ui/primitives";
 import { visualByLabel } from "@/lib/ui";
-import type { ReportTableData } from "@/lib/reports";
+import type { ReportDef, ReportTableData } from "@/lib/reports";
 
-const TYPES = ["FRESH", "RPL", "Q_COMM", "ACC", "NON_TRADING", "NSO", "OTHER"];
+const FIELD = "text-meta font-semibold uppercase tracking-[0.06em] text-mute sm:pt-[2px]";
+const FIELD_BLOCK = "mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute";
 
 export function ReportTable({
   slug,
+  def,
   data,
   initial,
+  options,
   showLookup,
 }: {
   slug: string;
+  def: Pick<ReportDef, "question" | "grain" | "dateBasis" | "filters">;
   data: ReportTableData;
-  initial: { q: string; type: string; courier: string; from: string; to: string };
+  initial: { q: string; from: string; to: string; type: string[]; courier: string[]; facility: string[] };
+  options: { type: MultiOption[]; courier: MultiOption[]; facility: string[] };
   showLookup: boolean;
 }) {
+  const has = (k: ReportDef["filters"][number]) => def.filters.includes(k);
   // Column sort, client-side: a report is one page of rows the server already
   // built, so there is nothing here a re-query would add.
   const [sort, setSort] = useState<{ col: number; dir: "asc" | "desc" } | null>(null);
@@ -55,51 +61,77 @@ export function ReportTable({
 
   return (
     <>
+      {/* What this report is, before any number: the question it answers and
+          what one row means. The most common misread was treating a per-leg
+          or per-courier row as an order count. */}
+      <div className="mb-4 grid gap-2 rounded-card bg-card px-5 py-3.5 text-dense shadow-card sm:grid-cols-[auto_1fr] sm:gap-x-6">
+        <span className={FIELD}>Answers</span>
+        <span className="font-semibold text-ink">{def.question}</span>
+        <span className={FIELD}>Each row</span>
+        <span className="text-ink-soft">{def.grain}</span>
+        {def.dateBasis ? (
+          <>
+            <span className={FIELD}>Dates filter on</span>
+            <span className="text-ink-soft">{def.dateBasis}</span>
+          </>
+        ) : null}
+        {slug !== "order-lookup" ? (
+          <>
+            <span className={FIELD}>Excludes</span>
+            <span className="text-ink-soft">Cancelled and unfulfillable orders — they never shipped.</span>
+          </>
+        ) : null}
+      </div>
+
       <form method="get" className="mb-4 flex flex-wrap items-end gap-2.5">
         {showLookup ? (
           <label className="min-w-[240px] flex-1">
-            <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">
-              SO · DC · LR · store
-            </span>
+            <span className={FIELD_BLOCK}>SO · DC · LR · store</span>
             <Input name="q" defaultValue={initial.q} placeholder="Paste any identifier…" />
           </label>
         ) : null}
-        <label>
-          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">From</span>
-          <Input type="date" name="from" defaultValue={initial.from} className="w-[150px]" />
-        </label>
-        <label>
-          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">To</span>
-          <Input type="date" name="to" defaultValue={initial.to} className="w-[150px]" />
-        </label>
-        <label>
-          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">Type</span>
-          <Select name="type" defaultValue={initial.type} className="w-[130px]">
-            <option value="">All</option>
-            {TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </Select>
-        </label>
-        <label>
-          <span className="mb-1 block text-meta font-semibold uppercase tracking-[0.06em] text-mute">Courier</span>
-          <Select name="courier" defaultValue={initial.courier} className="w-[150px]">
-            <option value="">All</option>
-            {LOGISTICS_PARTNERS.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
-          </Select>
-        </label>
+        {has("date") ? (
+          <>
+            <label>
+              <span className={FIELD_BLOCK}>From</span>
+              <Input type="date" name="from" defaultValue={initial.from} className="w-[150px]" />
+            </label>
+            <label>
+              <span className={FIELD_BLOCK}>To</span>
+              <Input type="date" name="to" defaultValue={initial.to} className="w-[150px]" />
+            </label>
+          </>
+        ) : null}
+        {has("facility") && options.facility.length ? (
+          <div>
+            <span className={FIELD_BLOCK}>Facility</span>
+            <MultiSelect name="facility" options={options.facility} defaultValue={initial.facility} className="w-[190px]" />
+          </div>
+        ) : null}
+        {has("type") ? (
+          <div>
+            <span className={FIELD_BLOCK}>Order type</span>
+            <MultiSelect name="type" options={options.type} defaultValue={initial.type} className="w-[160px]" />
+          </div>
+        ) : null}
+        {has("courier") ? (
+          <div>
+            <span className={FIELD_BLOCK}>Courier</span>
+            <MultiSelect name="courier" options={options.courier} defaultValue={initial.courier} className="w-[190px]" />
+          </div>
+        ) : null}
         <button
           type="submit"
           className="rounded-control bg-ink px-4 py-2 text-ui font-semibold text-paper transition-colors duration-150 ease-ui hover:bg-ink/85"
         >
           Apply
         </button>
+        <a
+          href={`/reports/${slug}`}
+          className="rounded-control px-3 py-2 text-dense font-semibold text-mute transition-colors duration-150 ease-ui hover:text-ink"
+        >
+          Reset
+        </a>
         <button
           type="button"
           onClick={exportCsv}

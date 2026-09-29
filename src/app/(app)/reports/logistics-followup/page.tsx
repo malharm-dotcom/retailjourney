@@ -15,6 +15,7 @@
 import Link from "next/link";
 import { Icon } from "@/components/icon";
 import { PageHead } from "@/components/shell/page-head";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Input, Select } from "@/components/ui/primitives";
 import { LinkTabs } from "@/components/ui/tabs";
 import { scopedOrders } from "@/lib/data";
@@ -29,7 +30,7 @@ import {
   type ColumnMode,
   type EddSource,
 } from "@/lib/logistics-followup";
-import { downloadScope, selectableFacilities } from "@/lib/reports-download";
+import { pickFacilities, selectableFacilities } from "@/lib/reports-download";
 import { requireSession } from "@/lib/session";
 import { cn } from "@/lib/ui";
 import { BreachedActions, ExportButton } from "./export-button";
@@ -72,9 +73,10 @@ export default async function LogisticsFollowupPage({ searchParams }: { searchPa
   // The session's scope is the ceiling; a `facility` parameter may only narrow
   // inside it. Same enforcement the CSV route handler uses — a select is a
   // suggestion, never a permission.
-  const facilityParam = one(searchParams.facility);
-  const scope = downloadScope(user, sessionScope, facilityParam);
+  const facilityParam = many(searchParams.facility);
   const facilities = selectableFacilities(user, sessionScope);
+  const picked = pickFacilities(user, sessionScope, facilityParam).facilities;
+  const narrowed = picked.length < facilities.length;
 
   const view = one(searchParams.view) === "pivot" ? "pivot" : "breached";
   const mode: ColumnMode = one(searchParams.mode) === "ageing" ? "ageing" : "edd";
@@ -87,7 +89,7 @@ export default async function LogisticsFollowupPage({ searchParams }: { searchPa
   const from = one(searchParams.from) || addDays(today, -WINDOW_DAYS);
   const to = one(searchParams.to) || addDays(today, WINDOW_DAYS);
 
-  const rows = await scopedOrders(scope, user);
+  const rows = (await scopedOrders(sessionScope, user)).filter((r) => !narrowed || picked.includes(r.order.facility));
   // Options come off the rows this report actually contains, so the filter can
   // never offer a courier with nothing behind it — and never hides a synced
   // spelling that the LOGISTICS_PARTNERS constant does not carry.
@@ -97,7 +99,7 @@ export default async function LogisticsFollowupPage({ searchParams }: { searchPa
 
   // Carried into the view links so switching view keeps the filters.
   const carried = new URLSearchParams();
-  if (facilityParam) carried.set("facility", facilityParam);
+  if (narrowed) for (const f of picked) carried.append("facility", f);
   if (eddSource !== "courier") carried.set("edd", eddSource);
   for (const c of couriers) carried.append("courier", c);
 
@@ -110,33 +112,27 @@ export default async function LogisticsFollowupPage({ searchParams }: { searchPa
           <option value="store">Store Delivery EDD</option>
         </Select>
       </label>
-      <label>
-        <span className={FIELD_LABEL}>Facility</span>
-        <Select name="facility" defaultValue={facilityParam ?? "ALL"} className="w-[180px]">
-          {facilities.length > 1 ? <option value="ALL">All my facilities</option> : null}
-          {facilities.map((f) => (
-            <option key={f} value={f}>
-              {f}
-            </option>
-          ))}
-        </Select>
-      </label>
-      <label>
-        <span className={FIELD_LABEL}>Courier — all if none picked</span>
-        <Select
+      {facilities.length > 1 ? (
+        <div>
+          <span className={FIELD_LABEL}>Facility</span>
+          <MultiSelect
+            name="facility"
+            options={facilities}
+            defaultValue={narrowed ? picked : []}
+            allLabel="All my facilities"
+            className="w-[190px]"
+          />
+        </div>
+      ) : null}
+      <div>
+        <span className={FIELD_LABEL}>Courier</span>
+        <MultiSelect
           name="courier"
-          multiple
-          size={Math.min(4, Math.max(2, courierOptions.length))}
+          options={courierOptions.map((c) => ({ value: c, label: c === "—" ? "No courier yet" : c.replace(/_/g, " ") }))}
           defaultValue={couriers}
-          className="w-[200px] py-1"
-        >
-          {courierOptions.map((c) => (
-            <option key={c} value={c}>
-              {c}
-            </option>
-          ))}
-        </Select>
-      </label>
+          className="w-[200px]"
+        />
+      </div>
     </>
   );
 

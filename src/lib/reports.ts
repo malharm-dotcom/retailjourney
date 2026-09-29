@@ -2,7 +2,7 @@
 // order rows. Each returns a serializable table the client can render + export.
 
 import type { OrderRow } from "./data";
-import { daysBetween, istToday, weekdayOf } from "./ist";
+import { daysBetween, istDateOf, istToday, weekdayOf } from "./ist";
 import { LEG_LABEL, SLA_LABEL, ageingBucket, type SlaLeg, type SlaState } from "./sla";
 import { OVERALL_LABEL, STATUS_LABEL, courierOf } from "./journey";
 import type { AnchorSource } from "./transit-anchor";
@@ -27,11 +27,54 @@ const ANCHOR_LABEL: Record<AnchorSource, string> = {
   TRACKING_PICK: "pickup",
 };
 
+/** Who a report is for — the landing page groups by this, so a reader finds
+ *  their team's reports without reading every tile. */
+export type ReportGroup = "lookup" | "warehouse" | "logistics" | "stores";
+
+export const REPORT_GROUPS: { key: ReportGroup; title: string; blurb: string; icon: string }[] = [
+  {
+    key: "lookup",
+    title: "Find an order",
+    blurb: "Start here when someone asks about one specific order.",
+    icon: "magnifer-zoom-in-bold-duotone",
+  },
+  {
+    key: "warehouse",
+    title: "Warehouse",
+    blurb: "What left each warehouse, and whether it left on the rulebook's day.",
+    icon: "box-bold-duotone",
+  },
+  {
+    key: "logistics",
+    title: "Logistics & couriers",
+    blurb: "Shipments on the road — what is late, what is ageing, which partner is slipping.",
+    icon: "delivery-bold-duotone",
+  },
+  {
+    key: "stores",
+    title: "Stores & leadership",
+    blurb: "Store-level rollups, SLA health per leg, reconciliation and new openings.",
+    icon: "shop-bold-duotone",
+  },
+];
+
+/** The filters a report honours. A control the report would ignore is not
+ *  shown — "Order date" on a live in-transit list only hid old shipments. */
+export type ReportFilterKey = "date" | "type" | "courier" | "facility";
+
 export interface ReportDef {
   slug: string;
   title: string;
   description: string;
   icon: string;
+  group: ReportGroup;
+  /** The question it answers, in the reader's words. */
+  question: string;
+  /** What one row is. */
+  grain: string;
+  filters: ReportFilterKey[];
+  /** What the From/To dates filter on, when the report has them. */
+  dateBasis?: string;
 }
 
 export interface ReportTableData {
@@ -41,25 +84,41 @@ export interface ReportTableData {
   linkCol?: number;
 }
 
+const ALL_FILTERS: ReportFilterKey[] = ["date", "type", "courier", "facility"];
+
 export const REPORTS: ReportDef[] = [
   {
     slug: "order-lookup",
-    title: "Order lookup / journey",
-    description: "Any SO, DC or LR → the full record and a jump to its timeline.",
+    title: "Order lookup",
+    description: "Paste any SO, DC, LR or store name to get the order's record and a link to its timeline.",
     icon: "magnifer-zoom-in-bold-duotone",
+    group: "lookup",
+    question: "Where is this order right now?",
+    grain: "One row per order",
+    filters: ALL_FILTERS,
+    dateBasis: "order date",
   },
   {
-    slug: "sla-adherence",
-    title: "SLA adherence per leg",
-    description: "Within / future / breached / breached-pending split for every leg.",
-    icon: "stopwatch-bold-duotone",
+    slug: "wh-throughput",
+    title: "Warehouse throughput",
+    description: "Orders, pieces and boxes that left each warehouse, per day.",
+    icon: "box-bold-duotone",
+    group: "warehouse",
+    question: "How much did each warehouse send out, day by day?",
+    grain: "One row per day × warehouse",
+    filters: ["date", "type", "facility"],
+    dateBasis: "day it left the warehouse (dispatch, else manifest) — last 14 days if left blank",
   },
   {
-    slug: "ageing",
-    title: "Live in-transit ageing",
-    description:
-      "Open shipments bucketed by days out, anchored on dispatch where known, else the WH manifest.",
-    icon: "hourglass-bold-duotone",
+    slug: "rulebook-adherence",
+    title: "Rulebook adherence",
+    description: "Did the order leave the warehouse, and reach the store, on the weekday the rulebook plans?",
+    icon: "calendar-mark-bold-duotone",
+    group: "warehouse",
+    question: "Are we handing over and delivering on the planned day?",
+    grain: "One row per order × leg (WH handover, store delivery)",
+    filters: ALL_FILTERS,
+    dateBasis: "order date",
   },
   {
     // Served by its own route (reports/logistics-followup/page.tsx), which
@@ -67,50 +126,125 @@ export const REPORTS: ReportDef[] = [
     // report shell has no place for, so `buildReport` has no case for it.
     slug: "logistics-followup",
     title: "EDD breached follow-up",
-    description:
-      "Every in-transit AWB past its EDD, ready to copy into the courier mail — plus the store × EDD pivot.",
+    description: "Every in-transit AWB past its EDD, ready to paste into the courier mail — plus a store × EDD pivot.",
     icon: "clipboard-list-bold-duotone",
+    group: "logistics",
+    question: "Which shipments do I chase the courier about today?",
+    grain: "One row per late AWB",
+    filters: ["courier", "facility"],
+  },
+  {
+    slug: "ageing",
+    title: "In-transit ageing",
+    description: "Every shipment still on the road, oldest first, bucketed by days since it left the warehouse.",
+    icon: "hourglass-bold-duotone",
+    group: "logistics",
+    question: "Which shipments have been out the longest?",
+    grain: "One row per open shipment (pickup pending or in transit)",
+    filters: ["type", "courier", "facility"],
   },
   {
     slug: "courier-scorecard",
     title: "Courier scorecard",
-    description:
-      "On-time %, days to deliver from the WH-out anchor, attempts and NDRs per logistics partner.",
+    description: "On-time %, days to deliver, re-attempts and open shipments per courier partner.",
     icon: "delivery-bold-duotone",
+    group: "logistics",
+    question: "Which courier partner is performing, and which is slipping?",
+    grain: "One row per courier partner",
+    filters: ALL_FILTERS,
+    dateBasis: "order date",
+  },
+  {
+    slug: "store-slice",
+    title: "Store / AM / merchandiser rollup",
+    description: "Orders, pieces, delivered, breaching now and open reconciliation per store.",
+    icon: "shop-bold-duotone",
+    group: "stores",
+    question: "How is each store — and each area manager's patch — doing?",
+    grain: "One row per store",
+    filters: ALL_FILTERS,
+    dateBasis: "order date",
+  },
+  {
+    slug: "sla-adherence",
+    title: "SLA adherence per leg",
+    description: "For each journey leg: how many orders are within SLA, still running, or breached.",
+    icon: "stopwatch-bold-duotone",
+    group: "stores",
+    question: "Which leg of the journey is losing us the SLA?",
+    grain: "One row per SLA leg",
+    filters: ALL_FILTERS,
+    dateBasis: "order date",
   },
   {
     slug: "shortage-excess",
     title: "Shortage / excess reconciliation",
-    description: "Open vs closed recon entries with quantities and Logic adjustment.",
+    description: "Orders the store received short or excess, with the Logic adjustment and entry status.",
     icon: "clipboard-remove-bold-duotone",
-  },
-  {
-    slug: "wh-throughput",
-    title: "WH throughput",
-    description:
-      "Orders, pieces and boxes leaving each facility per day (dispatch date, else the WH manifest).",
-    icon: "box-bold-duotone",
-  },
-  {
-    slug: "rulebook-adherence",
-    title: "Rulebook adherence",
-    description: "Actual leg weekday vs the rulebook's target day, per store.",
-    icon: "calendar-mark-bold-duotone",
-  },
-  {
-    slug: "store-slice",
-    title: "Store / AM / merchandiser slice",
-    description: "Self-serve rollup for leadership — orders, breaches, open recon.",
-    icon: "shop-bold-duotone",
+    group: "stores",
+    question: "Which receipts still have an open shortage or excess?",
+    grain: "One row per order with a shortage or excess",
+    filters: ALL_FILTERS,
+    dateBasis: "order date",
   },
   {
     slug: "nso-openings",
     title: "New store openings (NSO)",
-    description:
-      "Store-opening orders on their own — no TAT column, because they have no deadline to miss.",
+    description: "Store-opening orders on their own. No deadline column — an opening has no TAT to miss.",
     icon: "shop-2-bold-duotone",
+    group: "stores",
+    question: "How far along is each new store's opening stock?",
+    grain: "One row per NSO order",
+    filters: ["date", "facility"],
+    dateBasis: "order date",
   },
 ];
+
+export interface ReportRowFilter {
+  from?: string;
+  to?: string;
+  types?: string[];
+  couriers?: string[];
+  /** Already intersected with the session's entitlement. Empty = no narrowing. */
+  facilities?: string[];
+}
+
+const TERMINAL = new Set(["CANCELLED", "UNFULFILLABLE"]);
+
+/** The day an order LEFT the warehouse — dispatch, else the manifest. The same
+ *  fallback the handover SLA uses (phaseASla in sync.ts); the spine never
+ *  carries a dispatch date, so dispatch alone is blank on synced orders. */
+function whOutDate(r: OrderRow): string | undefined {
+  return r.order.dispatchedDate ?? (r.order.manifestedTs ? istDateOf(r.order.manifestedTs) : undefined);
+}
+
+/**
+ * Apply a report's filters to the scoped rows. Only the filters the report
+ * declares are honoured, so a stale URL parameter can never silently narrow a
+ * report whose screen no longer shows that control.
+ *
+ * Cancelled and unfulfillable orders are dropped from every report except the
+ * lookup: they never shipped, so counting them inflated order totals and
+ * breach counts (a cancelled order still carries leg verdicts).
+ */
+export function filterReportRows(def: ReportDef, rows: OrderRow[], f: ReportRowFilter): OrderRow[] {
+  const has = (k: ReportFilterKey) => def.filters.includes(k);
+  const types = has("type") ? f.types ?? [] : [];
+  const couriers = has("courier") ? f.couriers ?? [] : [];
+  const facilities = has("facility") ? f.facilities ?? [] : [];
+  const dated = has("date");
+  // Throughput is about the day stock LEFT, so its dates filter that day.
+  const dateOf = (r: OrderRow) => (def.slug === "wh-throughput" ? r.anchor.date : r.order.orderDate);
+  const inRange = (d?: string) => (!f.from || (!!d && d >= f.from)) && (!f.to || (!!d && d <= f.to));
+  return rows.filter(
+    (r) =>
+      (def.slug === "order-lookup" || !TERMINAL.has(r.order.status)) &&
+      (!types.length || types.includes(r.order.type)) &&
+      (!couriers.length || couriers.includes(courierOf(r.order))) &&
+      (!facilities.length || facilities.includes(r.order.facility)) &&
+      (!dated || inRange(dateOf(r))),
+  );
+}
 
 export function reportBySlug(slug: string): ReportDef | undefined {
   return REPORTS.find((r) => r.slug === slug);
@@ -118,7 +252,15 @@ export function reportBySlug(slug: string): ReportDef | undefined {
 
 const pct = (n: number, d: number) => (d === 0 ? "—" : `${Math.round((n / d) * 100)}%`);
 
-export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportTableData {
+/** Rows the lookup shows before anything is searched. */
+export const LOOKUP_DEFAULT_ROWS = 50;
+
+/**
+ * `dated`: the caller already applied a From/To range. Only throughput cares —
+ * its 14-day default window applies when no range was given, and must not cut
+ * a range someone asked for.
+ */
+export function buildReport(slug: string, rows: OrderRow[], q?: string, dated = false): ReportTableData {
   const today = istToday();
 
   switch (slug) {
@@ -126,11 +268,14 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
       const needle = (q ?? "").trim().toLowerCase();
       const hits = needle
         ? rows.filter((r) =>
-            [r.order.soNumber, r.order.dcNumber, r.order.lrNumber, r.order.finalStore]
+            [r.order.soNumber, r.order.dcNumber, r.order.lrNumber, r.order.finalStore, r.order.storeNameFormat]
               .filter(Boolean)
               .some((v) => v!.toLowerCase().includes(needle)),
           )
-        : rows.slice(0, 50);
+        : // Unsearched: the newest orders, not whatever 50 the snapshot held first.
+          [...rows]
+            .sort((a, b) => b.order.orderDate.localeCompare(a.order.orderDate) || a.order.soNumber.localeCompare(b.order.soNumber))
+            .slice(0, LOOKUP_DEFAULT_ROWS);
       return {
         columns: ["SO", "Store", "DC", "LR", "WH status", "Overall", "Ordered", "Delivered"],
         linkCol: 0,
@@ -308,12 +453,14 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
         // attribute their throughput to. (Live spine: zero such orders.)
         const anchor = r.anchor.date;
         if (!anchor) continue;
-        if (daysBetween(anchor, today) > 14) continue;
+        if (!dated && daysBetween(anchor, today) > 14) continue;
         const key = `${anchor} · ${r.order.facility}`;
         const e = days.get(key) ?? { orders: 0, qty: 0, boxes: 0 };
         e.orders += 1;
         e.qty += r.order.fulfilledQty ?? r.order.qty;
-        e.boxes += r.order.boxCount ?? 0;
+        // boxCount is hand-entered only; synced orders carry their boxes on
+        // the AWB children (r.boxes). Reading boxCount alone summed to 0.
+        e.boxes += r.order.boxCount ?? r.boxes ?? 0;
         days.set(key, e);
       }
       return {
@@ -330,11 +477,14 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
       const checks: { leg: string; target?: string; actual?: string; store: string; so: string }[] = [];
       for (const r of rows) {
         if (!r.rule) continue;
-        if (r.order.dispatchedDate && r.rule.targetHandoverDay)
+        // Dispatch, else manifest — dispatchedDate alone is blank on every
+        // spine order, which left this report delivery-only.
+        const whOut = whOutDate(r);
+        if (whOut && r.rule.targetHandoverDay)
           checks.push({
             leg: "WH handover",
             target: r.rule.targetHandoverDay,
-            actual: weekdayOf(r.order.dispatchedDate),
+            actual: weekdayOf(whOut),
             store: r.order.storeNameFormat,
             so: r.order.soNumber,
           });
@@ -374,7 +524,12 @@ export function buildReport(slug: string, rows: OrderRow[], q?: string): ReportT
               merch,
               list.length,
               list.reduce((a, r) => a + r.order.qty, 0),
-              list.filter((r) => r.order.deliveredDate).length,
+              // Inwarded counts: the store booked the stock in, which is past
+              // delivery. A deliveredDate alone missed every milk-run order
+              // that was inwarded without a courier delivery scan.
+              list.filter(
+                (r) => r.order.deliveredDate || r.order.overallStatus === "DELIVERED" || r.order.overallStatus === "INWARDED",
+              ).length,
               list.filter((r) => r.breaching).length,
               list.filter(
                 (r) => ((r.order.shortageQty ?? 0) > 0 || (r.order.excessQty ?? 0) > 0) && r.order.entryStatus !== "CLOSED",

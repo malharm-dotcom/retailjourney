@@ -58,14 +58,14 @@ export const DOWNLOADS: DownloadDef[] = [
   {
     slug: "courier-performance",
     title: "Courier partner performance",
-    description: "The courier panel above, as a file. Same figures, filterable to one partner.",
+    description: "The scorecard's courier breakdown as a file — same figures, for the partners you tick.",
     icon: "delivery-bold-duotone",
     filter: "courier",
   },
   {
     slug: "lane-performance",
     title: "Lane-wise performance",
-    description: "The lane panel above, as a file. Same figures, filterable to one lane.",
+    description: "The scorecard's lane breakdown as a file — same figures, for the lanes you tick.",
     icon: "routing-bold-duotone",
     filter: "lane",
   },
@@ -94,8 +94,9 @@ export const DEFAULT_WINDOW_DAYS = WINDOW_DAYS;
 export interface ReportFilters {
   from?: string;
   to?: string;
-  courier?: string;
-  lane?: string;
+  /** Empty or absent = every courier / lane. */
+  courier?: string[];
+  lane?: string[];
 }
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -139,6 +140,26 @@ export function downloadScope(
   return resolveScope(user, requested);
 }
 
+/**
+ * The facilities a multi-pick filter resolves to: the ticked ones, intersected
+ * with what the session allows. Nothing ticked, or nothing allowed among the
+ * ticks, is every allowed facility — a parameter can narrow, never widen.
+ *
+ * `scope` is what to hand the scoped readers: the session scope itself when
+ * nothing was narrowed (so an unfiltered download stays byte-identical to the
+ * panel), otherwise the explicit list.
+ */
+export function pickFacilities(
+  user: Pick<User, "role" | "facilities" | "allView">,
+  sessionScope: FacilityScope,
+  requested: string[],
+): { facilities: Facility[]; scope: FacilityScope | Facility[] } {
+  const allowed = selectableFacilities(user, sessionScope);
+  const hit = allowed.filter((f) => requested.includes(f));
+  const facilities = hit.length ? hit : allowed;
+  return { facilities, scope: facilities.length === allowed.length ? sessionScope : facilities };
+}
+
 /** Facilities the form may offer — never more than the session already allows. */
 export function selectableFacilities(
   user: Pick<User, "role" | "facilities" | "allView">,
@@ -155,10 +176,18 @@ function sqlText(v: string): string {
   return v.replace(/'/g, "''");
 }
 
-/** Courier / lane equality, with the panel's "—" placeholder mapped back to the
- *  NULL it stands for. */
-function eqOrNull(column: string, value: string): string {
-  return value === "—" ? `${column} IS NULL` : `${column} = '${sqlText(value)}'`;
+/** Courier / lane membership, with the panel's "—" placeholder mapped back to
+ *  the NULL it stands for. Undefined when nothing is picked (= all).
+ *  (Exported for the tests.) */
+export function inOrNull(column: string, values?: string[]): string | undefined {
+  if (!values?.length) return undefined;
+  if (values.length > 50) throw new FilterError("Too many filter values");
+  const named = values.filter((v) => v !== "—");
+  const parts = [
+    ...(named.length ? [`${column} IN (${named.map((v) => `'${sqlText(v)}'`).join(", ")})`] : []),
+    ...(named.length < values.length ? [`${column} IS NULL`] : []),
+  ];
+  return parts.length === 1 ? parts[0] : `(${parts.join(" OR ")})`;
 }
 
 const pctCell = (v: number | null) => (v == null ? "" : Number(v.toFixed(2)));
@@ -223,12 +252,14 @@ const ORDER_COLUMNS: CsvColumn<OrderRow>[] = [
   { header: "Merchandiser", value: (r) => r.order.merchandiser },
   { header: "Qty", value: (r) => r.order.qty },
   { header: "Fulfilled Qty", value: (r) => r.order.fulfilledQty },
-  { header: "Box Count", value: (r) => r.order.boxCount },
+  // Order-grain boxCount is only ever set by hand; the spine's count lives on
+  // the AWB children, which `r.boxes` sums. Reading boxCount alone left this
+  // column blank on every synced order.
+  { header: "Box Count", value: (r) => r.order.boxCount ?? r.boxes },
   { header: "WH Status", value: (r) => STATUS_LABEL[r.order.status] },
   { header: "Overall Status", value: (r) => OVERALL_LABEL[r.order.overallStatus] },
   { header: "Lane Classification", value: (r) => r.order.laneClassification },
   { header: "Courier Partner", value: (r) => courierOf(r.order) },
-  { header: "Courier Partner", value: (r) => r.order.courierPartner },
   { header: "DC Number", value: (r) => r.order.dcNumber },
   { header: "LR Number", value: (r) => r.order.lrNumber },
   // The furthest-forward live child, exactly as the boards pick it — a dead
@@ -275,19 +306,23 @@ export interface DownloadResult {
  */
 export async function buildDownload(
   slug: string,
-  scope: FacilityScope,
+  sessionScope: FacilityScope,
   user: User,
   filters: ReportFilters,
+  facilities: FacilityScope | Facility[] = sessionScope,
 ): Promise<DownloadResult> {
-  const scoped = scopeClause(scope, user.role === "RETAIL_HEAD" ? user.areaManager : undefined);
+  const scoped = scopeClause(facilities, user.role === "RETAIL_HEAD" ? user.areaManager : undefined);
   const { from, to } = resolveRange(filters);
 
   switch (slug) {
     case "order-detail": {
       // App-side, so this carries the out-of-rulebook orders the dashboard's
       // source drops, and the journey state the boards show.
-      const rows = (await scopedOrders(scope, user)).filter(
-        (r) => r.order.orderDate >= from && r.order.orderDate <= to,
+      const rows = (await scopedOrders(sessionScope, user)).filter(
+        (r) =>
+          r.order.orderDate >= from &&
+          r.order.orderDate <= to &&
+          (!Array.isArray(facilities) || facilities.includes(r.order.facility)),
       );
       rows.sort((a, b) => (a.order.orderDate === b.order.orderDate
         ? a.order.soNumber.localeCompare(b.order.soNumber)
@@ -302,7 +337,7 @@ export async function buildDownload(
       const where = [
         scoped,
         courierWindow({ from, to }),
-        filters.courier ? eqOrNull("COURIER_PARTNER", filters.courier) : undefined,
+        inOrNull("COURIER_PARTNER", filters.courier),
       ]
         .filter(Boolean)
         .join(" AND ");
@@ -314,7 +349,7 @@ export async function buildDownload(
       const where = [
         scoped,
         laneWindow({ from, to }),
-        filters.lane ? eqOrNull("LANE_CLASSIFICATION", filters.lane) : undefined,
+        inOrNull("LANE_CLASSIFICATION", filters.lane),
       ]
         .filter(Boolean)
         .join(" AND ");

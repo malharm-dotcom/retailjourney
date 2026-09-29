@@ -8,6 +8,8 @@ import {
   FilterError,
   downloadBySlug,
   downloadScope,
+  inOrNull,
+  pickFacilities,
   resolveRange,
   selectableFacilities,
 } from "./reports-download";
@@ -121,5 +123,38 @@ describe("DOWNLOADS", () => {
     expect(downloadBySlug("lane-performance")?.filter).toBe("lane");
     expect(downloadBySlug("order-detail")?.filter).toBeUndefined();
     expect(downloadBySlug("dispatch-summary")?.filter).toBeUndefined();
+  });
+});
+
+describe("pickFacilities — multi-pick, still capped by the session", () => {
+  it("narrows to any subset of the allowed facilities", () => {
+    expect(pickFacilities(admin, "ALL", ["SAPL-WH1", "SAPL-WH2"])).toEqual({
+      facilities: ["SAPL-WH1", "SAPL-WH2"],
+      scope: ["SAPL-WH1", "SAPL-WH2"],
+    });
+  });
+
+  it("returns the session scope untouched when nothing (or everything) is ticked", () => {
+    expect(pickFacilities(admin, "ALL", []).scope).toBe("ALL");
+    expect(pickFacilities(admin, "ALL", ["SAPL-NORTH-TAURU", "SAPL-WH1", "SAPL-WH2"]).scope).toBe("ALL");
+  });
+
+  it("cannot reach outside the session", () => {
+    expect(pickFacilities(operator, "SAPL-WH1", ["SAPL-WH2"]).facilities).toEqual(["SAPL-WH1"]);
+    expect(pickFacilities(admin, "ALL", ["'; DROP TABLE--"]).scope).toBe("ALL");
+  });
+});
+
+describe("inOrNull — multi-value courier / lane SQL", () => {
+  it("is no filter at all when nothing is picked", () => {
+    expect(inOrNull("LANE_CLASSIFICATION", [])).toBeUndefined();
+  });
+  it("builds an IN list, mapping '—' back to NULL", () => {
+    expect(inOrNull("COURIER_PARTNER", ["BLUEDART", "MOVEMATE"])).toBe("COURIER_PARTNER IN ('BLUEDART', 'MOVEMATE')");
+    expect(inOrNull("LANE_CLASSIFICATION", ["—"])).toBe("LANE_CLASSIFICATION IS NULL");
+    expect(inOrNull("LANE_CLASSIFICATION", ["NCR", "—"])).toBe("(LANE_CLASSIFICATION IN ('NCR') OR LANE_CLASSIFICATION IS NULL)");
+  });
+  it("escapes quotes", () => {
+    expect(inOrNull("COURIER_PARTNER", ["O'X"])).toBe("COURIER_PARTNER IN ('O''X')");
   });
 });

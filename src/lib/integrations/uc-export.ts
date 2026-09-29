@@ -257,6 +257,8 @@ export interface UcOrder {
   storePrefix: string;
   qty: number;
   cancelledItems: number;
+  /** Every item row CANCELLED — the order was cancelled on UC. */
+  fullyCancelled: boolean;
   facility?: Facility;
   channel?: Order["channel"];
   type: OrderType;
@@ -305,12 +307,14 @@ export function aggregateUcOrders(items: UcItemRow[]): UcOrder[] {
     }
     const grams = [...perPackage.values()].reduce((a, b) => a + b, 0);
     const orderTs = earliest(rows.map((r) => r.orderTs));
+    const cancelledItems = rows.filter((r) => (r.itemStatus ?? "").toUpperCase() === "CANCELLED").length;
 
     out.push({
       soNumber,
       storePrefix: soNumber.trim().slice(0, 6).toUpperCase(),
       qty: rows.length,
-      cancelledItems: rows.filter((r) => (r.itemStatus ?? "").toUpperCase() === "CANCELLED").length,
+      cancelledItems,
+      fullyCancelled: cancelledItems === rows.length,
       facility: rows.find((r) => r.facility)?.facility,
       channel: rows.find((r) => r.channel)?.channel,
       type: rows[0].type,

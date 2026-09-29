@@ -10,7 +10,8 @@
 
 import { describe, expect, it } from "vitest";
 import { isProbeableOrderName } from "../snowflake";
-import { type CancelCandidate, cancelledUpstream } from "./sync";
+import { type CancelCandidate, cancelledUpstream, ucCancels } from "./sync";
+import { aggregateUcOrders, type UcItemRow } from "./uc-export";
 
 const FLOOR = "2026-06-19"; // the live spine's MIN(ORDER_DATE)
 const CEILING = "2026-09-17"; // the live spine's MAX(ORDER_DATE)
@@ -128,5 +129,26 @@ describe("cancelledUpstream — too NEW to verify is not cancelled either", () =
 
   it("condemns nothing when the ceiling is unknown — same fail-safe as the floor", () => {
     expect(cancelledUpstream([candidate()], none, FLOOR, undefined)).toEqual([]);
+  });
+});
+
+describe("UC intake — every item CANCELLED closes the order", () => {
+  it("flags an order fully cancelled only when every item row is CANCELLED", () => {
+    const row = (itemCode: string, itemStatus: string) =>
+      ({ itemCode, soNumber: "AIRPOR17015", type: "RPL", itemStatus, onHold: false }) as UcItemRow;
+    expect(aggregateUcOrders([row("a", "CANCELLED"), row("b", "cancelled")])[0].fullyCancelled).toBe(true);
+    // A partial cancellation is still a live order.
+    expect(aggregateUcOrders([row("a", "CANCELLED"), row("b", "CREATED")])[0].fullyCancelled).toBe(false);
+  });
+
+  it("closes a warehouse-stage order, including one a person moved to PACKING", () => {
+    expect(ucCancels({ status: "NOT_STARTED", overallStatus: "WH_PROCESSING", dispatchedTs: null })).toBe(true);
+    expect(ucCancels({ status: "PACKING", overallStatus: "WH_PROCESSING", dispatchedTs: null })).toBe(true);
+  });
+
+  it("never closes a dispatched, past-warehouse or terminal order", () => {
+    expect(ucCancels({ status: "PACKING", overallStatus: "WH_PROCESSING", dispatchedTs: new Date() })).toBe(false);
+    expect(ucCancels({ status: "DISPATCHED_TO_STORE", overallStatus: "IN_TRANSIT", dispatchedTs: null })).toBe(false);
+    expect(ucCancels({ status: "CANCELLED", overallStatus: "WH_PROCESSING", dispatchedTs: null })).toBe(false);
   });
 });

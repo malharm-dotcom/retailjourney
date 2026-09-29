@@ -1441,32 +1441,57 @@ export async function reconcileCancelledUpstream(): Promise<{
 
   let overrodeManual = 0;
   for (const c of condemned) {
-    const row = byKey.get(c.soNumber)!;
-    const manual = (row.manualFields ?? []).includes("status");
-    if (manual) overrodeManual += 1;
-    await db.$transaction([
-      db.order.update({
-        where: { id: row.id },
-        data: { status: "CANCELLED", statusSource: "SYNCED_SNOWFLAKE", cancelledTs: new Date() },
-      }),
-      db.orderEvent.create({
-        data: {
-          orderId: row.id,
-          field: "status",
-          fromValue: row.status,
-          toValue: "CANCELLED",
-          source: "SYNCED_SNOWFLAKE",
-          actorId: null,
-          // The timestamp records DETECTION, not the upstream cancellation —
-          // the spine keeps no record of an order it has dropped.
-          note: manual
-            ? `Cancelled on Unicommerce — the order left the spine. Overrides the manual status ${row.status}: an upstream cancellation outranks a manual value. Detected by the sync.`
-            : "Cancelled on Unicommerce — the order left the spine. Detected by the sync.",
-        },
-      }),
-    ]);
+    // The timestamp records DETECTION, not the upstream cancellation — the
+    // spine keeps no record of an order it has dropped.
+    if (await markCancelled(byKey.get(c.soNumber)!, "SYNCED_SNOWFLAKE", "the order left the spine")) overrodeManual += 1;
   }
   return { scanned: rows.length, cancelled: condemned.length, overrodeManual };
+}
+
+/**
+ * Does a UC "every item CANCELLED" verdict close this order? Same guards as
+ * the spine backstop: UC only permits cancelling at the warehouse stage, so an
+ * order already dispatched or past WH_PROCESSING is a data problem to leave
+ * visible, never a cancellation; terminal orders need nothing.
+ * (Exported for the cancellation tests.)
+ */
+export function ucCancels(o: { status: OrderStatus; overallStatus: OverallStatus; dispatchedTs?: Date | string | null }): boolean {
+  return o.overallStatus === "WH_PROCESSING" && !o.dispatchedTs && !TERMINAL_STATUSES.includes(o.status);
+}
+
+/**
+ * Close an order as cancelled on Unicommerce. Shared by the spine backstop and
+ * UC intake so the two cannot record a cancellation differently. Bypasses
+ * applySyncPatch on purpose — a UC cancellation outranks a manual status (see
+ * reconcileCancelledUpstream). Returns whether a manual status was overridden.
+ */
+async function markCancelled(
+  row: { id: string; status: string; manualFields: string[] | null },
+  source: Source,
+  evidence: string,
+): Promise<boolean> {
+  const db = prisma();
+  const manual = (row.manualFields ?? []).includes("status");
+  await db.$transaction([
+    db.order.update({
+      where: { id: row.id },
+      data: { status: "CANCELLED", statusSource: source, cancelledTs: new Date() },
+    }),
+    db.orderEvent.create({
+      data: {
+        orderId: row.id,
+        field: "status",
+        fromValue: row.status,
+        toValue: "CANCELLED",
+        source,
+        actorId: null,
+        note: manual
+          ? `Cancelled on Unicommerce — ${evidence}. Overrides the manual status ${row.status}: an upstream cancellation outranks a manual value. Detected by the sync.`
+          : `Cancelled on Unicommerce — ${evidence}. Detected by the sync.`,
+      },
+    }),
+  ]);
+  return manual;
 }
 
 /** Watermark of the last successful Snowflake run, or undefined for "no
@@ -1627,29 +1652,31 @@ export async function runSnowflakeSync(opts: { reseed?: boolean } = {}): Promise
       return byFinalStore.has(k) || byChannelCode.has(k);
     });
 
-    // Cancellation backstop — only on a CLEAN pull. A run that already hit
-    // errors saw an incomplete picture of the spine, and "incomplete" is
-    // exactly the state in which absence lies.
+    // Cancellation backstop. Runs whenever the pull itself succeeded (reaching
+    // here means it did), even if some per-order WRITES failed: the backstop
+    // does not read `rows` — it asks the spine directly (floor, ceiling,
+    // presence), so an app-side write error says nothing about its evidence.
+    // It used to require zero errors, which let ONE bad order silence it for
+    // days: live 2026-09-28 the Surat-VRMall test orders failed every run and
+    // UC-cancelled orders (AIRPOR17015 …) sat on the warehouse board.
     const cancelNotes: string[] = [];
-    if (summary.errors.length === 0) {
-      try {
-        const c = await reconcileCancelledUpstream();
-        if (c.cancelled) {
-          summary.upserted += c.cancelled;
-          cancelNotes.push(
-            `cancelled upstream: ${c.cancelled} of ${c.scanned} WH orders left the spine and were closed as CANCELLED` +
-              (c.overrodeManual ? ` (${c.overrodeManual} overrode a manual status)` : ""),
-          );
-        }
-        console.log(`[sync:snowflake] cancellation backstop scanned=${c.scanned} cancelled=${c.cancelled}`);
-      } catch (e) {
-        // A NOTE, not an error, for the same reason the degraded read is one:
-        // flipping ok:false freezes the watermark, punishing the whole order
-        // sync for a failure in an auxiliary reconciliation.
-        const msg = `cancellation backstop failed (${e instanceof Error ? e.message : String(e)}) — no order was cancelled this run`;
-        cancelNotes.push(msg);
-        console.error(`[sync:snowflake] ${msg}`);
+    try {
+      const c = await reconcileCancelledUpstream();
+      if (c.cancelled) {
+        summary.upserted += c.cancelled;
+        cancelNotes.push(
+          `cancelled upstream: ${c.cancelled} of ${c.scanned} WH orders left the spine and were closed as CANCELLED` +
+            (c.overrodeManual ? ` (${c.overrodeManual} overrode a manual status)` : ""),
+        );
       }
+      console.log(`[sync:snowflake] cancellation backstop scanned=${c.scanned} cancelled=${c.cancelled}`);
+    } catch (e) {
+      // A NOTE, not an error, for the same reason the degraded read is one:
+      // flipping ok:false freezes the watermark, punishing the whole order
+      // sync for a failure in an auxiliary reconciliation.
+      const msg = `cancellation backstop failed (${e instanceof Error ? e.message : String(e)}) — no order was cancelled this run`;
+      cancelNotes.push(msg);
+      console.error(`[sync:snowflake] ${msg}`);
     }
     summary.ok = summary.errors.length === 0;
     // Advance only on a fully successful batch — a run with errors leaves the
@@ -1896,6 +1923,8 @@ export async function runUcIntake(): Promise<SyncSummary> {
     let filled = 0;
     let unmappedStore = 0;
     let learnedStore = 0;
+    let cancelled = 0;
+    let skippedCancelled = 0;
 
     for (const o of orders) {
       try {
@@ -1907,6 +1936,19 @@ export async function runUcIntake(): Promise<SyncSummary> {
         if (!store) unmappedStore += 1;
         else if (!byPrefix.has(o.storePrefix)) learnedStore += 1;
         const existing = await db.order.findUnique({ where: { soNumber: o.soNumber } });
+
+        // Cancelled on UC: never ingest it, and close it if already held. This
+        // is POSITIVE evidence straight from UC, so it lands within one intake
+        // run instead of waiting for the spine backstop to notice an absence.
+        if (o.fullyCancelled) {
+          if (!existing) skippedCancelled += 1;
+          else if (ucCancels({ ...existing, status: existing.status as OrderStatus, overallStatus: existing.overallStatus as OverallStatus })) {
+            await markCancelled(existing, "SYNCED_UC", "every item is CANCELLED in Unicommerce");
+            cancelled += 1;
+            summary.upserted += 1;
+          }
+          continue;
+        }
 
         // Facility comes from UC itself and is independent of the store match,
         // so an unmapped store costs enrichment and never blocks intake.
@@ -2023,6 +2065,9 @@ export async function runUcIntake(): Promise<SyncSummary> {
     }
 
     notes.push(`${created} created ahead of the spine, ${filled} back-filled`);
+    if (cancelled || skippedCancelled) {
+      notes.push(`cancelled on UC: ${cancelled} closed, ${skippedCancelled} never ingested`);
+    }
     if (learnedStore) {
       notes.push(`${learnedStore} store matches learned from a prior order's SO prefix`);
     }

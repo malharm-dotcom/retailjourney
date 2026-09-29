@@ -56,6 +56,8 @@ export interface QueueRow {
   status: OrderStatus;
   facility: string;
   due?: "today" | "overdue";
+  /** IST business date the order was placed — shown under the SO number. */
+  orderDate: string;
   ageDays: number;
   /** The warehouse's own deadline — packed and manifested by this moment. The
    *  same field the Handover badge beside it is derived from, so the column and
@@ -176,6 +178,7 @@ const urgencyRank = (r: QueueRow) => (r.due === "overdue" ? 2 : r.due === "today
  */
 const CSV_COLUMNS: CsvColumn<QueueRow>[] = [
   { header: "Order", value: (r) => r.so },
+  { header: "Order date", value: (r) => r.orderDate },
   { header: "Store", value: (r) => r.store },
   { header: "Facility", value: (r) => r.facility },
   { header: "Campaign", value: (r) => r.campaign },
@@ -636,6 +639,15 @@ export function QueueTable({
                 <div className={CELL}>
                   <MobileLabel>Order</MobileLabel>
                   <JourneyLink so={r.so} variant="text" className="mono block truncate font-display text-ui font-bold" />
+                  {/* Order date rides under the SO it belongs to rather than
+                      taking a track of its own: the grid's widths are measured
+                      (see GRID) and an eleventh column would truncate Store and
+                      Handover. Same caption style as the facility line. */}
+                  <span className="block truncate text-cap text-mute" title={`Ordered ${fmtDate(r.orderDate)}`}>
+                    <MobileLabel>Ordered</MobileLabel>
+                    <span className="max-md:hidden">Ordered </span>
+                    {fmtDate(r.orderDate)}
+                  </span>
                   {/* Adoption marker: someone acted on this in the app. No
                       marker = untouched here, every move so far was synced. */}
                   {r.touched ? (

@@ -71,6 +71,7 @@ export default async function WarehousePage({
         status: r.order.status,
         facility: r.order.facility,
         due: due ? (due < today ? "overdue" : due === today ? "today" : undefined) : undefined,
+        orderDate: r.order.orderDate,
         // The two deadlines the Daily Plan prints, carried onto the row so the
         // floor can read them without opening a second tab. Both are already
         // computed above — `handoverDeadlineTs` is the very field the `due`

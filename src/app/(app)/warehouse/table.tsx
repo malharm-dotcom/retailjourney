@@ -91,7 +91,7 @@ export interface QueueRow {
 const TERMINAL_MOVES: OrderStatus[] = ["CANCELLED", "UNFULFILLABLE"];
 
 
-type SortKey = "urgency" | "so" | "store" | "stage" | "qty" | "age";
+type SortKey = "urgency" | "ordered" | "store" | "stage" | "qty" | "age";
 
 interface Sort {
   key: SortKey;
@@ -100,7 +100,7 @@ interface Sort {
 
 /** Columns, in render order. `sort` marks the ones whose header is a button. */
 const COLUMNS: { key: SortKey | null; label: string; align?: "right"; sortable: boolean }[] = [
-  { key: "so", label: "Order", sortable: true },
+  { key: "ordered", label: "Order · date", sortable: true },
   { key: "store", label: "Store · facility", sortable: true },
   { key: "stage", label: "Stage", sortable: true },
   { key: null, label: "Type", sortable: false },
@@ -277,8 +277,8 @@ export function QueueTable({
     const dir = sort.dir === "asc" ? 1 : -1;
     const cmp = (a: QueueRow, b: QueueRow): number => {
       switch (sort.key) {
-        case "so":
-          return a.so.localeCompare(b.so) * dir;
+        case "ordered":
+          return a.orderDate.localeCompare(b.orderDate) * dir;
         case "store":
           return a.store.localeCompare(b.store) * dir;
         case "stage":
@@ -446,8 +446,8 @@ export function QueueTable({
       s.key === key
         ? { key, dir: s.dir === "asc" ? "desc" : "asc" }
         : // Numbers and urgency open on their most interesting end (biggest
-          // first); names open alphabetically.
-          { key, dir: key === "so" || key === "store" || key === "stage" ? "asc" : "desc" },
+          // first); names open alphabetically, order date oldest first.
+          { key, dir: key === "ordered" || key === "store" || key === "stage" ? "asc" : "desc" },
     );
 
   const allShownSelected = rows.length > 0 && selected.size === rows.length;

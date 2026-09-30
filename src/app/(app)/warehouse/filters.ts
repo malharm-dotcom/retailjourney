@@ -51,6 +51,10 @@ export interface QueueFilters {
   /** One queue stage, or "" for every stage. Replaces the kanban's columns:
    *  narrowing to a stage is now a filter, not a horizontal scroll. */
   stage: OrderStatus | "";
+  /** Inclusive order-date window, IST business dates (YYYY-MM-DD). Either end
+   *  may be "" for an open side. */
+  from: string;
+  to: string;
 }
 
 export const EMPTY_FILTERS: QueueFilters = {
@@ -62,6 +66,8 @@ export const EMPTY_FILTERS: QueueFilters = {
   overdue: false,
   channel: "",
   stage: "",
+  from: "",
+  to: "",
 };
 
 /** Anything the filters can be applied to — the card shape, narrowed to the
@@ -75,6 +81,7 @@ export interface Filterable {
   ageDays: number;
   due?: "today" | "overdue";
   status: OrderStatus;
+  orderDate: string;
 }
 
 /** Read filters out of Next's searchParams. Unknown values fall back to the
@@ -87,6 +94,9 @@ export function filtersFromParams(params: Record<string, string | string[] | und
   };
   const age = one("age");
   const stage = one("stage");
+  // Anything that is not a plain YYYY-MM-DD is dropped: the window is a string
+  // compare against orderDate, and a malformed bound would silently empty it.
+  const day = (k: string) => (/^\d{4}-\d{2}-\d{2}$/.test(one(k)) ? one(k) : "");
   return {
     view: one("view") === "all" ? "all" : "action",
     q: one("q"),
@@ -98,6 +108,8 @@ export function filtersFromParams(params: Record<string, string | string[] | und
     // A stage outside the queue would filter the table down to nothing with no
     // way to tell that from an empty warehouse, so it degrades to "all stages".
     stage: (QUEUE_STAGES.includes(stage as OrderStatus) ? stage : "") as OrderStatus | "",
+    from: day("from"),
+    to: day("to"),
   };
 }
 
@@ -113,12 +125,14 @@ export function paramsFromFilters(f: QueueFilters): string {
   if (f.overdue) p.set("overdue", "1");
   if (f.channel) p.set("channel", f.channel);
   if (f.stage) p.set("stage", f.stage);
+  if (f.from) p.set("from", f.from);
+  if (f.to) p.set("to", f.to);
   const s = p.toString();
   return s ? `?${s}` : "";
 }
 
 export function isFiltered(f: QueueFilters): boolean {
-  return Boolean(f.q || f.store || f.type || f.age || f.overdue || f.channel || f.stage);
+  return Boolean(f.q || f.store || f.type || f.age || f.overdue || f.channel || f.stage || f.from || f.to);
 }
 
 /** Still in the building with its handover due today or already missed. */
@@ -140,6 +154,9 @@ export function matchesFilters(c: Filterable, f: QueueFilters): boolean {
   // Consumed, never recomputed: the handover verdict is the SLA engine's, and
   // this board only reads the flag the server already derived from it.
   if (f.overdue && c.due !== "overdue") return false;
+  // orderDate is a pure calendar date, so this is a plain string compare.
+  if (f.from && c.orderDate < f.from) return false;
+  if (f.to && c.orderDate > f.to) return false;
   if (f.age) {
     const b = AGE_BUCKETS.find((x) => x.key === f.age)!;
     if (c.ageDays < b.min || c.ageDays > b.max) return false;

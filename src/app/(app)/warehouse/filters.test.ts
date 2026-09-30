@@ -23,6 +23,7 @@ function card(over: Partial<Filterable> = {}): Filterable {
     channel: "OWN_STORE",
     ageDays: 3,
     status: "NOT_STARTED",
+    orderDate: "2026-09-20",
     ...over,
   };
 }
@@ -45,6 +46,8 @@ describe("reading filters from the URL", () => {
         overdue: "1",
         channel: "OWN_STORE",
         stage: "PACKING",
+        from: "2026-09-01",
+        to: "2026-09-30",
       }),
     ).toEqual({
       view: "action",
@@ -55,6 +58,8 @@ describe("reading filters from the URL", () => {
       overdue: true,
       channel: "OWN_STORE",
       stage: "PACKING",
+      from: "2026-09-01",
+      to: "2026-09-30",
     });
   });
 
@@ -66,6 +71,8 @@ describe("reading filters from the URL", () => {
     // would otherwise empty the table with nothing to say why.
     expect(filtersFromParams({ stage: "DELIVERED" }).stage).toBe("");
     expect(filtersFromParams({ stage: "nonsense" }).stage).toBe("");
+    // A malformed date bound would empty the table on a string compare.
+    expect(filtersFromParams({ from: "20-09-2026", to: "yesterday" })).toMatchObject({ from: "", to: "" });
   });
 
   it("accepts ON_HOLD, which is a real stage but off the happy path", () => {
@@ -78,7 +85,7 @@ describe("reading filters from the URL", () => {
 
   it("round-trips back to a query string, omitting neutral values", () => {
     expect(paramsFromFilters(EMPTY_FILTERS)).toBe("");
-    const round = f({ type: "RPL" as OrderType, overdue: true, stage: "RTS_LOGIC" });
+    const round = f({ type: "RPL" as OrderType, overdue: true, stage: "RTS_LOGIC", from: "2026-09-01", to: "2026-09-30" });
     expect(filtersFromParams(Object.fromEntries(new URLSearchParams(paramsFromFilters(round))))).toEqual(round);
   });
 });
@@ -126,6 +133,16 @@ describe("matching", () => {
     expect(matchesFilters(card({ ageDays: 8 }), f({ age: "4-7" }))).toBe(false);
     // The open-ended bucket has no upper edge to fall off.
     expect(matchesFilters(card({ ageDays: 400 }), f({ age: "8+" }))).toBe(true);
+  });
+
+  it("bounds the order-date window inclusively, with either end open", () => {
+    const c = card({ orderDate: "2026-09-20" });
+    expect(matchesFilters(c, f({ from: "2026-09-20", to: "2026-09-20" }))).toBe(true);
+    expect(matchesFilters(c, f({ from: "2026-09-21" }))).toBe(false);
+    expect(matchesFilters(c, f({ to: "2026-09-19" }))).toBe(false);
+    expect(matchesFilters(c, f({ from: "2026-09-01" }))).toBe(true);
+    expect(matchesFilters(c, f({ to: "2026-09-30" }))).toBe(true);
+    expect(isFiltered(f({ from: "2026-09-01" }))).toBe(true);
   });
 
   it("ANDs the facets together", () => {

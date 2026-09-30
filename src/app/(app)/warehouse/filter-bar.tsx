@@ -64,22 +64,39 @@ export function FilterBar({
   const router = useRouter();
   const pathname = usePathname();
   const searchId = useId();
+  const fromId = useId();
   const [q, setQ] = useState(filters.q);
+  const [dates, setDates] = useState({ from: filters.from, to: filters.to });
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep the box in step when the URL changes underneath (back button, a
   // shared link, the Clear button).
   useEffect(() => setQ(filters.q), [filters.q]);
+  useEffect(() => setDates({ from: filters.from, to: filters.to }), [filters.from, filters.to]);
 
   const apply = (next: Partial<QueueFilters>) => {
     signalNavigation();
     router.push(`${pathname}${paramsFromFilters({ ...filters, ...next })}`, { scroll: false });
   };
 
+  // One timer for both typed inputs, and each commit carries the other's
+  // pending value — so typing a date right after a search cannot drop either.
+  const later = (next: Partial<QueueFilters>) => {
+    if (debounce.current) clearTimeout(debounce.current);
+    debounce.current = setTimeout(() => apply(next), 300);
+  };
+
   const onSearch = (value: string) => {
     setQ(value);
-    if (debounce.current) clearTimeout(debounce.current);
-    debounce.current = setTimeout(() => apply({ q: value.trim() }), 300);
+    later({ ...dates, q: value.trim() });
+  };
+
+  // Debounced like search: a date input fires on every valid keystroke while a
+  // year is being typed ("0002", "0020", …), and each would be a round trip.
+  const onDate = (next: Partial<typeof dates>) => {
+    const d = { ...dates, ...next };
+    setDates(d);
+    later({ ...d, q: q.trim() });
   };
 
   useEffect(() => () => void (debounce.current && clearTimeout(debounce.current)), []);
@@ -258,6 +275,32 @@ export function FilterBar({
           </option>
         ))}
       </Select>
+
+      {/* Order-date window. Native `type="date"`, same as the Logistics
+          dispatch-date window. */}
+      <div className="flex items-center gap-1.5">
+        <label htmlFor={fromId} className="text-cap font-semibold uppercase tracking-[0.04em] text-mute">
+          Ordered
+        </label>
+        <Input
+          id={fromId}
+          type="date"
+          aria-label="Ordered on or after"
+          value={dates.from}
+          max={dates.to || undefined}
+          onChange={(e) => onDate({ from: e.target.value })}
+          className="w-auto py-1.5"
+        />
+        <span className="text-cap text-mute">to</span>
+        <Input
+          type="date"
+          aria-label="Ordered on or before"
+          value={dates.to}
+          min={dates.from || undefined}
+          onChange={(e) => onDate({ to: e.target.value })}
+          className="w-auto py-1.5"
+        />
+      </div>
 
       {/* The one facet that is a verdict rather than an attribute, so it reads
           as a toggle rather than sitting inside a picker. */}

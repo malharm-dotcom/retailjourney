@@ -4,7 +4,8 @@
 > PRD.md is the product spec (source of truth for intent). This doc is the *current operational state* —
 > what is built, what is deployed, and what an operator must do next.
 >
-> **Last updated:** 2026-09-18, after the cancellation-backstop ceiling guard + the UC store-prefix fallback.
+> **Last updated:** 2026-09-30, after the 09-28 → 09-30 session (test-facility exclusion, UC cancellations,
+> Reports rework, blank type/zone repair, Warehouse order date). See §4.
 > This file supersedes the 2026-07-22 version and the pasted 2026-09-18 ~00:15 handover block.
 
 ---
@@ -21,22 +22,24 @@
 | **Spec** | `PRD.md` in repo root. Design prototype `relay-in-transit-v2.html` kept as an artifact. |
 | **Push/deploy policy** | Pushing to `main` is fine on request. **Never trigger a deploy** — the user redeploys. Every arc ends with a redeploy reminder, not an action. |
 | **Prod scripts** | Refuse to connect unless run as `RETAILJOURNEY_ALLOW_PROD_DB=1 npx tsx scripts/<name>.ts` |
-| **Checks** | `npx vitest run` (**574 passing**) · `npx tsc --noEmit` (clean) · `npx next build` (exit 0 — tsc does NOT catch RSC server/client boundary errors) |
+| **Checks** | `npx vitest run` (**619 passing**, 41 files) · `npx tsc --noEmit` (clean) · `npx next build` (exit 0 — tsc does NOT catch RSC server/client boundary errors) |
 
 ---
 
-## 2. ⚠ DEPLOY STATE — FOUR COMMITS PUSHED, NOT DEPLOYED
+## 2. DEPLOY STATE — ALL PUSHED COMMITS DEPLOYED (as of 2026-09-29)
 
-```
-dc016c6  fix(sync): UC learns a store from a prior order with the same SO prefix
-89f2805  fix(sync): an order newer than the spine is not a cancelled order
-1d1c063  fix(in-transit): delivered work leaves the board overnight, not in three days
-36f1df5  fix(sync): eShipz day-first dates were read month-first
-```
+`main` HEAD is `d50fb23`. The user confirmed on 09-29 that `d258c3e` and `d50fb23` were deployed, and the
+hourly Snowflake runs have been `ok=true` since 05:23 IST 09-29 — so everything through HEAD is live.
+The type/zone data repair (§4d) has been applied. Nothing is outstanding.
 
-Everything up to and including `119481b` is deployed (user confirmed 09-17).
+### Historical (2026-09-18) — the wrongly-cancelled repair
 
-### Order of operations matters
+Kept for the record. That session left four commits undeployed and a repair to run after the redeploy.
+Those commits are long since deployed; whether `fix-wrongly-cancelled.ts --apply` was ever run was not
+re-checked in the 09-28 session. It is re-runnable and reports 0 when there is nothing to fix — run it dry
+if in doubt.
+
+### Order of operations matters (09-18 repair)
 
 `scripts/fix-wrongly-cancelled.ts` must run **AFTER** the redeploy. On the currently-deployed code the next
 hourly Snowflake sync re-cancels every repaired order within the hour, because the ceiling guard that stops it
@@ -74,7 +77,73 @@ instances of that one mistake.
 
 ---
 
-## 4. This session (2026-09-18)
+## 4. Latest session (2026-09-28 → 2026-09-30)
+
+Five arcs, all pushed and deployed. Commits oldest → newest.
+
+### 4a. `29591c8` — exclude the Surat-VRMall test facility
+
+Every hourly Snowflake run failed from ~09-26. Test orders (`finaltest124`, `testingsomethingimp`, 3 rows)
+arrived with `WAREHOUSE_NAME = 'Surat-VRMall'` and `STORE = NULL` → unknown facility + no Store row → no
+facility → the NOT NULL `Order.facility` insert threw → run `ok:false` → watermark frozen.
+`snowflake.ts` now carries `EXCLUDED_WAREHOUSES = ["SURATVRMALL"]` / `NOT_TEST_FACILITY` (name compared with
+non-letters stripped) on every order read: `SPINE_QUERY`, both branches of `spineQueryFor`, `spineWindowQuery`,
+floor and ceiling. **Note:** `VR MALL` is also a REAL store (`SNITCH - FOCO - VR MALL`, served by the real
+WHs) — never filter on store. Add further test warehouses to `EXCLUDED_WAREHOUSES`.
+
+### 4b. `54f6393` — UC-cancelled orders no longer sit on the Warehouse board
+
+Reported: `AIRPOR17015` (and most of the 17015 batch) cancelled on UC but pending in the app. Two gaps:
+- The spine cancellation backstop only ran on a run with **zero errors**, so the test-facility failure silenced
+  it for days. It asks the spine directly (floor/ceiling/presence) and never reads the pulled rows, so it now
+  runs whenever the pull itself succeeded. First run after deploy: **147 of 423 WH orders closed as CANCELLED**.
+- UC intake counted cancelled items and ignored them. Now: every item CANCELLED → never ingested; an existing
+  order is closed via the shared `markCancelled` under the same guards as the backstop (`ucCancels`:
+  WH_PROCESSING, no dispatchedTs, not terminal).
+Measured: 536 fully-cancelled store orders in UC (`WAREHOUSE_SLA_PERFORMANCE`, 45d), 534 absent from the
+spine. Cancellation evidence table: `SNITCH_DB.MAPLEMONK.WAREHOUSE_SLA_PERFORMANCE` (`ITEM_STATUS`,
+`ORDER_STATUS`, `MARKETPLACE_MAPPED = 'STORE'`).
+
+### 4c. `c10f61e` — Reports desk restructure + multi-select + data fixes
+
+- **Structure:** `/reports` is a jump bar + three sections — *Network scorecard* (Metabase-matched, reads
+  `DISTRIBUTION_ANALYTICS`), *Reports by team* (`REPORT_GROUPS` in `reports.ts`: lookup / warehouse / logistics /
+  stores), *Downloads* (CSV). Each `ReportDef` now carries `group`, `question`, `grain`, `filters`,
+  `dateBasis`; the drill-down page shows them above the table and only renders the filters the report honours.
+- **Multi-select:** new `components/ui/multi-select.tsx` — real named checkboxes, so a GET form sends
+  `?courier=A&courier=B`; empty = all. Used for facility / type / courier / lane on drill-downs, downloads and
+  the EDD follow-up. `pickFacilities()` (reports-download.ts) intersects ticks with the session — the session is
+  still the ceiling. `scopeClause` accepts a facility list; `inOrNull` builds courier/lane IN lists.
+- **Data fixes:** courier filter options came from `LOGISTICS_PARTNERS` (`MUDITACARGO`, `SELF`, `EKART B2B`) but
+  the data says `MUDITA_CARGO`, `SELF_DELIVERY`, `EKART_B2B_CARGO` (+ `XPINDIA`) → picking one emptied the report;
+  options now come off the data. Cancelled/unfulfillable excluded from every report but lookup
+  (`filterReportRows`). Boxes: `order.boxCount` is hand-entered only → throughput/CSV now fall back to
+  `row.boxes` (AWB children). Rulebook adherence handover used `dispatchedDate` (null on spine orders) → now
+  dispatch-else-manifest. Store rollup "Delivered" counts INWARDED. Throughput honours an explicit range.
+- **Not visually verified** — local dev cannot sign in (see §7). Verified by tests + build only.
+
+### 4d. `d258c3e` — a blank spine type/zone no longer overwrites a real one (+ data repair)
+
+Reported: *"EVAMAL17196 not flowing — are orders not coming in via UC?"* **UC was fine**: UC intake created it
+at 20:45 IST 09-28 (~17 min after placement), and UC later dispatched it (09-29 10:55, INVNORTH-444431). It
+looked missing because (1) the Warehouse default *action* view shows only due-today/overdue and its handover
+was 09-30 — user chose to **leave the default view as is**; and (2) a real bug: since **09-27 the spine sends
+blank `ORDER_TYPE`** for new orders, the mapper turns blank → `OTHER` (and blank ZONE → `UNMAPPED`), and the
+hourly sync wrote those fallbacks over UC's real FRESH/RPL/zone.
+`dropBlankFallbacks()` in `syncSnowflakeOrder` now drops the fallback when the order already holds a real value
+(new orders still fall back). **Repair applied 09-29** with `scripts/fix-blanked-type-zone.ts --apply`:
+**650 types** restored (504 FRESH, 146 RPL) + **790 zones**; each with an OrderEvent; verify dry run = 0.
+Re-runnable — run it dry if FRESH/RPL orders go missing from filters again.
+
+### 4e. `d50fb23` — Warehouse tab shows the order date
+
+Caption under the SO ("Ordered 28 Sep"), same style as the facility line — deliberately **not** an 11th grid
+column: `GRID` track widths are measured and a new track would truncate Store/Handover. Also in the CSV export.
+Not visually verified (same reason as 4c).
+
+---
+
+## 4-prev. Previous session (2026-09-18)
 
 Reported as: *"~200+ orders placed yesterday and today for North WH are not reflecting on the tool."*
 
@@ -221,6 +290,19 @@ scripts/
 - **Env read lazily** inside function bodies (never at module load) — Coolify injects runtime vars after eval.
 - **Windows build quirk (local only):** `next build` here does not emit `.next/server/instrumentation.js`, so a
   local `next start` never runs the scheduler. Linux/Coolify unaffected.
+- **Local dev cannot sign in.** `.env.development.local` blanks every credential so dev runs on the in-memory
+  seed repo — but the seed has no password hashes (`findPasswordHash` returns undefined without a DB), so every
+  page redirects to `/login`. UI changes are verified by tests + `next build`; ask the user to eyeball after
+  deploy. Do not bypass auth to get screenshots.
+- **Claude Code auto-mode blocks prod-DB scripts** (`RETAILJOURNEY_ALLOW_PROD_DB=1`) unless the user approves in
+  chat. Snowflake-only diagnostics (`querySnowflake`) run without it — start there.
+- **vitest uses the automatic JSX runtime** (`esbuild: { jsx: "automatic" }` in `vitest.config.ts`, added 09-29)
+  so components can be rendered in tests with `renderToStaticMarkup`.
+- **Warehouse default view is "action"** (due today + overdue). A fresh order due later only shows under
+  **All** — the most likely explanation when someone says an order "isn't in the tool". Check All + the order
+  page before debugging sync.
+- **Two Snowflake sources on purpose:** the Reports scorecard reads `DISTRIBUTION_ANALYTICS` (must equal
+  Metabase; drops out-of-rulebook orders); everything else reads the spine. Totals differ by design.
 - **PowerShell + git:** push writes progress to stderr, surfaced as a red `NativeCommandError` even on success —
   check the `main -> main` line and the exit code, not the colour.
 
@@ -228,45 +310,52 @@ scripts/
 
 ## 8. Known open items (by priority)
 
-1. **Redeploy, then run the repair** — §2. Four commits outstanding.
-2. **18 orders carry `expectedDate` earlier than their own order date** — the same day/month parse bug
+1. **Upstream: spine `ORDER_TYPE` is blank for new orders since 2026-09-27** (EVAMAL17196 et al.). The app now
+   survives it (§4d), but an order that arrives ONLY via the spine (no UC intake first) lands as `OTHER` until
+   upstream fixes the column. Raise with the data team (Maplemonk spine).
+2. **Eyeball the 09-29 UI changes** — Reports restructure / multi-select (§4c) and the Warehouse order-date
+   caption (§4e) were never seen in a browser.
+3. **2 fully-cancelled UC orders still in the spine** (order dates 09-26…09-29 at measurement) — the spine
+   backstop cannot see them; UC intake (§4b) closes them only if its export window re-reads them. Check they
+   closed.
+4. **18 orders carry `expectedDate` earlier than their own order date** — the same day/month parse bug
    (`"05-08-2026"` = 5 Aug read as May 8). The parser is fixed forward only; these rows still hold wrong courier
    EDDs, and the EDD-breached list reads exactly this field by default. No repair script written — needs a
    decision on the source of truth (spine `LOGISTICS_EXPECTED_DELIVERY_DATE` vs re-poll).
-3. **Rows with sync-time delivered dates** (e.g. `BOULEW16702`: `delivered=2026-09-17` while its AWB read
+5. **Rows with sync-time delivered dates** (e.g. `BOULEW16702`: `delivered=2026-09-17` while its AWB read
    OUT_FOR_DELIVERY, EDD 09-10). New ones stop from `1d1c063`; existing ones keep the wrong date and their
    delivery SLA stays overstated.
-4. **Does the UC update branch rewrite `storeId` on an EXISTING order?** NOT TRACED. `dc016c6` is proven to
+6. **Does the UC update branch rewrite `storeId` on an EXISTING order?** NOT TRACED. `dc016c6` is proven to
    resolve the right store for all 178 currently-unmapped rows, but whether those existing rows get rewritten on
    the next UC run — versus only new orders being correct going forward — was not verified. They should
    self-heal via the spine backfill (`sync.ts`, `if (store && existingRow.storeId === "")`) once the spine covers
    09-18, which is what happened to 09-17's batch. Confirm, or write a repair.
-5. **Stale checkpoint JSON on the 11 repaired orders** — the Journey timeline still shows the Nov/Dec dates.
+7. **Stale checkpoint JSON on the 11 repaired orders** — the Journey timeline still shows the Nov/Dec dates.
    Display-only; the poller won't refresh a delivered shipment, so it stays until cleared.
-6. **The `Delivered` chip** on the board now surfaces only today's completions. Decouple it from the server
+8. **The `Delivered` chip** on the board now surfaces only today's completions. Decouple it from the server
    window if it should reach further back.
-7. **UC store matching is MASKED, not fixed.** `dc016c6` hides the symptom, which removes the pressure to do the
+9. **UC store matching is MASKED, not fixed.** `dc016c6` hides the symptom, which removes the pressure to do the
    real migration — and it only works because the spine resolves each prefix at least once. A genuinely new
    store still lands unmapped until then (correctly). Real fix: add `soCode` to `Store` (unique), load all 163
    from the ops sheet. **Needs a schema migration — not approved.** Sheet:
    `docs.google.com/spreadsheets/d/1lnnf48sH4k9Fqeb0-J0DCi9fAqPUI92Tq5GrC450a8U` (tab `Store_details`,
    gid 1414304456; read via `gviz/tq?tqx=out:html&gid=…`).
-8. **Mis-parse and mis-cancellation are only detectable at the edges.** For dates, where both day and month are
+10. **Mis-parse and mis-cancellation are only detectable at the edges.** For dates, where both day and month are
    ≤ 12 the old data is silently wrong and unrecoverable by query (11 + 18 is the floor). For cancellations, a
    genuinely cancelled order and a wrongly-cancelled one that never returns to the spine look identical — **652
    is a floor, not a full count.**
-9. **Spine SELECT is missing 4 columns** the app can use: `RECEIVER_POSTAL_CODE`, `LAST_CHECKPOINT_REMARK`,
+11. **Spine SELECT is missing 4 columns** the app can use: `RECEIVER_POSTAL_CODE`, `LAST_CHECKPOINT_REMARK`,
    `LAST_CHECKPOINT_SUBTAG`, `LAST_CHECKPOINT_TAG`. The spine carries `distribution_analytics` as a CTE, so add
    them to its final SELECT, then to `SPINE_QUERY`, and they light up (row type already declares them optional —
    see `SPINE_PENDING_COLUMNS`).
-10. **Inward is DATA-ONLY.** `stiQty`, `exShort`, `inwardedDate`, `storeChannel` are mapped and persisted but no
+12. **Inward is DATA-ONLY.** `stiQty`, `exShort`, `inwardedDate`, `storeChannel` are mapped and persisted but no
     UI reads them. `INWARDED` exists in BOTH `OverallStatus` and the older `ReceiptStatus` — reconcile when the
     inward UI is built. The Journey stepper has a hardcoded 4-stage `STAGES` array, so an INWARDED order gets
     `stageIdx = -1` (cosmetic).
-11. **(carried)** Conflict-event noise (~64k events/7d); `repo-prisma.ts` manual edits bypass the
+13. **(carried)** Conflict-event noise (~64k events/7d); `repo-prisma.ts` manual edits bypass the
     INWARDED/CLOSED holds; re-run `scripts/pendency-exceptions.ts`; 14 `QC-` orders missing from the spine;
     `spine-patch.sql` items; Pickup Pending card wording; dispatched-no-AWB rows in the Warehouse outbox (~235).
-12. **(carried, still open with logistics)** `CHIKJA16468`, `CHIKJA16718`, `VIPVIZ16462` — marked RTO in the
+14. **(carried, still open with logistics)** `CHIKJA16468`, `CHIKJA16718`, `VIPVIZ16462` — marked RTO in the
     pendency sheet but the app says delivered/inwarded. Unresolved.
 
 ---
@@ -290,11 +379,29 @@ store master:   163 rows · 13 with the gs_ shape · 43 yielding a 6-char key
 unmapped:       178 orders reading "(store unmapped)" — 178/178 resolvable by prefix fallback
 ```
 
+**2026-09-29 (this session)**
+```
+spine (45d):    SAPL-WH2 3439 · SAPL-NORTH-TAURU 2800 · SAPL-WH1 941 rows · Surat-VRMall 3 (now excluded)
+spine orders:   09-26 93 · 09-27 153 · 09-28 198 (distinct ORDER_NAME)
+UC-cancelled:   536 fully-cancelled store orders (45d) · 534 absent from spine · backstop closed 147
+scorecard:      3,580 orders/31d · Placement 44.9% · WH 94.4% · Pickup 87.5% · Delivery 72.8% · Perfect 22.9%
+type/zone:      650 OTHER → FRESH 504 / RPL 146 · 790 UNMAPPED zones restored · verify = 0
+```
+
 ---
 
 ## 10. Commit history (newest first)
 
 ```
+d50fb23  feat(warehouse): show the order date under each SO
+d258c3e  fix(sync): a blank spine type/zone no longer overwrites a real one
+c10f61e  feat(reports): restructure the desk, multi-select filters, fix report data
+54f6393  fix(sync): UC-cancelled orders no longer sit on the warehouse board
+29591c8  fix(sync): exclude the Surat-VRMall test facility from every spine read
+aa4c23d  feat(tracker): Logistics Tracker — the logistics team's dispatch log, in the app   (other session)
+e7edcf1  fix: data accuracy P0s, action-first Warehouse/Logistics, lighter boards           (other session)
+b4d31bf  fix(sync): a dead AWB no longer speaks for a split order; warehouse queue shows in-app touches (other session)
+26a0181  docs(handover): fold in the spine-lag arc and retire the stale 2026-07-22 state
 dc016c6  fix(sync): UC learns a store from a prior order with the same SO prefix
 89f2805  fix(sync): an order newer than the spine is not a cancelled order
 1d1c063  fix(in-transit): delivered work leaves the board overnight, not in three days

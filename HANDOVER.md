@@ -4,8 +4,8 @@
 > PRD.md is the product spec (source of truth for intent). This doc is the *current operational state* —
 > what is built, what is deployed, and what an operator must do next.
 >
-> **Last updated:** 2026-09-30, after the 09-28 → 09-30 session (test-facility exclusion, UC cancellations,
-> Reports rework, blank type/zone repair, Warehouse order date). See §4.
+> **Last updated:** 2026-10-01, after the 09-28 → 10-01 session (test-facility exclusion, UC cancellations,
+> Reports rework, blank type/zone repair, Warehouse order date + date filter/sort + store multi-select). See §4.
 > This file supersedes the 2026-07-22 version and the pasted 2026-09-18 ~00:15 handover block.
 
 ---
@@ -22,15 +22,20 @@
 | **Spec** | `PRD.md` in repo root. Design prototype `relay-in-transit-v2.html` kept as an artifact. |
 | **Push/deploy policy** | Pushing to `main` is fine on request. **Never trigger a deploy** — the user redeploys. Every arc ends with a redeploy reminder, not an action. |
 | **Prod scripts** | Refuse to connect unless run as `RETAILJOURNEY_ALLOW_PROD_DB=1 npx tsx scripts/<name>.ts` |
-| **Checks** | `npx vitest run` (**619 passing**, 41 files) · `npx tsc --noEmit` (clean) · `npx next build` (exit 0 — tsc does NOT catch RSC server/client boundary errors) |
+| **Checks** | `npx vitest run` (**623 passing**, 41 files) · `npx tsc --noEmit` (clean) · `npx next build` (exit 0 — tsc does NOT catch RSC server/client boundary errors) |
 
 ---
 
-## 2. DEPLOY STATE — ALL PUSHED COMMITS DEPLOYED (as of 2026-09-29)
+## 2. ⚠ DEPLOY STATE — TWO UI COMMITS PUSHED, NOT CONFIRMED DEPLOYED (as of 2026-10-01)
 
-`main` HEAD is `d50fb23`. The user confirmed on 09-29 that `d258c3e` and `d50fb23` were deployed, and the
-hourly Snowflake runs have been `ok=true` since 05:23 IST 09-29 — so everything through HEAD is live.
-The type/zone data repair (§4d) has been applied. Nothing is outstanding.
+```
+2ae640a  feat(warehouse): multi-select stores with a type-to-search checklist
+1c4626e  feat(warehouse): filter and sort the queue by order date
+```
+
+Both are UI-only (Warehouse filter bar/table + the shared `MultiSelect`) — no sync, schema or data change, so
+no repair rides on them and deploy order does not matter. Everything through `d50fb23` is live (user confirmed
+09-29; hourly Snowflake runs `ok=true` since 05:23 IST 09-29). The type/zone data repair (§4d) has been applied.
 
 ### Historical (2026-09-18) — the wrongly-cancelled repair
 
@@ -77,9 +82,9 @@ instances of that one mistake.
 
 ---
 
-## 4. Latest session (2026-09-28 → 2026-09-30)
+## 4. Latest session (2026-09-28 → 2026-10-01)
 
-Five arcs, all pushed and deployed. Commits oldest → newest.
+Seven arcs, all pushed; 4a–4e deployed, 4f–4g awaiting redeploy (§2). Commits oldest → newest.
 
 ### 4a. `29591c8` — exclude the Surat-VRMall test facility
 
@@ -140,6 +145,28 @@ Re-runnable — run it dry if FRESH/RPL orders go missing from filters again.
 Caption under the SO ("Ordered 28 Sep"), same style as the facility line — deliberately **not** an 11th grid
 column: `GRID` track widths are measured and a new track would truncate Store/Handover. Also in the CSV export.
 Not visually verified (same reason as 4c).
+
+### 4f. `1c4626e` — Warehouse: filter and sort by order date
+
+- **Sort:** the first header is now "Order · date" and sorts by `orderDate` (oldest first, toggle for newest).
+  Sorting by SO number was **removed on request** — SO stays only as the last tiebreak.
+- **Filter:** "Ordered [from] to [to]" — native `type="date"` pair (same as the Logistics dispatch window),
+  inclusive, either end open. URL-backed (`?from=&to=`) through `filters.ts`, so stage-pill counts, view
+  counts, "N of M", Clear, the pager and CSV export all follow it. A malformed date in the URL is dropped.
+- Date inputs share the search box's 300ms debounce (`later()` in `filter-bar.tsx`); each commit carries the
+  other's pending value so a date typed right after a search cannot drop either.
+
+### 4g. `2ae640a` — Warehouse: multi-select stores with type-to-search
+
+- Store picker is now the shared `MultiSelect` checklist with a search box: typing narrows the list, each tick
+  applies immediately, URL carries `?store=A&store=B`, empty = every store. `QueueFilters.store` is now
+  `string[]` (repeated param; `filtersFromParams` reads every value).
+- `MultiSelect` gained two **opt-in** props: `searchable`, and controlled `value`/`onChange`. Search hides
+  non-matching options (does not unrender them), so a hidden tick still submits on the Reports GET forms;
+  "Select all" with a search typed adds only what is shown. Reports pages pass neither prop → unchanged.
+- Filter bar keeps its own `storePick` state (like `q`/dates): the URL lags each tick by a round trip, and two
+  quick ticks read off the URL would drop the first.
+- Not visually verified (same reason as 4c) — checked by tests, `tsc`, lint and `next build`.
 
 ---
 
@@ -229,6 +256,7 @@ src/lib/
 src/app/(app)/
   warehouse/        Queue table. QUEUE_STAGES = WH_FLOW + ON_HOLD; excludes CANCELLED/UNFULFILLABLE
                     and anything PAST_WAREHOUSE. storeUnmapped badge = storeId === ""
+                    filters.ts = the URL⇄filter model (store[], from/to, …) shared by page + filter bar
   orders/           Search. First paint = last 30 days; ANY facet lifts the window to all history
   reports/          Distribution 2.0 panels behind ?panel= link tabs; logistics-followup ?view=
 
@@ -313,8 +341,9 @@ scripts/
 1. **Upstream: spine `ORDER_TYPE` is blank for new orders since 2026-09-27** (EVAMAL17196 et al.). The app now
    survives it (§4d), but an order that arrives ONLY via the spine (no UC intake first) lands as `OTHER` until
    upstream fixes the column. Raise with the data team (Maplemonk spine).
-2. **Eyeball the 09-29 UI changes** — Reports restructure / multi-select (§4c) and the Warehouse order-date
-   caption (§4e) were never seen in a browser.
+2. **Eyeball the UI changes** — Reports restructure / multi-select (§4c), the Warehouse order-date caption
+   (§4e), date filter/sort (§4f) and store multi-select (§4g) were never seen in a browser. Watch the filter
+   bar's wrapping at 1168px now that it carries a date pair and a 220px store checklist.
 3. **2 fully-cancelled UC orders still in the spine** (order dates 09-26…09-29 at measurement) — the spine
    backstop cannot see them; UC intake (§4b) closes them only if its export window re-reads them. Check they
    closed.
@@ -393,6 +422,9 @@ type/zone:      650 OTHER → FRESH 504 / RPL 146 · 790 UNMAPPED zones restored
 ## 10. Commit history (newest first)
 
 ```
+2ae640a  feat(warehouse): multi-select stores with a type-to-search checklist
+1c4626e  feat(warehouse): filter and sort the queue by order date
+3f3e852  docs(handover): fold in the 09-28 → 09-30 session
 d50fb23  feat(warehouse): show the order date under each SO
 d258c3e  fix(sync): a blank spine type/zone no longer overwrites a real one
 c10f61e  feat(reports): restructure the desk, multi-select filters, fix report data

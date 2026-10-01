@@ -42,7 +42,8 @@ export interface QueueFilters {
   view: QueueView;
   /** SO · store · campaign. */
   q: string;
-  store: string;
+  /** Any of these stores; empty = every store. */
+  store: string[];
   type: OrderType | "";
   age: AgeBucketKey | "";
   /** Only orders whose handover deadline has already passed. */
@@ -60,7 +61,7 @@ export interface QueueFilters {
 export const EMPTY_FILTERS: QueueFilters = {
   view: "action",
   q: "",
-  store: "",
+  store: [],
   type: "",
   age: "",
   overdue: false,
@@ -100,7 +101,8 @@ export function filtersFromParams(params: Record<string, string | string[] | und
   return {
     view: one("view") === "all" ? "all" : "action",
     q: one("q"),
-    store: one("store"),
+    // Repeated param, one per ticked store: ?store=A&store=B.
+    store: [params.store ?? []].flat().map((s) => s.trim()).filter(Boolean),
     type: (one("type") as OrderType) || "",
     age: (AGE_BUCKETS.some((b) => b.key === age) ? age : "") as AgeBucketKey | "",
     overdue: one("overdue") === "1",
@@ -119,7 +121,7 @@ export function paramsFromFilters(f: QueueFilters): string {
   const p = new URLSearchParams();
   if (f.view === "all") p.set("view", "all");
   if (f.q) p.set("q", f.q);
-  if (f.store) p.set("store", f.store);
+  for (const s of f.store) p.append("store", s);
   if (f.type) p.set("type", f.type);
   if (f.age) p.set("age", f.age);
   if (f.overdue) p.set("overdue", "1");
@@ -132,7 +134,7 @@ export function paramsFromFilters(f: QueueFilters): string {
 }
 
 export function isFiltered(f: QueueFilters): boolean {
-  return Boolean(f.q || f.store || f.type || f.age || f.overdue || f.channel || f.stage || f.from || f.to);
+  return Boolean(f.q || f.store.length || f.type || f.age || f.overdue || f.channel || f.stage || f.from || f.to);
 }
 
 /** Still in the building with its handover due today or already missed. */
@@ -148,7 +150,7 @@ export function matchesFilters(c: Filterable, f: QueueFilters): boolean {
     if (!hay.some((v) => v.toLowerCase().includes(needle))) return false;
   }
   if (f.stage && c.status !== f.stage) return false;
-  if (f.store && c.store !== f.store) return false;
+  if (f.store.length && !f.store.includes(c.store)) return false;
   if (f.type && c.type !== f.type) return false;
   if (f.channel && c.channel !== f.channel) return false;
   // Consumed, never recomputed: the handover verdict is the SLA engine's, and

@@ -20,17 +20,44 @@ export function MultiSelect({
   defaultValue = [],
   allLabel = "All",
   className,
+  value,
+  onChange,
+  searchable = false,
 }: {
   name: string;
   options: (string | MultiOption)[];
   defaultValue?: string[];
   allLabel?: string;
   className?: string;
+  /** Controlled mode, for a bar that applies each tick itself rather than
+   *  submitting a form. Omit both to keep the plain GET-form behaviour. */
+  value?: string[];
+  onChange?: (picked: string[]) => void;
+  /** A type-to-narrow box at the top of the list, for long option lists. */
+  searchable?: boolean;
 }) {
   const opts = options.map((o) => (typeof o === "string" ? { value: o, label: o } : { label: o.value, ...o }));
-  const [picked, setPicked] = useState<string[]>(defaultValue.filter((v) => opts.some((o) => o.value === v)));
+  const [own, setOwn] = useState<string[]>(defaultValue.filter((v) => opts.some((o) => o.value === v)));
+  const picked = value ?? own;
+  const setPicked = (next: string[]) => {
+    setOwn(next);
+    onChange?.(next);
+  };
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const root = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+
+  // Opening a searchable list puts the cursor in its box, so typing a store
+  // name is the very next thing that works.
+  useEffect(() => {
+    if (open && searchable) search.current?.focus();
+    if (!open) setQuery("");
+  }, [open, searchable]);
+
+  const needle = query.trim().toLowerCase();
+  const matches = (o: { label: string }) => !needle || o.label.toLowerCase().includes(needle);
+  const shown = opts.filter(matches);
 
   useEffect(() => {
     if (!open) return;
@@ -45,12 +72,12 @@ export function MultiSelect({
     };
   }, [open]);
 
-  const toggle = (v: string) => setPicked((p) => (p.includes(v) ? p.filter((x) => x !== v) : [...p, v]));
+  const toggle = (v: string) => setPicked(picked.includes(v) ? picked.filter((x) => x !== v) : [...picked, v]);
   const summary =
     picked.length === 0 || picked.length === opts.length
       ? allLabel
       : picked.length === 1
-        ? opts.find((o) => o.value === picked[0])!.label
+        ? (opts.find((o) => o.value === picked[0])?.label ?? picked[0])
         : `${picked.length} selected`;
 
   return (
@@ -75,8 +102,25 @@ export function MultiSelect({
           !open && "hidden",
         )}
       >
+        {searchable ? (
+          <input
+            ref={search}
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Type to search…"
+            aria-label="Search options"
+            className="mb-1.5 w-full rounded-control border border-line-control bg-paper px-2.5 py-1.5 text-ui text-ink outline-none focus:border-sage"
+          />
+        ) : null}
         <div className="flex justify-between gap-3 px-2 pb-1.5 pt-0.5 text-meta font-semibold">
-          <button type="button" className="text-sage hover:underline" onClick={() => setPicked(opts.map((o) => o.value))}>
+          {/* With a search typed, "Select all" adds what the search shows —
+              never options the operator cannot see. */}
+          <button
+            type="button"
+            className="text-sage hover:underline"
+            onClick={() => setPicked([...new Set([...picked, ...shown.map((o) => o.value)])])}
+          >
             Select all
           </button>
           <button type="button" className="text-mute hover:text-ink" onClick={() => setPicked([])}>
@@ -84,10 +128,16 @@ export function MultiSelect({
           </button>
         </div>
         {opts.length === 0 ? <p className="px-2 py-1.5 text-dense text-mute">Nothing to choose from</p> : null}
+        {opts.length > 0 && shown.length === 0 ? <p className="px-2 py-1.5 text-dense text-mute">No match</p> : null}
+        {/* Non-matching options are hidden, not unrendered: a hidden checkbox
+            still submits, so searching never drops a tick from the form. */}
         {opts.map((o) => (
           <label
             key={o.value}
-            className="flex cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-control px-2 py-1.5 text-ui text-ink-soft hover:bg-sage-soft hover:text-sage"
+            className={cn(
+              "flex cursor-pointer items-center gap-2.5 whitespace-nowrap rounded-control px-2 py-1.5 text-ui text-ink-soft hover:bg-sage-soft hover:text-sage",
+              !matches(o) && "hidden",
+            )}
           >
             <input
               type="checkbox"

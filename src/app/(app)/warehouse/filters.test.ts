@@ -52,7 +52,7 @@ describe("reading filters from the URL", () => {
     ).toEqual({
       view: "action",
       q: "SO-1",
-      store: "BOPAL",
+      store: ["BOPAL"],
       type: "RPL",
       age: "4-7",
       overdue: true,
@@ -83,6 +83,15 @@ describe("reading filters from the URL", () => {
     expect(filtersFromParams({ q: ["first", "second"] }).q).toBe("first");
   });
 
+  it("reads every repeated store, and round-trips them", () => {
+    expect(filtersFromParams({ store: ["A", "B"] }).store).toEqual(["A", "B"]);
+    expect(filtersFromParams({ store: "A" }).store).toEqual(["A"]);
+    expect(filtersFromParams({ store: "" }).store).toEqual([]);
+    const round = f({ store: ["SNITCH - FOCO - BOPAL", "A & B"] });
+    const back = new URLSearchParams(paramsFromFilters(round));
+    expect(filtersFromParams({ store: back.getAll("store") }).store).toEqual(round.store);
+  });
+
   it("round-trips back to a query string, omitting neutral values", () => {
     expect(paramsFromFilters(EMPTY_FILTERS)).toBe("");
     const round = f({ type: "RPL" as OrderType, overdue: true, stage: "RTS_LOGIC", from: "2026-09-01", to: "2026-09-30" });
@@ -107,8 +116,8 @@ describe("matching", () => {
   });
 
   it("filters by store, type and channel exactly", () => {
-    expect(matchesFilters(card(), f({ store: "SNITCH - FOCO - BOPAL" }))).toBe(true);
-    expect(matchesFilters(card(), f({ store: "SNITCH - COCO - OTHER" }))).toBe(false);
+    expect(matchesFilters(card(), f({ store: ["SNITCH - FOCO - BOPAL"] }))).toBe(true);
+    expect(matchesFilters(card(), f({ store: ["SNITCH - COCO - OTHER"] }))).toBe(false);
     expect(matchesFilters(card(), f({ type: "RPL" as OrderType }))).toBe(false);
     expect(matchesFilters(card(), f({ channel: "FRANCHISE_STORE" }))).toBe(false);
   });
@@ -133,6 +142,15 @@ describe("matching", () => {
     expect(matchesFilters(card({ ageDays: 8 }), f({ age: "4-7" }))).toBe(false);
     // The open-ended bucket has no upper edge to fall off.
     expect(matchesFilters(card({ ageDays: 400 }), f({ age: "8+" }))).toBe(true);
+  });
+
+  it("matches any of several ticked stores, and every store when none is ticked", () => {
+    const other = card({ store: "SNITCH - COCO - OTHER" });
+    const both = f({ store: ["SNITCH - FOCO - BOPAL", "SNITCH - COCO - OTHER"] });
+    expect(matchesFilters(card(), both)).toBe(true);
+    expect(matchesFilters(other, both)).toBe(true);
+    expect(matchesFilters(card({ store: "SNITCH - COCO - THIRD" }), both)).toBe(false);
+    expect(matchesFilters(other, f({ store: [] }))).toBe(true);
   });
 
   it("bounds the order-date window inclusively, with either end open", () => {

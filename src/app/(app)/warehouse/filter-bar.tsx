@@ -11,6 +11,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Icon } from "@/components/icon";
 import { signalNavigation } from "@/components/shell/nav-progress";
+import { MultiSelect } from "@/components/ui/multi-select";
 import { Button, Chip, Input, Select } from "@/components/ui/primitives";
 import { STATUS_LABEL } from "@/lib/journey";
 import { TONE, WH_STATUS_VISUAL, cn } from "@/lib/ui";
@@ -67,12 +68,18 @@ export function FilterBar({
   const fromId = useId();
   const [q, setQ] = useState(filters.q);
   const [dates, setDates] = useState({ from: filters.from, to: filters.to });
+  // Local, like q and dates: the URL lags each tick by a round trip, so two
+  // quick ticks read off the URL would drop the first.
+  const [storePick, setStorePick] = useState(filters.store);
   const debounce = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep the box in step when the URL changes underneath (back button, a
   // shared link, the Clear button).
   useEffect(() => setQ(filters.q), [filters.q]);
   useEffect(() => setDates({ from: filters.from, to: filters.to }), [filters.from, filters.to]);
+  const storeKey = filters.store.join("\n");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on the joined list, not the fresh array each render
+  useEffect(() => setStorePick(filters.store), [storeKey]);
 
   const apply = (next: Partial<QueueFilters>) => {
     signalNavigation();
@@ -220,19 +227,21 @@ export function FilterBar({
         />
       </div>
 
-      <Select
-        aria-label="Filter by store"
-        value={filters.store}
-        onChange={(e) => apply({ store: e.target.value })}
-        className="w-auto min-w-[150px] max-w-[220px]"
-      >
-        <option value="">All stores</option>
-        {stores.map((s) => (
-          <option key={s} value={s}>
-            {s}
-          </option>
-        ))}
-      </Select>
+      {/* Checklist with a search box: the store list runs long, and the floor
+          often works a handful of stores at once. Each tick applies at once,
+          same as the selects beside it. */}
+      <MultiSelect
+        name="store"
+        options={stores}
+        value={storePick}
+        onChange={(next) => {
+          setStorePick(next);
+          apply({ store: next });
+        }}
+        searchable
+        allLabel="All stores"
+        className="w-[220px]"
+      />
 
       <Select
         aria-label="Filter by order type"

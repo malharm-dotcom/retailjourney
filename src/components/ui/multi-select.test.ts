@@ -20,6 +20,16 @@ describe("MultiSelect", () => {
     expect(html).toContain("2 selected");
   });
 
+  it("adds a search box only when asked, and follows a controlled value", () => {
+    expect(html).not.toContain('type="search"');
+    const controlled = renderToStaticMarkup(
+      createElement(MultiSelect, { name: "store", options: ["A", "B", "C"], value: ["C"], searchable: true }),
+    );
+    expect(controlled).toContain('type="search"');
+    expect(controlled.match(/checked=""/g)).toHaveLength(1);
+    expect(controlled).toContain(">C<");
+  });
+
   it("reads 'All' when nothing is ticked", () => {
     expect(renderToStaticMarkup(createElement(MultiSelect, { name: "lane", options: ["NCR"] }))).toContain(">All<");
   });
